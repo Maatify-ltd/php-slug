@@ -996,13 +996,19 @@ final class PerCs31Verifier
         $action = '(?:falls?[- ]?through|omit|skip|leave\s+out|continue|proceed)';
         $hedge = '(?:maybe|perhaps|possibly|may|might|should)';
         $intent = '(?:intentionally|deliberately|purposely)';
+        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
+        $negative = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:can|does|did|would|could|should|must)n't|won't)";
+        $execution = '(?:run|execute|be\s+(?:entered|executed|reached|run))';
 
         return self::hasQuestionMarkOutsideQuotedToken($comment) || preg_match(
             '~\A(?:if|unless|whether|' . $hedge . '|(?:check|consider|decide)\s+whether)\b'
             . '|\b(?:we|execution|the\s+case)\s+' . $hedge . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
             . '|\bso\s+(?:maybe|perhaps|possibly)\b|\bif\s+(?:needed|required|necessary)\b'
-            . '|\b(?:never|cannot|(?:must|do|does|did|can|will|would|could)\s+not)'
-            . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\b' . $negative . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\b' . $nextCase . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
+            . '|\b(?:skip|bypass|avoid)\s+' . $nextCase . '\b'
+            . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:enter|run|execute|reach|use)\s+' . $nextCase . '\b'
+            . '|\b(?:prevent|keep|stop)\s+' . $nextCase . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
             . '|\bnot\s+(?:an?\s+)?(?:intentional|deliberate|intended)\b~iu',
             $comment,
         ) === 1;
@@ -1027,17 +1033,21 @@ final class PerCs31Verifier
     {
         $intent = '(?:intentionally|deliberately|purposely)';
         $terminator = '(?:the\s+)?(?:break|return|termination)(?:\s+statement)?';
-        $purpose = '(?:\s+(?:so|to)\s+[^.!?]+)?';
-        $nextCase = '(?:into|to)\s+(?:the\s+)?next\s+case';
+        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
+        $destination = '(?:into|to)\s+' . $nextCase;
+        $continuation = '(?:(?:' . $intent . '\s+)?falls?[- ]?through'
+            . '(?:\s+' . $intent . ')?(?:\s+' . $destination . ')?'
+            . '|(?:execution\s+)?(?:' . $intent . '\s+)?(?:continues?|proceeds?)\s+' . $destination . ')';
+        $omission = '(?:(?:we\s+)?' . $intent . '\s+(?:omit|skip|leave\s+out)\s+' . $terminator
+            . '|' . $terminator . '\s+(?:is\s+)?' . $intent . '\s+(?:omitted|skipped|left\s+out))';
+        $purpose = '(?:\s+so\s+' . $nextCase . '\s+(?:(?:can|will)\s+(?:run|execute)|runs|executes))?';
 
+        // Match a complete declaration. Additional prose requires an exact review entry.
         return preg_match(
-            '/\A(?:no\s+break|(?:deliberate|intentional)\s+fall[- ]?through'
-            . '|(?:' . $intent . '\s+)?falls?[- ]?through'
-            . '(?:\s+' . $intent . ')?(?:\s+(?:' . $nextCase . '|to\s+[^.!?]+))?'
-            . '|(?:execution\s+)?' . $intent . '\s+(?:continues?|proceeds?)\s+' . $nextCase
-            . '|(?:we\s+)?' . $intent . '\s+(?:omit|skip|leave\s+out)\s+' . $terminator . $purpose
-            . '|' . $terminator . '\s+(?:is\s+)?' . $intent . '\s+(?:omitted|skipped|left\s+out)' . $purpose
-            . ')(?:[.!]|\s*[:;—-]\s+.+)?\z/iu',
+            '~\A(?:' . $continuation
+            . '|(?:no\s+break|(?:deliberate|intentional)\s+fall[- ]?through)(?:\s*[,;:—-]\s+' . $continuation . ')?'
+            . '|' . $omission . $purpose
+            . ')[.!]?\z~iu',
             $comment,
         ) === 1;
     }

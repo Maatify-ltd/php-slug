@@ -551,7 +551,22 @@ foreach ($cases as $name => [$expectedPass, $source]) {
 
 $reviewed = $root . '/reviewed.php';
 $approvalFile = $root . '/fallthrough.json';
-$approvalCases = [
+$commentCases = [
+    ['No break: continue to the next case.', null, 3, true],
+    ['Deliberate fall-through.', null, 3, true],
+    ['We intentionally omit the break so the following case executes.', null, 3, true],
+    ['No break: the next case must not execute.', null, 3, false],
+    ['No break: do not enter the next case.', null, 3, false],
+    ['No break: maybe use the next case.', null, 3, false],
+    ['Fall through to prevent the next case from running.', null, 3, false],
+    ['We intentionally omit the break so the next case is skipped.', null, 3, false],
+    ['No break: the next case handles the result.', null, 3, false],
+    ['No break: the next case handles the result.', 'case 1:', 3, true],
+    ['No break: the next case must not execute.', 'case 1:', 3, false],
+    ['No break: do not enter the next case.', 'case 1:', 3, false],
+    ['No break: maybe use the next case.', 'case 1:', 3, false],
+    ['We intentionally omit the break so the next case is skipped.', 'case 1:', 3, false],
+    ['Fall through to prevent the next case from running.', 'case 1:', 3, false],
     ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 3, true],
     ['نتعمّد تجاوز break حتى تكمل الحالة التالية.', 'case 1:', 3, true],
     ['"Does this case continue?"', 'case 1:', 3, false],
@@ -559,7 +574,7 @@ $approvalCases = [
     ['The break is left out on purpose so the next case handles the “?” token.', 'case 2:', 3, false],
     ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 4, false],
 ];
-foreach ($approvalCases as [$comment, $label, $line, $expectedPass]) {
+foreach ($commentCases as [$comment, $label, $line, $expectedPass]) {
     $source = <<<PHP
 <?php
 switch (\$value) {
@@ -571,20 +586,22 @@ switch (\$value) {
 }
 PHP;
     file_put_contents($reviewed, $source);
-    file_put_contents($approvalFile, json_encode([[
-        'file' => ltrim($reviewed, './'),
-        'line' => $line,
-        'case' => $label,
-        'comment' => $comment,
-    ]], JSON_THROW_ON_ERROR));
-    $errors = $verifier->verifyFiles([$reviewed], $approvalFile);
+    if ($label !== null) {
+        file_put_contents($approvalFile, json_encode([[
+            'file' => ltrim($reviewed, './'),
+            'line' => $line,
+            'case' => $label,
+            'comment' => $comment,
+        ]], JSON_THROW_ON_ERROR));
+    }
+    $errors = $verifier->verifyFiles([$reviewed], $label === null ? null : $approvalFile);
     if (($errors === []) === $expectedPass) {
         $pass++;
         continue;
     }
 
     $fail++;
-    fwrite(STDERR, sprintf("FAIL fall-through approval %s at line %d: %s%s", $label, $line, $comment, PHP_EOL));
+    fwrite(STDERR, sprintf("FAIL fall-through case %s at line %d: %s%s", $label ?? 'without approval', $line, $comment, PHP_EOL));
 }
 unlink($approvalFile);
 
