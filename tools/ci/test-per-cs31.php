@@ -583,6 +583,16 @@ $commentCases = [
     ["Deliberate fall-through.\n        // Do not enter\n        // the next case.", null, 3, false],
     ["Deliberate fall-through.\n        // Should we enter the next case?", null, 3, false],
     ["Deliberate fall-through.\n        // Break here.", null, 3, false],
+    ["Deliberate fall-through.\n        // Stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return here before entering the following case.", null, 3, false],
+    ["Deliberate fall-through.\n        // A helper can return here before the next case reads its data.", null, 3, true],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\"", null, 3, true, "echo 'Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\"", null, 3, false],
+    ["Deliberate fall-through.\n        // \"Do not enter the next case.\"", null, 3, false, "echo 'Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // \"Stop here before the next case.\"", null, 3, false, "echo 'Stop here before the next case.';"],
+    ["Deliberate fall-through.\n        // \"Does this case continue?\"", null, 3, false, "echo 'Does this case continue?';"],
+    ["Deliberate fall-through.\n        // Output: “Does this case continue?”", null, 3, true, "echo 'Does this case continue?';"],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\" Stop here before the next case.", null, 3, false, "echo 'Do not enter the next case.';"],
     ["Deliberate fall-through.\n        // Add a break.", null, 3, false],
     ["Deliberate fall-through.\n        // Should we break?", null, 3, false],
     ["Deliberate fall-through.\n        // Which report contains the total?", null, 3, true],
@@ -611,12 +621,14 @@ $commentCases = [
     ['The break is left out on purpose so the next case handles the “?” token.', 'case 2:', 3, false],
     ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 4, false],
 ];
-foreach ($commentCases as [$comment, $label, $line, $expectedPass]) {
+foreach ($commentCases as $case) {
+    [$comment, $label, $line, $expectedPass] = $case;
+    $statement = $case[4] ?? "echo 'one';";
     $source = <<<PHP
 <?php
 switch (\$value) {
     case 1:
-        echo 'one';
+        {$statement}
         // {$comment}
     case 2:
         break;
