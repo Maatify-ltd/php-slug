@@ -5,6 +5,10 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Management pagination uses `maatify/php-persistence`. Import `PageRequest` and `SortDirectionEnum` from the replacement package and use `PageResultDTO` for pagination results.
+
 ## [1.0.0-rc.2] - 2026-09-25
 
 ### Added

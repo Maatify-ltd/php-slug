@@ -24,7 +24,7 @@ Use `maatify/php-slug` when the package needs slug generation, canonicalization,
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ```
 
-This guide does not independently determine publication status.
+The examples below describe this checkout. For the exact published version, follow the [RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Non-goals / Host Boundaries
 
@@ -164,7 +164,7 @@ These operational reads are intended for the Host or management tooling and do n
 
 **Result**
 
-The `PageResult<ScopeDTO>` reports `total` for all persisted package Scopes and `filtered` after the optional filters. Namespace prefixes are literal prefixes, not SQL wildcard syntax. Pagination and deterministic sorting are defined by the Package Reference.
+The `PageResultDTO<ScopeDTO>` reports `total` for all persisted package Scopes and `filtered` after the optional filters. Namespace prefixes are literal prefixes, not SQL wildcard syntax. Pagination and deterministic sorting are defined by the Package Reference.
 
 **Boundary**
 
@@ -200,7 +200,7 @@ This is a Slug-domain Scope snapshot, not a generic dashboard or cross-package m
 
 **Result**
 
-The `PageResult<HistoryEventDTO>` uses `total` for the unfiltered package-wide or exact-Scope boundary and `filtered` after event-type/time-window filters. Filtering uses `occurredAt` at six-microsecond persistence precision, not `originalOccurredAt`; default ordering is deterministic by `occurred_at DESC`, then `id DESC`.
+The `PageResultDTO<HistoryEventDTO>` uses `total` for the unfiltered package-wide or exact-Scope boundary and `filtered` after event-type/time-window filters. Filtering uses `occurredAt` at six-microsecond persistence precision, not `originalOccurredAt`; default ordering is deterministic by `occurred_at DESC`, then `id DESC`.
 
 **Boundary**
 

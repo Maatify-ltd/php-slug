@@ -41,6 +41,7 @@ for ($run = 1; $run <= 2; $run++) {
         if (! is_file($consumerRoot . '/vendor/autoload.php')) {
             throw new RuntimeException('Composer did not create the consumer production autoload.');
         }
+        assertPersistenceInstallation($consumerRoot);
 
         runProcess(
             [PHP_BINARY, $consumerRoot . '/consumer.php'],
@@ -150,10 +151,16 @@ function writeConsumerComposerJson(string $consumerRoot, string $packageRoot): v
             'type' => 'path',
             'url' => $packageRoot,
             'canonical' => true,
-            'options' => ['symlink' => false],
+            'options' => [
+                'symlink' => false,
+                'versions' => ['maatify/php-slug' => 'dev-slug-consumer'],
+            ],
         ]],
-        'require' => ['maatify/php-slug' => '*'],
-        'minimum-stability' => 'dev',
+        'require' => [
+            'maatify/php-persistence' => '1.0.0-rc.1@RC',
+            'maatify/php-slug' => 'dev-slug-consumer@dev',
+        ],
+        'minimum-stability' => 'stable',
         'prefer-stable' => true,
         'config' => [
             'optimize-autoloader' => true,
@@ -161,6 +168,35 @@ function writeConsumerComposerJson(string $consumerRoot, string $packageRoot): v
         ],
     ];
     writeFile($consumerRoot . '/composer.json', json_encode($composer, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+}
+
+/** Checks the exact published dependency installed in the external project. */
+function assertPersistenceInstallation(string $consumerRoot): void
+{
+    $contents = file_get_contents($consumerRoot . '/vendor/composer/installed.json');
+    if ($contents === false) {
+        throw new RuntimeException('Composer installation metadata is unavailable in the consumer.');
+    }
+    $installed = json_decode($contents, true, flags: JSON_THROW_ON_ERROR);
+    if (! is_array($installed) || ! is_array($installed['packages'] ?? null)) {
+        throw new RuntimeException('Composer installation metadata is invalid in the consumer.');
+    }
+    $packages = array_column($installed['packages'], null, 'name');
+    $persistence = $packages['maatify/php-persistence'] ?? null;
+    $reference = '34c3b874525d36ae064c162cdd553bc75d18772b';
+    if (
+        isset($packages['maatify/persistence'])
+        || ! is_array($persistence)
+        || ! is_array($persistence['source'] ?? null)
+        || ! is_array($persistence['dist'] ?? null)
+        || ($persistence['version_normalized'] ?? null) !== '1.0.0.0-RC1'
+        || ($persistence['source']['reference'] ?? null) !== $reference
+        || ($persistence['dist']['reference'] ?? null) !== $reference
+        || ($persistence['installation-source'] ?? null) !== 'dist'
+    ) {
+        throw new RuntimeException('The consumer must install the pinned php-persistence RC from dist without the legacy package.');
+    }
+    echo "CONSUMER_PERSISTENCE_DIST=1.0.0-rc.1@34c3b874 PASS\n";
 }
 
 /** Writes the standalone consumer workflow executed against the installed package. */
@@ -171,6 +207,8 @@ function writeConsumerWorkflow(string $consumerRoot): void
 
 declare(strict_types=1);
 
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
 use Maatify\SharedCommon\Contracts\ClockInterface;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
@@ -191,6 +229,7 @@ use Maatify\Slug\Lifecycle\Enum\ChangeTypeEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\InputFormCanonicalityEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\MatchKindEnum;
 use Maatify\Slug\Lifecycle\Exception\SlugAlreadyClaimedException;
+use Maatify\Slug\Lifecycle\Management\Criteria\ScopeSearchCriteria;
 use Maatify\Slug\Canonicalization\Factory\SlugProfileRegistryFactory;
 use Maatify\Slug\Canonicalization\Factory\SlugTextServiceFactory;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
@@ -294,6 +333,12 @@ try {
     $current = $engine->getCurrent(new \Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria($identity));
     expect($current?->binding->state->currentSlug?->value === 'updated-page', 'Public current lookup did not observe persisted state.');
     expect($current?->revision === 2, 'Public current lookup returned an unexpected revision.');
+
+    $scopePage = $engine->searchScopes(new ScopeSearchCriteria(new PageRequest(page: 1, perPage: 1), 'consumer-harness-' . $run));
+    expect($scopePage instanceof PageResultDTO, 'The public management read did not return the shared Persistence page result.');
+    expect($scopePage->total === 1 && $scopePage->filtered === 1, 'Scope pagination returned unexpected counts.');
+    expect(count($scopePage->data) === 1 && $scopePage->data[0]->scope->namespace === 'consumer-harness-' . $run, 'Scope pagination returned an unexpected row.');
+    expect($scopePage->toArray()['pagination']['sort_by'] === 'id', 'Scope pagination changed its default sort key.');
 
     runConcurrencyProof($pdo, $engine, $profileKey, $run, $configuration);
 } finally {

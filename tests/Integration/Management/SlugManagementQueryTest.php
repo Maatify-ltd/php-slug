@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Tests\Integration\Management;
 
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;

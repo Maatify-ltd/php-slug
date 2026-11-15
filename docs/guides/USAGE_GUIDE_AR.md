@@ -25,7 +25,7 @@
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ~~~
 
-لا ينشئ هذا الدليل مصدرًا مستقلًا لتحديد حالة النشر.
+الأمثلة أدناه تخص نسخة الـCheckout الحالية. عند تثبيت الإصدار المنشور، اتبع [دليل استخدام RC.2](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## ما لا تهدف إليه الحزمة وحدود Host
 
@@ -165,7 +165,7 @@ SlugEngine::getBinding(new BindingCriteria($bindingIdentity)).
 
 **Result**
 
-يعيد `PageResult<ScopeDTO>` حيث `total` لكل Scopes و`filtered` بعد المرشحات.
+يعيد `PageResultDTO<ScopeDTO>` حيث `total` لكل Scopes و`filtered` بعد المرشحات.
 
 **Boundary**
 

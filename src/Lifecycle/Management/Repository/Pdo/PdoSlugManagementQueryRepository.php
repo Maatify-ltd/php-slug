@@ -7,13 +7,13 @@ namespace Maatify\Slug\Lifecycle\Management\Repository\Pdo;
 use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
-use Maatify\Persistence\Pdo\Pagination\PageResult;
-use Maatify\Persistence\Pdo\Pagination\PaginationConfig;
-use Maatify\Persistence\Pdo\Pagination\PdoPaginationQueryDescriptor;
-use Maatify\Persistence\Pdo\Pagination\PdoPaginator;
-use Maatify\Persistence\Pdo\Pagination\SortDirectionEnum;
-use Maatify\Persistence\Pdo\Pagination\SortWhitelist;
+use Maatify\PhpPersistence\Pagination\Config\PaginationConfig;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PdoPaginationQueryDescriptor;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
+use Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum;
+use Maatify\PhpPersistence\Pagination\Repository\PdoPaginator;
+use Maatify\PhpPersistence\Pagination\ValueObject\SortWhitelist;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingSearchCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\HistoryCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\HistorySearchCriteria;
@@ -56,9 +56,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns a page of active and retired aliases for one binding.
      *
-     * @return PageResult<AliasDTO>
+     * @return PageResultDTO<AliasDTO>
      */
-    public function listAliases(int $bindingId, PageRequest $request): PageResult
+    public function listAliases(int $bindingId, PageRequest $request): PageResultDTO
     {
         $predicate = 'r.binding_id = :binding_id AND r.claim_role IN (\'ACTIVE_ALIAS\', \'RETIRED_ALIAS\')';
         $descriptor = new PdoPaginationQueryDescriptor(
@@ -76,9 +76,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns a page of history events, optionally filtered by event type.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function getHistory(int $bindingId, ?HistoryEventTypeEnum $eventType, PageRequest $request): PageResult
+    public function getHistory(int $bindingId, ?HistoryEventTypeEnum $eventType, PageRequest $request): PageResultDTO
     {
         $predicate = 'h.binding_id = :binding_id';
         $params = ['binding_id' => $bindingId];
@@ -102,9 +102,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns a page of claims within a scope, optionally narrowed by binding and role.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function inspectRegistry(int $scopeId, ?int $bindingId, ?RegistryRoleEnum $role, PageRequest $request): PageResult
+    public function inspectRegistry(int $scopeId, ?int $bindingId, ?RegistryRoleEnum $role, PageRequest $request): PageResultDTO
     {
         [$predicate, $params] = $this->registryPredicate($scopeId, $bindingId, $role);
         $descriptor = new PdoPaginationQueryDescriptor(
@@ -122,9 +122,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns a page of bindings matching entity and lifecycle filters.
      *
-     * @return PageResult<BindingDTO>
+     * @return PageResultDTO<BindingDTO>
      */
-    public function searchBindings(int $scopeId, BindingSearchCriteria $criteria): PageResult
+    public function searchBindings(int $scopeId, BindingSearchCriteria $criteria): PageResultDTO
     {
         $predicate = 'b.scope_id = :scope_id';
         $params = ['scope_id' => $scopeId];
@@ -155,9 +155,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns a page of registry claims matching slug, role, and binding filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function searchRegistry(int $scopeId, RegistrySearchCriteria $criteria): PageResult
+    public function searchRegistry(int $scopeId, RegistrySearchCriteria $criteria): PageResultDTO
     {
         $predicate = 'r.scope_id = :scope_id';
         $params = ['scope_id' => $scopeId];
@@ -188,9 +188,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns all persisted Scopes with literal-prefix/profile filtering.
      *
-     * @return PageResult<ScopeDTO>
+     * @return PageResultDTO<ScopeDTO>
      */
-    public function searchScopes(ScopeSearchCriteria $criteria): PageResult
+    public function searchScopes(ScopeSearchCriteria $criteria): PageResultDTO
     {
         $predicate = '1 = 1';
         $params = [];
@@ -259,9 +259,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
     /**
      * Returns operational History by exact persisted Scope snapshot and occurred-at window.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function searchHistory(HistorySearchCriteria $criteria): PageResult
+    public function searchHistory(HistorySearchCriteria $criteria): PageResultDTO
     {
         $base = '1 = 1';
         $filtered = $base;

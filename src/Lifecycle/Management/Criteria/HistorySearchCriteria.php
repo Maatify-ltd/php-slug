@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Maatify\Slug\Lifecycle\Management\Criteria;
 
 use DateTimeImmutable;
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
 use Maatify\Slug\Lifecycle\Command\CommandAssertions;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;

@@ -19,6 +19,8 @@
 
 المرجع الحالي للعقد العام هو [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). تُحفظ أدلة التنفيذ في سجل GitHub PR وCI بدل تكرارها في ملف README هذا الموجّه للمستهلك.
 
+المتطلبات والأمثلة أدناه تخص نسخة الـCheckout الحالية. الإصدار المنشور يحتفظ باعتماده الأصلي.
+
 ## ملخص الحزمة
 
 `maatify/php-slug` مكتبة PHP مستقلة لتوليد Slug وCanonicalization والملكية المقيّدة بالنطاق وإدارة دورة الحياة والـAliases والـHistory والـResolution، مع Persistence مملوكة للحزمة عبر PDO MySQL.
@@ -39,7 +41,7 @@
 | PHP | ^8.4 |
 | قاعدة البيانات | PDO MySQL؛ وmysql:8.0.36 هو هدف قابلية إعادة الإنتاج في CI |
 | Extensions | ext-intl, ext-mbstring, ext-pdo, ext-pdo_mysql |
-| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, maatify/persistence ^1.1 |
+| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, `maatify/php-persistence 1.0.0-rc.1` (تجربة الـCheckout) |
 
 تحتاج الـProfiles المدمجة إلى capabilities الخاصة بالـnormalization والـtransliteration التي يوفرها `ext-intl`، وتتحقق الحزمة منها أثناء التشغيل. لا يحتاج المستهلك إلى إصدار محدد من ICU أو Unicode.
 
@@ -50,6 +52,8 @@
 ~~~bash
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ~~~
+
+بعد التثبيت، اتبع [دليل استخدام RC.2 المنشورة](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## الاستخدام السريع
 

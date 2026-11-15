@@ -35,6 +35,8 @@ An independent PHP slug lifecycle engine with clear boundaries between the slug 
 
 The current public contract is owned by [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). Execution evidence is maintained in GitHub PR and CI history rather than duplicated in this consumer-facing README.
 
+The requirements and usage below describe this checkout. The published version keeps its original Composer dependency.
+
 ## Package Summary
 
 `maatify/php-slug` is a standalone PHP library for slug generation, canonicalization, scoped ownership, lifecycle management, aliases, history, resolution, and package-owned PDO MySQL persistence.
@@ -55,7 +57,7 @@ The current public contract is owned by [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKA
 | PHP | `^8.4` |
 | Database | PDO MySQL; `mysql:8.0.36` is the CI reproducibility target |
 | Extensions | `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
-| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/persistence ^1.1` |
+| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
 
 Built-in profiles require the normalization and transliteration capabilities provided by `ext-intl`; the package verifies those capabilities at runtime. No exact ICU or Unicode version is required from the consumer.
 
@@ -66,6 +68,8 @@ Install the published Release Candidate with:
 ```bash
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ```
+
+After installation, follow the [published RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Quick Usage
 

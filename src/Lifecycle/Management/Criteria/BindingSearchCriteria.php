@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Lifecycle\Management\Criteria;
 
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
