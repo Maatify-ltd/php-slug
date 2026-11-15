@@ -10,6 +10,6 @@ The active built-in profile runtime compatibility decision is registered below.
 
 ## Registered Decisions
 
-| Decision ID | Title | Status | Scope | Concern | Decision Record | Canonical Contract / Current Owner |
-|---|---|---|---|---|---|---|
-| `DEC-001` | Built-in Profile Runtime Compatibility | `ACTIVE` | `/` | Built-in slug profile runtime compatibility | [DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md](DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md) | `SLUG_PACKAGE_REFERENCE.md` §§4–5 |
+| Decision ID | Title | Status | Scope / Concern | Decision Record | Canonical Contract / Current Owner | Supersedes | Superseded By |
+|---|---|---|---|---|---|---|---|
+| `DEC-001` | Built-in Profile Runtime Compatibility | `ACTIVE` | `/` — Built-in slug profile runtime compatibility | [DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md](DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md) | `SLUG_PACKAGE_REFERENCE.md` §§4–5 | — | — |
