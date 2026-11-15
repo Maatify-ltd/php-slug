@@ -587,6 +587,8 @@ $commentCases = [
     ["Deliberate fall-through.\n        // Should we break?", null, 3, false],
     ["Deliberate fall-through.\n        // Which report contains the total?", null, 3, true],
     ["Which report contains the total?\n        // Deliberate fall-through.", null, 3, true],
+    ["Deliberate fall-through.\n        // What data does the next case need?", null, 3, true],
+    ["Deliberate fall-through.\n        // Should the next case execute?", null, 3, false],
     ["Deliberate fall-through.\n        // The helper may return here with an empty payload.", null, 3, true],
     ['No break here; the next case handles the result.', 'case 1:', 3, true],
     ['We intentionally omit the break so the following case executes.', null, 3, true],

@@ -1020,10 +1020,15 @@ final class PerCs31Verifier
     private static function hasUncertainFallthroughClause(string $comment): bool
     {
         $clauses = preg_split('~(?<=[.!?؟])\s+~u', $comment) ?: [$comment];
-        $reference = '~\b(?:falls?[- ]?through|(?:next|following)\s+case|no\s+break'
+        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
+        $action = '(?:enter|run|execute|reach|skip|bypass|avoid|(?:continue|proceed|jump|go)\s+(?:into|to|with))';
+        $auxiliary = '(?:does|should|will|must|can|could|would|may|might)';
+        $reference = '~\b(?:falls?[- ]?through|no\s+break'
+            . '|' . $action . '\s+' . $nextCase
+            . '|(?:' . $auxiliary . '\s+' . $nextCase . '|' . $nextCase . '(?:\s+' . $auxiliary . ')?)\s+(?:runs?|executes?|be\s+(?:entered|executed|reached|run))'
             . '|(?:break|return|stop|terminate)\s+(?:here|instead)|(?:add|omit|need)\s+(?:a|the)\s+break'
             . '|(?:should|must|do|can|could|would)\s+(?:we|it|this\s+case)\s+(?:break|continue|proceed|stop|return|terminate)(?=\s*[.!?؟]|\s*\z)'
-            . '|الحالة\s+(?:التالية|القادمة))\b~iu';
+            . '|(?:ندخل|تدخل|الدخول|ننفذ|تنفذ|تنفيذ|ننتقل|تنتقل|الانتقال)\s+(?:إلى\s+)?الحالة\s+(?:التالية|القادمة))\b~iu';
         foreach ($clauses as $clause) {
             if (preg_match($reference, $clause) === 1 && self::isUncertainFallthrough($clause)) {
                 return true;
