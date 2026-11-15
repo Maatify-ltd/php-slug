@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Lifecycle\Management\Repository;
 
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
-use Maatify\Persistence\Pdo\Pagination\PageResult;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AliasDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingDTO;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
@@ -25,44 +25,44 @@ interface ManagementQueryRepositoryInterface
     /**
      * Returns aliases for one binding.
      *
-     * @return PageResult<AliasDTO>
+     * @return PageResultDTO<AliasDTO>
      */
-    public function listAliases(int $bindingId, PageRequest $request): PageResult;
+    public function listAliases(int $bindingId, PageRequest $request): PageResultDTO;
 
     /**
      * Returns history for one binding, optionally filtered by event type.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function getHistory(int $bindingId, ?HistoryEventTypeEnum $eventType, PageRequest $request): PageResult;
+    public function getHistory(int $bindingId, ?HistoryEventTypeEnum $eventType, PageRequest $request): PageResultDTO;
 
     /**
      * Returns registry claims for a scope, optionally narrowed by binding and role.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function inspectRegistry(int $scopeId, ?int $bindingId, ?RegistryRoleEnum $role, PageRequest $request): PageResult;
+    public function inspectRegistry(int $scopeId, ?int $bindingId, ?RegistryRoleEnum $role, PageRequest $request): PageResultDTO;
 
     /**
      * Returns bindings matching the supplied scope and filters.
      *
-     * @return PageResult<BindingDTO>
+     * @return PageResultDTO<BindingDTO>
      */
-    public function searchBindings(int $scopeId, BindingSearchCriteria $criteria): PageResult;
+    public function searchBindings(int $scopeId, BindingSearchCriteria $criteria): PageResultDTO;
 
     /**
      * Returns registry claims matching the supplied scope and filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function searchRegistry(int $scopeId, RegistrySearchCriteria $criteria): PageResult;
+    public function searchRegistry(int $scopeId, RegistrySearchCriteria $criteria): PageResultDTO;
 
     /**
      * Returns all persisted Scopes matching the supplied search criteria.
      *
-     * @return PageResult<ScopeDTO>
+     * @return PageResultDTO<ScopeDTO>
      */
-    public function searchScopes(ScopeSearchCriteria $criteria): PageResult;
+    public function searchScopes(ScopeSearchCriteria $criteria): PageResultDTO;
 
     /** Returns persisted operational counts for one Scope. */
     public function getScopeOperationalSummary(ScopeDTO $scope): ScopeOperationalSummaryDTO;
@@ -70,7 +70,7 @@ interface ManagementQueryRepositoryInterface
     /**
      * Returns package history using persisted event Scope snapshots for attribution.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function searchHistory(HistorySearchCriteria $criteria): PageResult;
+    public function searchHistory(HistorySearchCriteria $criteria): PageResultDTO;
 }

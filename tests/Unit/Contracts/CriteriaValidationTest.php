@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Tests\Unit\Contracts;
 
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingSearchCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\RegistrySearchCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\HistorySearchCriteria;

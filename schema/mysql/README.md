@@ -32,7 +32,7 @@ verification targets only; runtime acceptance is capability-based.
 ## Canonical integration infrastructure
 
 Integration, System, complete-suite, and Consumer Harness verification use the
-repository-owned canonical lifecycle:
+canonical lifecycle from a [repository checkout](../../CONTRIBUTING.md#prerequisites-for-local-development):
 
 ```text
 compose.integration.yml
@@ -45,7 +45,7 @@ non-production credentials through the process environment, probes readiness
 with PDO, and tears down the disposable state on success or failure. Developers
 do not start MySQL manually or configure a database endpoint themselves.
 
-Use these local entry points:
+Run these commands from the repository root:
 
 ```bash
 composer test:integration

@@ -5,7 +5,11 @@
 
 <div align="center">
 
-![Maatify.dev](https://www.maatify.dev/assets/img/img/maatify_logo_white.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://www.maatify.dev/company-profile/maatify_logo_white.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+  <img alt="Maatify.dev" src="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+</picture>
 
 محرك مستقل لدورة حياة Slug في حزم PHP، مع حدود واضحة بين نطاق Slug وHost وURL وHTTP وSEO.
 
@@ -18,6 +22,8 @@
 إن `v1.0.0-rc.2` هي Published Release Candidate الحالية والمتاحة عبر Packagist. وتبقى Pre-Stable، ولا تنشئ Stable support line، ولا يوجد Published Stable release. النشر الفعلي لا يعني الجاهزية للإصدار Stable.
 
 المرجع الحالي للعقد العام هو [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). تُحفظ أدلة التنفيذ في سجل GitHub PR وCI بدل تكرارها في ملف README هذا الموجّه للمستهلك.
+
+المتطلبات والأمثلة أدناه تخص نسخة الـCheckout الحالية. متطلبات RC.2 المنشورة موجودة في دليل نسختها المرتبط بقسم التثبيت.
 
 ## ملخص الحزمة
 
@@ -36,10 +42,12 @@
 
 | المتطلب | القيمة |
 |---|---|
-| PHP | ^8.4 |
+| PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | قاعدة البيانات | PDO MySQL؛ وmysql:8.0.36 هو هدف قابلية إعادة الإنتاج في CI |
 | Extensions | ext-intl, ext-mbstring, ext-pdo, ext-pdo_mysql |
-| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, maatify/persistence ^1.1 |
+| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, `maatify/php-persistence 1.0.0-rc.1` (تجربة الـCheckout) |
+
+تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.
 
 تحتاج الـProfiles المدمجة إلى capabilities الخاصة بالـnormalization والـtransliteration التي يوفرها `ext-intl`، وتتحقق الحزمة منها أثناء التشغيل. لا يحتاج المستهلك إلى إصدار محدد من ICU أو Unicode.
 
@@ -50,6 +58,8 @@
 ~~~bash
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ~~~
+
+بعد التثبيت، اتبع [دليل استخدام RC.2 المنشورة](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## الاستخدام السريع
 
@@ -84,7 +94,7 @@ $slug = $text->generateFromSource(
 - examples/custom-profile.php: مثال تسجيل واستخدام custom profile عبر Public API.
 - examples/persisted-lifecycle.php: مثال persisted لدورة MySQL باستخدام Compose lifecycle canonical.
 
-يعمل مثالا canonicalization وcustom-profile دون Docker. أما مثال persisted فيحتاج إلى بيئة Integration التي يوفرها tools/ci/run-gate.sh.
+يعمل مثالا canonicalization وcustom-profile دون Docker. شغّل المثال persisted من نسخة مستودع عبر [فحص الأمثلة](CONTRIBUTING.md#4-examples-smoke-verification).
 
 ## الوثائق
 
@@ -114,7 +124,7 @@ $slug = $text->generateFromSource(
 
 ## التطوير والاختبار
 
-لإعداد المستودع والاختبارات وبوابات الأمثلة، راجع CONTRIBUTING.md. يحتاج المثال persisted إلى Compose lifecycle canonical وMySQL مؤقت؛ لا تستخدم External MySQL.
+لإعداد المستودع والاختبارات وبوابات الأمثلة، راجع [دليل المساهمة](CONTRIBUTING.md). يستخدم المثال persisted خدمة MySQL مؤقتة من نسخة المستودع.
 
 ## الترخيص
 

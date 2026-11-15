@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Lifecycle\Management\Service;
 
-use Maatify\Persistence\Pdo\Pagination\PageResult;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
 use Maatify\Slug\Lifecycle\Management\Service\SlugManagementQueryInterface;
 use Maatify\Slug\Lifecycle\Management\Criteria\AliasCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingCriteria;
@@ -61,9 +61,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns a page of aliases; an absent binding produces an empty result page.
      *
-     * @return PageResult<AliasDTO>
+     * @return PageResultDTO<AliasDTO>
      */
-    public function listAliases(AliasCriteria $criteria): PageResult
+    public function listAliases(AliasCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         $binding = $this->registry->binding($criteria->binding);
@@ -73,9 +73,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns a page of history events; an absent binding produces an empty result page.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function getHistory(HistoryCriteria $criteria): PageResult
+    public function getHistory(HistoryCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         $binding = $this->registry->binding($criteria->binding);
@@ -85,9 +85,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns scoped registry claims and rejects a binding from another scope/profile.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function inspectRegistry(RegistryCriteria $criteria): PageResult
+    public function inspectRegistry(RegistryCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         if ($criteria->binding !== null && ! $this->sameScopeProfile($criteria->scopeProfile, $criteria->binding->scopeProfile)) {
@@ -111,9 +111,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns persisted package Scopes matching the optional search filters.
      *
-     * @return PageResult<ScopeDTO>
+     * @return PageResultDTO<ScopeDTO>
      */
-    public function searchScopes(ScopeSearchCriteria $criteria): PageResult
+    public function searchScopes(ScopeSearchCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         return $this->queries->searchScopes($criteria);
@@ -130,9 +130,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns operational History using the event's persisted Scope snapshot.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function searchHistory(HistorySearchCriteria $criteria): PageResult
+    public function searchHistory(HistorySearchCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         if ($criteria->scopeProfile !== null) {
@@ -145,9 +145,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns bindings in the requested scope that match the search filters.
      *
-     * @return PageResult<BindingDTO>
+     * @return PageResultDTO<BindingDTO>
      */
-    public function searchBindings(BindingSearchCriteria $criteria): PageResult
+    public function searchBindings(BindingSearchCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         $scope = $this->registry->findScope($criteria->scopeProfile->scope, $criteria->scopeProfile->expectedProfileKey);
@@ -157,9 +157,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     /**
      * Returns registry claims in the requested scope that match the search filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function searchRegistry(RegistrySearchCriteria $criteria): PageResult
+    public function searchRegistry(RegistrySearchCriteria $criteria): PageResultDTO
     {
         $this->capabilities->assertInstalledSchemaSupported();
         $scope = $this->registry->findScope($criteria->scopeProfile->scope, $criteria->scopeProfile->expectedProfileKey);

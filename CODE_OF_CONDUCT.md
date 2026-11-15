@@ -1,7 +1,7 @@
 # Code of Conduct — maatify/php-slug
 
-[![Maatify Slug](https://img.shields.io/badge/Maatify-Slug-blue?style=for-the-badge)](https://github.com/Maatify/php-slug)
-[![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-9C27B0?style=for-the-badge)](https://github.com/Maatify)
+[![Maatify Slug](https://img.shields.io/badge/Maatify-Slug-blue?style=for-the-badge)](https://github.com/Maatify-ltd/php-slug)
+[![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-9C27B0?style=for-the-badge)](https://github.com/Maatify-ltd)
 
 ## Our Pledge
 

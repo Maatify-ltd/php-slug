@@ -2,18 +2,22 @@
 
 # Maatify Slug
 
-![Maatify.dev](https://www.maatify.dev/assets/img/img/maatify_logo_white.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://www.maatify.dev/company-profile/maatify_logo_white.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+  <img alt="Maatify.dev" src="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+</picture>
 
 [![Status](https://img.shields.io/badge/Status-Release%20Candidate-orange.svg)](#publication-state)
 [![Version](https://img.shields.io/badge/Version-v1.0.0--rc.2-blue.svg)](https://packagist.org/packages/maatify/php-slug)
-[![PHP](https://img.shields.io/badge/PHP-^8.4-777bb4.svg?logo=php&logoColor=white)](#requirements)
+[![PHP](https://img.shields.io/badge/PHP-%3E%3D8.4.27%20%3C8.5.0%20%7C%7C%20%3E%3D8.5.12%20%3C9.0.0-8892BF)](composer.json)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PHPStan](https://img.shields.io/badge/PHPStan-Max-brightgreen.svg)](#quality-status)
 
 [![Packagist](https://img.shields.io/badge/Packagist-Distribution-blue.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Total Downloads](https://img.shields.io/packagist/dt/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
-[![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify)
+[![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify-ltd)
 [![Install](https://img.shields.io/badge/Install-1.0.0--rc.2%40RC-blue.svg)](#installation)
 
 [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue.svg)](docs/guides/USAGE_GUIDE.md)
@@ -35,6 +39,8 @@ An independent PHP slug lifecycle engine with clear boundaries between the slug 
 
 The current public contract is owned by [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). Execution evidence is maintained in GitHub PR and CI history rather than duplicated in this consumer-facing README.
 
+The requirements and usage below describe this checkout. For the published RC.2 requirements, see its linked usage guide under Installation.
+
 ## Package Summary
 
 `maatify/php-slug` is a standalone PHP library for slug generation, canonicalization, scoped ownership, lifecycle management, aliases, history, resolution, and package-owned PDO MySQL persistence.
@@ -52,10 +58,12 @@ The current public contract is owned by [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKA
 
 | Requirement | Value |
 |---|---|
-| PHP | `^8.4` |
+| PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | Database | PDO MySQL; `mysql:8.0.36` is the CI reproducibility target |
 | Extensions | `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
-| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/persistence ^1.1` |
+| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
+
+CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 
 Built-in profiles require the normalization and transliteration capabilities provided by `ext-intl`; the package verifies those capabilities at runtime. No exact ICU or Unicode version is required from the consumer.
 
@@ -66,6 +74,8 @@ Install the published Release Candidate with:
 ```bash
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ```
+
+After installation, follow the [published RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Quick Usage
 
@@ -100,7 +110,7 @@ This overview does not replace the complete inventory and contracts in [`SLUG_PA
 - [`examples/custom-profile.php`](examples/custom-profile.php): a stateless custom profile registration and usage example.
 - [`examples/persisted-lifecycle.php`](examples/persisted-lifecycle.php): a persisted MySQL lifecycle example using the canonical Compose flow.
 
-The canonicalization and custom-profile examples run without Docker. The persisted example requires the Integration environment provided by [`tools/ci/run-gate.sh`](tools/ci/run-gate.sh).
+The canonicalization and custom-profile examples run without Docker. Run the persisted example from a repository checkout using the [examples smoke verification](CONTRIBUTING.md#4-examples-smoke-verification).
 
 ## Documentation
 
@@ -130,7 +140,7 @@ The package is maintained behind the repository's configured CI and quality gate
 
 ## Development and Testing
 
-For repository setup, tests, and example gates, see [`CONTRIBUTING.md`](CONTRIBUTING.md). The persisted example requires the canonical Compose lifecycle and disposable MySQL; do not use an external MySQL instance.
+For repository setup, tests, and example gates, see [`CONTRIBUTING.md`](CONTRIBUTING.md). The persisted example uses the checkout’s disposable MySQL service.
 
 ## License
 

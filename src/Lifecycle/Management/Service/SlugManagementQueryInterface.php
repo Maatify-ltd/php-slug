@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Lifecycle\Management\Service;
 
-use Maatify\Persistence\Pdo\Pagination\PageResult;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
 use Maatify\Slug\Lifecycle\Management\Criteria\AliasCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingSearchCriteria;
@@ -35,23 +35,23 @@ interface SlugManagementQueryInterface
     /**
      * Returns a page of alias claims for the requested binding.
      *
-     * @return PageResult<AliasDTO>
+     * @return PageResultDTO<AliasDTO>
      */
-    public function listAliases(AliasCriteria $criteria): PageResult;
+    public function listAliases(AliasCriteria $criteria): PageResultDTO;
 
     /**
      * Returns a page of lifecycle history events for the requested binding.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function getHistory(HistoryCriteria $criteria): PageResult;
+    public function getHistory(HistoryCriteria $criteria): PageResultDTO;
 
     /**
      * Returns a page of registry claims within the requested scope and filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function inspectRegistry(RegistryCriteria $criteria): PageResult;
+    public function inspectRegistry(RegistryCriteria $criteria): PageResultDTO;
 
     /** Returns a scope snapshot or null when the requested scope is absent. */
     public function inspectScope(ScopeCriteria $criteria): ?ScopeDTO;
@@ -59,9 +59,9 @@ interface SlugManagementQueryInterface
     /**
      * Returns persisted package Scopes matching the optional literal filters.
      *
-     * @return PageResult<ScopeDTO>
+     * @return PageResultDTO<ScopeDTO>
      */
-    public function searchScopes(ScopeSearchCriteria $criteria): PageResult;
+    public function searchScopes(ScopeSearchCriteria $criteria): PageResultDTO;
 
     /** Returns operational counts for a Scope, or null when the Scope is absent. */
     public function getScopeOperationalSummary(ScopeCriteria $criteria): ?ScopeOperationalSummaryDTO;
@@ -69,21 +69,21 @@ interface SlugManagementQueryInterface
     /**
      * Returns package history, optionally narrowed to an exact persisted Scope snapshot.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function searchHistory(HistorySearchCriteria $criteria): PageResult;
+    public function searchHistory(HistorySearchCriteria $criteria): PageResultDTO;
 
     /**
      * Returns a page of bindings matching the requested search criteria.
      *
-     * @return PageResult<BindingDTO>
+     * @return PageResultDTO<BindingDTO>
      */
-    public function searchBindings(BindingSearchCriteria $criteria): PageResult;
+    public function searchBindings(BindingSearchCriteria $criteria): PageResultDTO;
 
     /**
      * Returns a page of registry claims matching the requested search criteria.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function searchRegistry(RegistrySearchCriteria $criteria): PageResult;
+    public function searchRegistry(RegistrySearchCriteria $criteria): PageResultDTO;
 }

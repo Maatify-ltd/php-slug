@@ -20,7 +20,7 @@ use Maatify\Slug\Lifecycle\Management\Criteria\ScopeCriteria;
 use Maatify\Slug\Lifecycle\Management\Criteria\ScopeSearchCriteria;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
-use Maatify\Persistence\Pdo\Pagination\PageRequest;
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 

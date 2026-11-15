@@ -18,6 +18,11 @@ composer_policy() {
     php tools/ci/test-composer-policy.php
 }
 
+php_runtime() {
+    require_command php
+    php tools/ci/verify-php-runtime.php "$1"
+}
+
 latest_dependencies() {
     require_command composer
     composer_policy
@@ -25,6 +30,7 @@ latest_dependencies() {
     composer update --no-interaction --prefer-dist --no-progress
     composer dump-autoload --optimize --strict-psr
     composer check-platform-reqs
+    composer check:php-constraint
 }
 
 lowest_dependencies() {
@@ -34,6 +40,7 @@ lowest_dependencies() {
     composer update --prefer-lowest --prefer-stable --no-interaction --prefer-dist --no-progress
     composer dump-autoload --optimize --strict-psr
     composer check-platform-reqs
+    composer check:php-constraint
     composer audit --no-interaction --abandoned=fail
 }
 
@@ -213,6 +220,7 @@ Gates:
   test-system      System suite through the canonical Compose lifecycle
   syntax           PHP syntax for src/, tests/, tools/, examples/, and PHP tool configuration
   phpstan          PHPStan max using phpstan.neon
+  php-runtime MINOR Verify the actual Stable PHP interpreter and patch floor for MINOR
   style            Composite PER-CS 3.1 verification (PHP CS Fixer + supplemental verifier)
   audit            Composer security and abandoned-package audit
   schema           Verify the package-owned schema path exists
@@ -236,6 +244,7 @@ case "$gate" in
     test-system) test_system ;;
     syntax) syntax ;;
     phpstan) phpstan ;;
+    php-runtime) php_runtime "${2:-}" ;;
     style) style ;;
     audit) audit ;;
     schema) schema_contract ;;

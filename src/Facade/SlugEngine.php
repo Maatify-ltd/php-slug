@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Facade;
 
-use Maatify\Persistence\Pdo\Pagination\PageResult;
+use Maatify\PhpPersistence\Pagination\DTO\PageResultDTO;
 use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
 use Maatify\Slug\Lifecycle\Command\AdoptAliasCommand;
 use Maatify\Slug\Lifecycle\Command\AdoptCurrentCommand;
@@ -237,27 +237,27 @@ final class SlugEngine implements SlugTextServiceInterface, SlugProfileRegistryI
     /**
      * Returns a paginated view of a binding's alias claims.
      *
-     * @return PageResult<AliasDTO>
+     * @return PageResultDTO<AliasDTO>
      */
-    public function listAliases(AliasCriteria $criteria): PageResult
+    public function listAliases(AliasCriteria $criteria): PageResultDTO
     {
         return $this->management->listAliases($criteria);
     }
     /**
      * Returns a paginated history view for a binding.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function getHistory(HistoryCriteria $criteria): PageResult
+    public function getHistory(HistoryCriteria $criteria): PageResultDTO
     {
         return $this->management->getHistory($criteria);
     }
     /**
      * Returns paginated registry claims within the requested scope and filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function inspectRegistry(RegistryCriteria $criteria): PageResult
+    public function inspectRegistry(RegistryCriteria $criteria): PageResultDTO
     {
         return $this->management->inspectRegistry($criteria);
     }
@@ -269,9 +269,9 @@ final class SlugEngine implements SlugTextServiceInterface, SlugProfileRegistryI
     /**
      * Returns persisted package Scopes matching optional literal filters.
      *
-     * @return PageResult<ScopeDTO>
+     * @return PageResultDTO<ScopeDTO>
      */
-    public function searchScopes(ScopeSearchCriteria $criteria): PageResult
+    public function searchScopes(ScopeSearchCriteria $criteria): PageResultDTO
     {
         return $this->management->searchScopes($criteria);
     }
@@ -283,27 +283,27 @@ final class SlugEngine implements SlugTextServiceInterface, SlugProfileRegistryI
     /**
      * Returns package History using persisted event Scope snapshots and optional windows.
      *
-     * @return PageResult<HistoryEventDTO>
+     * @return PageResultDTO<HistoryEventDTO>
      */
-    public function searchHistory(HistorySearchCriteria $criteria): PageResult
+    public function searchHistory(HistorySearchCriteria $criteria): PageResultDTO
     {
         return $this->management->searchHistory($criteria);
     }
     /**
      * Returns paginated bindings matching the requested scope and search filters.
      *
-     * @return PageResult<BindingDTO>
+     * @return PageResultDTO<BindingDTO>
      */
-    public function searchBindings(BindingSearchCriteria $criteria): PageResult
+    public function searchBindings(BindingSearchCriteria $criteria): PageResultDTO
     {
         return $this->management->searchBindings($criteria);
     }
     /**
      * Returns paginated registry claims matching the requested search filters.
      *
-     * @return PageResult<RegistryClaimDTO>
+     * @return PageResultDTO<RegistryClaimDTO>
      */
-    public function searchRegistry(RegistrySearchCriteria $criteria): PageResult
+    public function searchRegistry(RegistrySearchCriteria $criteria): PageResultDTO
     {
         return $this->management->searchRegistry($criteria);
     }
