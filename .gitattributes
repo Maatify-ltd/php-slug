@@ -1,0 +1,13 @@
+/.agents export-ignore
+/.github export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.php-cs-fixer.php export-ignore
+/AGENTS.md export-ignore
+/compose.integration.yml export-ignore
+/docs/decisions export-ignore
+/docs/php-engineering-standards export-ignore
+/phpstan.neon export-ignore
+/phpunit.xml.dist export-ignore
+/tests export-ignore
+/tools export-ignore

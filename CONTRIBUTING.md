@@ -27,10 +27,14 @@ Any contribution must strictly respect these boundaries. Architectural changes s
 
 ## Prerequisites for Local Development
 
-- **PHP:** `^8.4`
+Use a [repository checkout](https://github.com/Maatify-ltd/php-slug) for this setup and the commands below. The distribution archive ships the runtime, schema, and consumer examples. The [CI tooling](https://github.com/Maatify-ltd/php-slug/tree/main/tools/ci) and disposable database configuration are available in the checkout.
+
+- **PHP (Composer):** `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`
 - **Extensions:** `intl`, `mbstring`, `pdo`, `pdo_mysql`
 - **Docker Engine:** Required for Integration, System, complete-suite, Consumer Harness, and examples-smoke gates.
 - **Docker Compose v2:** Required for the repository-owned Integration lifecycle.
+
+CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 
 The PHP runtime remains on the host or CI runner. The canonical disposable database uses
 `mysql:8.0.36`, binds a dynamic port on loopback, and uses the temporary database
@@ -41,7 +45,7 @@ external MySQL service or export `SLUG_TEST_DB_*` variables manually.
 
 ## Running Tests and Quality Gates
 
-Before submitting a Pull Request, ensure that all quality gates pass locally. The single source of truth for running gates is the `tools/ci/run-gate.sh` script.
+Run the applicable gates from the repository root before submitting a pull request. Install the Composer development dependencies to run the Composer checks.
 
 ### 1. Static Analysis & Coding Standards
 
@@ -50,7 +54,14 @@ bash tools/ci/run-gate.sh latest-quality
 ```
 This runs PHPStan and PHP-CS-Fixer.
 
-Note: In CI, this quality gate is exercised on both PHP 8.4 and PHP 8.5 to ensure compatibility.
+Check the actual PHP interpreter for the PHP 8.4 lane and the declared Composer constraint boundaries:
+
+```bash
+bash tools/ci/run-gate.sh php-runtime 8.4
+composer check:php-constraint
+```
+
+Use `php-runtime 8.5` for the PHP 8.5 lane.
 
 ### 2. Run Test Suites
 

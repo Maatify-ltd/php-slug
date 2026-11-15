@@ -7,6 +7,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 
 ### Changed
 
+- The PHP constraint is now `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5.
 - Management pagination uses `maatify/php-persistence`. Import `PageRequest` and `SortDirectionEnum` from the replacement package and use `PageResultDTO` for pagination results.
 
 ## [1.0.0-rc.2] - 2026-09-25
@@ -39,6 +40,6 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - **Release Lifecycle:** `v1.0.0-rc.1` is the first SemVer Release Candidate. It is Pre-Stable and does not create a Stable support line.
 - **Publication Truth:** A CHANGELOG entry alone is not publication proof; Published state is determined by external Composer resolvability of the matching version through the approved distribution source.
 
-[Unreleased]: https://github.com/Maatify/php-slug/compare/v1.0.0-rc.2...HEAD
-[1.0.0-rc.2]: https://github.com/Maatify/php-slug/releases/tag/v1.0.0-rc.2
-[1.0.0-rc.1]: https://github.com/Maatify/php-slug/releases/tag/v1.0.0-rc.1
+[Unreleased]: https://github.com/Maatify-ltd/php-slug/compare/v1.0.0-rc.2...HEAD
+[1.0.0-rc.2]: https://github.com/Maatify-ltd/php-slug/releases/tag/v1.0.0-rc.2
+[1.0.0-rc.1]: https://github.com/Maatify-ltd/php-slug/releases/tag/v1.0.0-rc.1

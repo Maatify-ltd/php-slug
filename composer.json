@@ -9,7 +9,7 @@
     "php",
     "maatify"
   ],
-  "homepage": "https://github.com/Maatify/php-slug",
+  "homepage": "https://github.com/Maatify-ltd/php-slug",
   "type": "library",
   "license": "MIT",
   "authors": [
@@ -20,8 +20,9 @@
     }
   ],
   "support": {
-    "issues": "https://github.com/Maatify/php-slug/issues",
-    "source": "https://github.com/Maatify/php-slug"
+    "issues": "https://github.com/Maatify-ltd/php-slug/issues",
+    "source": "https://github.com/Maatify-ltd/php-slug",
+    "security": "https://github.com/Maatify-ltd/php-slug/security/policy"
   },
   "autoload": {
     "psr-4": {
@@ -41,15 +42,17 @@
     "maatify/exceptions": "^1.0",
     "maatify/php-persistence": ">=1.0.0-rc.1 <=1.0.0-rc.1",
     "maatify/shared-common": "^1.0",
-    "php": "^8.4"
+    "php": ">=8.4.27 <8.5.0 || >=8.5.12 <9.0.0"
   },
   "require-dev": {
+    "composer/semver": "^3.4",
     "friendsofphp/php-cs-fixer": "^3.94",
     "phpstan/phpstan": "^2.1",
     "phpunit/phpunit": "^11.5"
   },
   "scripts": {
     "analyse": "phpstan analyse",
+    "check:php-constraint": "@php tools/ci/verify-php-constraint.php",
     "format": "php-cs-fixer fix",
     "test": "bash tools/ci/run-gate.sh test",
     "test:unit": "bash tools/ci/run-gate.sh test-unit",
@@ -59,7 +62,7 @@
     "optimize-autoloader": true,
     "sort-packages": true,
     "platform": {
-      "php": "8.4.0"
+      "php": "8.4.27"
     },
     "policy": {
       "advisories": {

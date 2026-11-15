@@ -8,13 +8,13 @@
 
 Use `maatify/php-slug` when the package needs slug generation, canonicalization, or persistent scoped ownership with resolution and history. The stateless path is suitable for text that does not require persistence; the persisted path is suitable when the package owns the slug lifecycle and claims.
 
-## Requirements
+## Checkout Requirements
 
-- PHP `^8.4`.
+- PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 - `ext-intl`, `ext-mbstring`, `ext-pdo`, and `ext-pdo_mysql`.
 - Built-in profiles require the normalization and transliteration capabilities of `ext-intl`; those capabilities are verified at runtime. No exact ICU or Unicode version is required.
 - The stateless path requires only the production Composer autoload.
-- The persisted path requires a MySQL-compatible `PDO` connection and the package schema. Local verification uses disposable MySQL through `compose.integration.yml`.
+- The persisted path requires a MySQL-compatible `PDO` connection and the package schema. Local verification uses the [disposable MySQL service from the repository checkout](../../CONTRIBUTING.md#prerequisites-for-local-development).
 
 ## Publication State
 
@@ -242,7 +242,7 @@ The package uses `SlugExceptionInterface` and the domain exception families, wit
 - [`examples/custom-profile.php`](../../examples/custom-profile.php) — custom Public profile registration and use.
 - [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) — assignment, resolution, and management reads on disposable MySQL.
 
-Run all three maintained standalone examples locally through one gate:
+To run all three maintained examples, use the examples gate from a [repository checkout](../../CONTRIBUTING.md#4-examples-smoke-verification):
 
 ```bash
 bash tools/ci/run-gate.sh examples-smoke

@@ -9,13 +9,13 @@
 
 استخدم maatify/php-slug عندما تحتاج إلى توليد Slug أو canonicalization أو ملكية scoped مستمرة مع resolution وHistory. يناسب المسار stateless النصوص التي لا تحتاج إلى Persistence، بينما يناسب المسار persisted الحالات التي تملك فيها الحزمة lifecycle والـclaims.
 
-## المتطلبات
+## متطلبات نسخة المستودع
 
-- PHP ^8.4.
+- PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.
 - ext-intl وext-mbstring وext-pdo وext-pdo_mysql.
 - تحتاج الـProfiles المدمجة إلى capabilities الـnormalization والـtransliteration من `ext-intl`، وتتحقق الحزمة منها أثناء التشغيل. لا يوجد إصدار محدد مطلوب من ICU أو Unicode.
 - يحتاج المسار stateless إلى production Composer autoload فقط.
-- يحتاج المسار persisted إلى اتصال PDO متوافق مع MySQL وإلى schema الحزمة. يستخدم التحقق المحلي MySQL مؤقتًا عبر compose.integration.yml.
+- يحتاج المسار persisted إلى اتصال PDO متوافق مع MySQL وإلى schema الحزمة. يستخدم التحقق المحلي [خدمة MySQL المؤقتة من نسخة المستودع](../../CONTRIBUTING.md#prerequisites-for-local-development).
 
 ## حالة النشر
 
@@ -245,7 +245,7 @@ SlugEngine::getBinding(new BindingCriteria($bindingIdentity)).
 - examples/custom-profile.php — تسجيل واستخدام profile مخصص عبر Public API.
 - examples/persisted-lifecycle.php — assignment وresolution وmanagement reads على MySQL مؤقت.
 
-لتشغيل الأمثلة الثلاثة المحلية عبر gate واحدة:
+لتشغيل الأمثلة الثلاثة من [نسخة المستودع](../../CONTRIBUTING.md#4-examples-smoke-verification):
 
 ~~~bash
 bash tools/ci/run-gate.sh examples-smoke

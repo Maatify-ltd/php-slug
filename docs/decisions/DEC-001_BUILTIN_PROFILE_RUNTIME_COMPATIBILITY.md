@@ -12,7 +12,7 @@
 
 ## Context
 
-The package declares PHP `^8.4` and `ext-intl`. External Consumer Qualification successfully installed the package through Composer on PHP `8.5.9`, ICU `78.3`, and Unicode `17.0.0.0`.
+The package declared PHP `^8.4` and `ext-intl` at the RC.1 decision boundary. External Consumer Qualification successfully installed the package through Composer on PHP `8.5.9`, ICU `78.3`, and Unicode `17.0.0.0`.
 
 The previous runtime admission rejected built-in profiles unless the host provided exactly ICU 74 and Unicode 15.1. This created host coupling that was not visible in Composer requirements: installation succeeded, then the first supported built-in Public API path failed. The package is reusable and Host-agnostic, so an exact operating-system ICU pin is not an appropriate consumer contract when the required behavior is available.
 

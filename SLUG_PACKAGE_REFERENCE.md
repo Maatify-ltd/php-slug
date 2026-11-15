@@ -9,8 +9,8 @@
 | Field | Current value |
 |---|---|
 | Composer package name | `maatify/php-slug` |
-| Repository | `Maatify/php-slug` |
-| Namespace | `Maatify\\Slug\\` |
+| Repository | [Maatify-ltd/php-slug](https://github.com/Maatify-ltd/php-slug) |
+| Namespace | `Maatify\Slug\` |
 | Artifact | Standalone reusable PHP/Composer library |
 | Host model | Host-agnostic |
 | Release lifecycle | Published Release Candidate / Pre-Stable |
@@ -22,7 +22,6 @@
 
 The durable references associated with this document are:
 
-- [`docs/php-engineering-standards/STANDARDS_MANIFEST.md`](docs/php-engineering-standards/STANDARDS_MANIFEST.md) — the Local Resolver Record for the applicable Standards.
 - [`docs/guides/USAGE_GUIDE.md`](docs/guides/USAGE_GUIDE.md) — consumer usage and integration guidance.
 - [`examples/`](examples/) — runnable consumer examples.
 
@@ -61,7 +60,7 @@ The current published Release Candidate is `v1.0.0-rc.2`. It is externally resol
 composer require maatify/php-slug:1.0.0-rc.2@RC
 ```
 
-The published tag and its Composer dependency remain unchanged. The requirements and examples below describe this checkout, which trials the replacement dependency.
+The requirements and examples below describe this checkout, which trials `maatify/php-persistence`. The published artifact keeps the requirements in its [tagged Composer manifest](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/composer.json).
 
 The Runtime provides implemented examples. The current stateless construction path is:
 
@@ -111,13 +110,16 @@ The following requirements are implemented in the repository:
 
 | Requirement | Value |
 |---|---|
-| PHP | `^8.4`; the intended matrix is PHP 8.4 and 8.5 without a PHP ceiling |
+| PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
+| PHP (CI matrix) | PHP 8.4 and 8.5 |
 | Extensions | `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
 | Runtime compatibility | `ext-intl` capability and observable-behavior probes; no exact ICU or Unicode-data version pin |
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
 | Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
 | Evidence tools | `phpstan/phpstan ^2.1`, `phpunit/phpunit ^11.5`, `friendsofphp/php-cs-fixer ^3.94` in `require-dev` |
+
+Newer PHP 8 minors admitted by Composer require minor-specific security and compatibility evidence before they can be listed as supported.
 
 The implementation uses `ext-intl` for NFC and ICU lowercasing or transliteration and uses `ext-mbstring` only for code-point length. Built-in runtime admission verifies the required normalization and transliteration behavior and fails closed with `SlugRuntimeCompatibilityException` when a capability is unavailable or incompatible. ICU and Unicode versions are diagnostics only, not consumer support boundaries.
 
@@ -165,7 +167,7 @@ The maximum is 160 Unicode code points after canonicalization. An exact claim or
 
 ## 6. Public API Inventory
 
-All public types are under `Maatify\\Slug\\`. Every interface ends with `Interface`, every enum with `Enum`, every DTO, Command, and Criteria is `final readonly`, and every DTO implements `JsonSerializable`. Repositories, SQL builders, and lock coordinators are not Public API.
+All public types are under `Maatify\Slug\`. Every interface ends with `Interface`, every enum with `Enum`, every DTO, Command, and Criteria is `final readonly`, and every DTO implements `JsonSerializable`. Repositories, SQL builders, and lock coordinators are not Public API.
 
 ### 6.1 Interfaces and Operations
 
@@ -721,13 +723,13 @@ SlugPurgeNotPermittedException, SlugTransactionParticipationException,
 SlugUnsupportedDriverException, SlugPersistenceInvariantException
 ```
 
-The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\\PhpPersistence\\Pagination\\Exception`. PDO and row-mapping exceptions propagate unchanged.
+The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions propagate unchanged.
 
 ## 13. Current Release State
 
 `v1.0.0-rc.2` is the current published Release Candidate for `maatify/php-slug`, externally resolvable through Packagist. The package lifecycle remains Pre-Stable, with no Published Stable release and no Stable support line. CI and review execution evidence is maintained in GitHub PR/CI history rather than duplicated in this current-state contract.
 
-The current adopted Standards baseline is recorded by [`STANDARDS_MANIFEST.md`](docs/php-engineering-standards/STANDARDS_MANIFEST.md) with the pinned upstream commit and applicable Standard versions.
+The current adopted Standards baseline is recorded by [repository Standards Manifest](https://github.com/Maatify-ltd/php-slug/blob/main/docs/php-engineering-standards/STANDARDS_MANIFEST.md) with the pinned upstream commit and applicable Standard versions.
 
 ## 14. Supporting Documents
 
