@@ -6,6 +6,8 @@ declare(strict_types=1);
 final class PerCs31Verifier
 {
     private const string FALLTHROUGH_APPROVALS = 'tools/ci/per-cs31-fallthrough-approved.json';
+    private const string FALLTHROUGH_HEDGE = '(?:maybe|perhaps|possibly|may|might|should)';
+    private const string FALLTHROUGH_NEGATIVE = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:can|does|did|would|could|should|must)n't|won't)";
 
     /** @var list<string> */
     private array $errors = [];
@@ -972,18 +974,58 @@ final class PerCs31Verifier
     private function hasFallThroughComment(array $tokens, int $start, int $end, ?string $approvedComment): bool
     {
         $nesting = [];
+        $comments = [];
+        $adjacentComments = [];
         for ($index = $start; $index < $end; $index++) {
             $token = $tokens[$index];
             $this->updateListNesting($token, $nesting);
-            if ($nesting !== [] || !is_array($token) || !in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+            if ($nesting === [] && is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                $body = trim($token[1], "/*# \t\r\n");
+                $comment = preg_replace('/\R[ \t]*\*?[ \t]*/u', ' ', $body);
+                if ($comment !== null) {
+                    $comments[] = $comment;
+                    $adjacentComments[] = $comment;
+                }
+                continue;
+            }
+            if (is_array($token) && $token[0] === T_WHITESPACE && substr_count($token[1], "\n") < 2) {
                 continue;
             }
 
-            $body = trim($token[1], "/*# \t\r\n");
-            $comment = preg_replace('/\R[ \t]*\*?[ \t]*/u', ' ', $body);
-            if ($comment !== null && !self::isUncertainFallthrough($comment)
-                && (self::declaresFallthrough($comment) || $comment === $approvedComment)
-            ) {
+            // Check wrapped instructions that span adjacent comment tokens.
+            if ($adjacentComments !== [] && self::opposesFallthrough(implode("\n", $adjacentComments))) {
+                return false;
+            }
+            $adjacentComments = [];
+        }
+
+        if ($adjacentComments !== [] && self::opposesFallthrough(implode("\n", $adjacentComments))) {
+            return false;
+        }
+
+        $hasDeclaration = false;
+        foreach ($comments as $comment) {
+            $approved = $comment === $approvedComment;
+            if (($approved && self::isUncertainFallthrough($comment)) || self::hasUncertainFallthroughClause($comment)) {
+                return false;
+            }
+
+            $hasDeclaration = $hasDeclaration || $approved
+                || (self::declaresFallthrough($comment) && !self::isUncertainFallthrough($comment));
+        }
+
+        return $hasDeclaration;
+    }
+
+    private static function hasUncertainFallthroughClause(string $comment): bool
+    {
+        $clauses = preg_split('~(?<=[.!?؟])\s+~u', $comment) ?: [$comment];
+        $reference = '~\b(?:falls?[- ]?through|(?:next|following)\s+case|no\s+break'
+            . '|(?:break|return|stop|terminate)\s+(?:here|instead)|(?:add|omit|need)\s+(?:a|the)\s+break'
+            . '|(?:should|must|do|can|could|would)\s+(?:we|it|this\s+case)\s+(?:break|continue|proceed|stop|return|terminate)(?=\s*[.!?؟]|\s*\z)'
+            . '|الحالة\s+(?:التالية|القادمة))\b~iu';
+        foreach ($clauses as $clause) {
+            if (preg_match($reference, $clause) === 1 && self::isUncertainFallthrough($clause)) {
                 return true;
             }
         }
@@ -991,24 +1033,38 @@ final class PerCs31Verifier
         return false;
     }
 
+    private static function opposesFallthrough(string $comment): bool
+    {
+        $target = '(?:the\s+)?(?:next|following)\s+case';
+        $negative = self::FALLTHROUGH_NEGATIVE;
+        $hedge = self::FALLTHROUGH_HEDGE;
+        $execution = '(?:run|execute|be\s+(?:entered|executed|reached|run))';
+
+        return preg_match(
+            '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
+            . '|\b' . $target . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
+            . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
+            . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
+            . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
+            . '|(?:\A|[.!?؟\n]\s*)(?:(?:break|return|stop|terminate)\s+(?:here(?:\s+instead)?|instead)'
+            . '|(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?)(?=\s*[.!]|\s*\z)'
+            . '|\b(?:this|the)\s+case\s+(?:must|should|will)\s+(?:break|return|stop|terminate)\b~iu',
+            $comment,
+        ) === 1;
+    }
+
     private static function isUncertainFallthrough(string $comment): bool
     {
         $action = '(?:falls?[- ]?through|omit|skip|leave\s+out|continue|proceed)';
-        $hedge = '(?:maybe|perhaps|possibly|may|might|should)';
+        $hedge = self::FALLTHROUGH_HEDGE;
         $intent = '(?:intentionally|deliberately|purposely)';
-        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
-        $negative = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:can|does|did|would|could|should|must)n't|won't)";
-        $execution = '(?:run|execute|be\s+(?:entered|executed|reached|run))';
+        $negative = self::FALLTHROUGH_NEGATIVE;
 
         return self::hasQuestionMarkOutsideQuotedToken($comment) || preg_match(
             '~\A(?:if|unless|whether|' . $hedge . '|(?:check|consider|decide)\s+whether)\b'
             . '|\b(?:we|execution|the\s+case)\s+' . $hedge . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
             . '|\bso\s+(?:maybe|perhaps|possibly)\b|\bif\s+(?:needed|required|necessary)\b'
             . '|\b' . $negative . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
-            . '|\b' . $nextCase . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
-            . '|\b(?:skip|bypass|avoid)\s+' . $nextCase . '\b'
-            . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:enter|run|execute|reach|use)\s+' . $nextCase . '\b'
-            . '|\b(?:prevent|keep|stop)\s+' . $nextCase . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
             . '|\bnot\s+(?:an?\s+)?(?:intentional|deliberate|intended)\b~iu',
             $comment,
         ) === 1;

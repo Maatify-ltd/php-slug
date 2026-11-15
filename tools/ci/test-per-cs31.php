@@ -65,6 +65,30 @@ switch ($value) {
         break;
 }
 PHP],
+    'switch rejects opposition in a multiline comment' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Deliberate fall-through.
+        /* Do not enter
+         * the next case.
+         */
+    case 2:
+        break;
+}
+PHP],
+    'switch rejects opposition separated from affirmative comment by code' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        // Do not enter the next case.
+        echo 'one';
+        // Deliberate fall-through.
+    case 2:
+        break;
+}
+PHP],
     'switch rejects nested fall-through comment' => [false, <<<'PHP'
 <?php
 switch ($value) {
@@ -554,6 +578,17 @@ $approvalFile = $root . '/fallthrough.json';
 $commentCases = [
     ['No break: continue to the next case.', null, 3, true],
     ['Deliberate fall-through.', null, 3, true],
+    ["Deliberate fall-through.\n        // Do not enter the next case.", null, 3, false],
+    ["Do not enter the next case.\n        // Deliberate fall-through.", null, 3, false],
+    ["Deliberate fall-through.\n        // Do not enter\n        // the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Should we enter the next case?", null, 3, false],
+    ["Deliberate fall-through.\n        // Break here.", null, 3, false],
+    ["Deliberate fall-through.\n        // Add a break.", null, 3, false],
+    ["Deliberate fall-through.\n        // Should we break?", null, 3, false],
+    ["Deliberate fall-through.\n        // Which report contains the total?", null, 3, true],
+    ["Which report contains the total?\n        // Deliberate fall-through.", null, 3, true],
+    ["Deliberate fall-through.\n        // The helper may return here with an empty payload.", null, 3, true],
+    ['No break here; the next case handles the result.', 'case 1:', 3, true],
     ['We intentionally omit the break so the following case executes.', null, 3, true],
     ['No break: the next case must not execute.', null, 3, false],
     ['No break: do not enter the next case.', null, 3, false],
