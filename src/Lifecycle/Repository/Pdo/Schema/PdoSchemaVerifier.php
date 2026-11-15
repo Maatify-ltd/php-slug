@@ -32,7 +32,9 @@ final readonly class PdoSchemaVerifier
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect the package schema.');
         }
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
         $names = array_map(static fn(array $row): string => PdoRowHydrator::string($row, 'TABLE_NAME'), $rows);
         sort($names);
         $sortedExpected = $expected;
@@ -70,7 +72,9 @@ final readonly class PdoSchemaVerifier
             throw new SlugPersistenceInvariantException('Unable to inspect package indexes.');
         }
         $actual = [];
-        foreach (PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)) as $row) {
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        foreach (PdoRowHydrator::many($rawRows) as $row) {
             $table = PdoRowHydrator::string($row, 'TABLE_NAME');
             $actual[$table][] = PdoRowHydrator::string($row, 'INDEX_NAME');
         }
@@ -102,9 +106,11 @@ final readonly class PdoSchemaVerifier
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect package foreign keys.');
         }
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
         $actual = array_map(
             static fn(array $row): string => PdoRowHydrator::string($row, 'CONSTRAINT_NAME'),
-            PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)),
+            PdoRowHydrator::many($rawRows),
         );
         foreach ($required as $constraint) {
             if (! in_array($constraint, $actual, true)) {
@@ -141,7 +147,9 @@ final readonly class PdoSchemaVerifier
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect package columns.');
         }
-        foreach (PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)) as $row) {
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        foreach (PdoRowHydrator::many($rawRows) as $row) {
             $table = PdoRowHydrator::string($row, 'TABLE_NAME');
             $column = PdoRowHydrator::string($row, 'COLUMN_NAME');
             $dataType = strtolower(PdoRowHydrator::string($row, 'DATA_TYPE'));

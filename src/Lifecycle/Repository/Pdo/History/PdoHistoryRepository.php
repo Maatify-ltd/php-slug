@@ -141,7 +141,9 @@ final readonly class PdoHistoryRepository implements HistoryRepositoryInterface
             throw new SlugPersistenceInvariantException('Unable to prepare the History lookup.');
         }
         $statement->execute(['id' => $id]);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
         if ($row === null) {
             return null;
         }
@@ -228,11 +230,11 @@ final readonly class PdoHistoryRepository implements HistoryRepositoryInterface
         return $date->setTimezone(new DateTimeZone('UTC'));
     }
 
-    /** Parses a six-microsecond UTC timestamp returned by the history table. */
+    /** Parses a UTC timestamp with microsecond precision returned by the history table. */
     private function date(string $value, string $field): DateTimeImmutable
     {
         if (preg_match('/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\z/', $value) !== 1) {
-            throw new SlugPersistenceInvariantException(sprintf('%s must contain six microseconds.', $field));
+            throw new SlugPersistenceInvariantException(sprintf('%s must contain six fractional-second digits.', $field));
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s.u', $value, new DateTimeZone('UTC'));
         $errors = DateTimeImmutable::getLastErrors();

@@ -51,6 +51,8 @@ final class ExampleUtcClock implements ClockInterface
 }
 
 $pdo = null;
+$createdTables = [];
+$failure = null;
 
 try {
     $configuration = databaseConfiguration();
@@ -60,7 +62,8 @@ try {
     }
 
     $pdo = connectToDatabase($configuration);
-    installPackageSchema($pdo, $schemaDirectory);
+    assertDisposableDatabase($pdo, $configuration['SLUG_TEST_DB_NAME']);
+    installPackageSchema($pdo, $schemaDirectory, $createdTables);
 
     $profileKey = new SlugProfileKey('ascii-v1');
     $profiles = SlugProfileRegistryFactory::createBuiltIn();
@@ -110,12 +113,23 @@ try {
     ));
     expect($history->total === 1 && $history->filtered === 1, 'History window returned an unexpected page.');
 
-    echo "PERSISTED_LIFECYCLE_EXAMPLE=hello-world SCOPE_REPORTING=PASS HISTORY_WINDOW=PASS\n";
+} catch (Throwable $exception) {
+    $failure = $exception;
 } finally {
     if ($pdo instanceof PDO) {
-        dropPackageSchema($pdo);
+        $cleanupFailure = dropCreatedTables($pdo, $createdTables);
+        if ($failure !== null && $cleanupFailure !== null) {
+            fwrite(STDERR, "The example could not remove every table it created.\n");
+        }
+        $failure ??= $cleanupFailure;
     }
 }
+
+if ($failure !== null) {
+    throw $failure;
+}
+
+echo "PERSISTED_LIFECYCLE_EXAMPLE=hello-world SCOPE_REPORTING=PASS HISTORY_WINDOW=PASS\n";
 
 /** @return array{SLUG_TEST_DB_HOST: string, SLUG_TEST_DB_PORT: string, SLUG_TEST_DB_NAME: string, SLUG_TEST_DB_USER: string, SLUG_TEST_DB_PASSWORD: string} */
 function databaseConfiguration(): array
@@ -129,11 +143,18 @@ function databaseConfiguration(): array
         $configuration[$variable] = $value;
     }
 
+    if (preg_match('/\A[A-Za-z0-9_]+_test\z/', $configuration['SLUG_TEST_DB_NAME']) !== 1) {
+        throw new RuntimeException('SLUG_TEST_DB_NAME must identify a disposable database ending in _test.');
+    }
+    if (filter_var($configuration['SLUG_TEST_DB_PORT'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 65535]]) === false) {
+        throw new RuntimeException('SLUG_TEST_DB_PORT must be a valid TCP port.');
+    }
+
     return $configuration;
 }
 
 /** @param array{SLUG_TEST_DB_HOST: string, SLUG_TEST_DB_PORT: string, SLUG_TEST_DB_NAME: string, SLUG_TEST_DB_USER: string, SLUG_TEST_DB_PASSWORD: string} $configuration */
-function connectToDatabase(array $configuration): PDO
+function connectToDatabase(#[SensitiveParameter] array $configuration): PDO
 {
     $pdo = new PDO(
         sprintf(
@@ -144,15 +165,33 @@ function connectToDatabase(array $configuration): PDO
         ),
         $configuration['SLUG_TEST_DB_USER'],
         $configuration['SLUG_TEST_DB_PASSWORD'],
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false],
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false, Pdo\Mysql::ATTR_MULTI_STATEMENTS => false],
     );
     $pdo->exec('SET NAMES utf8mb4 COLLATE utf8mb4_bin');
 
     return $pdo;
 }
 
-/** Installs the ordered package-owned schema assets used by the example. */
-function installPackageSchema(PDO $pdo, string $schemaDirectory): void
+/** Checks the selected database and rejects existing package objects before schema installation. */
+function assertDisposableDatabase(PDO $pdo, string $database): void
+{
+    $selected = $pdo->query('SELECT DATABASE()');
+    if ($selected === false || $selected->fetchColumn() !== $database) {
+        throw new RuntimeException('The selected database must match the configured disposable database.');
+    }
+
+    $objects = $pdo->query("SELECT 1 FROM information_schema.TABLES WHERE BINARY TABLE_SCHEMA = BINARY DATABASE() AND LEFT(LOWER(TABLE_NAME), 9) = 'maa_slug_' LIMIT 1");
+    if ($objects === false || $objects->fetchColumn() !== false) {
+        throw new RuntimeException('The disposable database must have no pre-existing Slug tables or views.');
+    }
+}
+
+/**
+ * Applies the ordered schema and records tables only after successful creation.
+ *
+ * @param list<string> $createdTables
+ */
+function installPackageSchema(PDO $pdo, string $schemaDirectory, array &$createdTables): void
 {
     $assets = glob($schemaDirectory . '/[0-9][0-9][0-9]_*.sql');
     if ($assets === false || $assets === []) {
@@ -168,20 +207,47 @@ function installPackageSchema(PDO $pdo, string $schemaDirectory): void
         if ($statements === false) {
             throw new RuntimeException('The package-owned schema could not be split.');
         }
-        foreach ($statements as $statement) {
-            if (trim($statement) !== '') {
-                $pdo->exec(trim($statement));
+        foreach ($statements as $rawStatement) {
+            $statement = preg_replace('/\A(?:--[^\r\n]*(?:\R|\z)\s*)+/', '', trim($rawStatement));
+            if ($statement === '') {
+                continue;
+            }
+            if ($statement === null || preg_match('/\A(CREATE|ALTER)\s+TABLE\s+(maa_slug_[a-z0-9_]+)(?=\s|\()/', $statement, $matches) !== 1) {
+                throw new RuntimeException('The example schema asset contains an unsupported statement.');
+            }
+            [, $operation, $table] = $matches;
+            if ($operation === 'ALTER' && ! in_array($table, $createdTables, true)) {
+                throw new RuntimeException('The example can alter only tables created by this invocation.');
+            }
+            if ($pdo->exec($statement) === false) {
+                throw new RuntimeException('An example schema statement did not execute.');
+            }
+            if ($operation === 'CREATE') {
+                $createdTables[] = $table;
             }
         }
     }
 }
 
-/** Removes package-owned tables in dependency-safe reverse order. */
-function dropPackageSchema(PDO $pdo): void
+/**
+ * Removes only the tables created by this invocation in reverse creation order.
+ *
+ * @param list<string> $createdTables
+ */
+function dropCreatedTables(PDO $pdo, array $createdTables): ?Throwable
 {
-    foreach (['maa_slug_history', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
-        $pdo->exec('DROP TABLE IF EXISTS `' . $table . '`');
+    $failure = null;
+    foreach (array_reverse($createdTables) as $table) {
+        try {
+            if ($pdo->exec('DROP TABLE IF EXISTS `' . $table . '`') === false) {
+                throw new RuntimeException('The example could not remove a table it created.');
+            }
+        } catch (Throwable $exception) {
+            $failure ??= $exception;
+        }
     }
+
+    return $failure;
 }
 
 /** Fails the example immediately when an expected observable result is absent. */

@@ -30,7 +30,7 @@ Any contribution must strictly respect these boundaries. Architectural changes s
 Use a [repository checkout](https://github.com/Maatify-ltd/php-slug) for this setup and the commands below. The distribution archive ships the runtime, schema, and consumer examples. The [CI tooling](https://github.com/Maatify-ltd/php-slug/tree/main/tools/ci) and disposable database configuration are available in the checkout.
 
 - **PHP (Composer):** `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`
-- **Extensions:** `intl`, `mbstring`, `pdo`, `pdo_mysql`
+- **Extensions:** `filter`, `intl`, `mbstring`, `pdo`, `pdo_mysql`
 - **Docker Engine:** Required for Integration, System, complete-suite, Consumer Harness, and examples-smoke gates.
 - **Docker Compose v2:** Required for the repository-owned Integration lifecycle.
 
@@ -114,7 +114,8 @@ bash tools/ci/run-gate.sh examples-smoke
 
 The persisted example uses the same `compose.integration.yml`, isolated project, dynamic loopback
 port, readiness probe, process environment, diagnostics, and teardown as the other Integration
-boundaries.
+boundaries. Its CLI requires a disposable database with a name ending in `_test` and
+refuses a database with any pre-existing Slug tables or views.
 
 ### 5. Workflow Linting and Diff Checks
 

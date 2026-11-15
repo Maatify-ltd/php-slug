@@ -12,7 +12,7 @@
 ## متطلبات نسخة المستودع
 
 - PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.
-- ext-intl وext-mbstring وext-pdo وext-pdo_mysql.
+- `ext-filter` و`ext-intl` و`ext-mbstring` و`ext-pdo` و`ext-pdo_mysql`.
 - تحتاج الـProfiles المدمجة إلى capabilities الـnormalization والـtransliteration من `ext-intl`، وتتحقق الحزمة منها أثناء التشغيل. لا يوجد إصدار محدد مطلوب من ICU أو Unicode.
 - يحتاج المسار stateless إلى production Composer autoload فقط.
 - يحتاج المسار persisted إلى اتصال PDO متوافق مع MySQL وإلى schema الحزمة. يستخدم التحقق المحلي [خدمة MySQL المؤقتة من نسخة المستودع](../../CONTRIBUTING.md#prerequisites-for-local-development).
@@ -203,7 +203,7 @@ SlugEngine::getBinding(new BindingCriteria($bindingIdentity)).
 
 **Result**
 
-يمثل `total` الحد الأساسي و`filtered` بعد المرشحات. يستخدم `occurredAt` بدقة ست خانات، لا `originalOccurredAt`، وتنسب الأحداث إلى persisted Scope snapshot. Scope المفقود يعيد صفحة فارغة.
+يمثل `total` الحد الأساسي و`filtered` بعد المرشحات. يستخدم `occurredAt` بدقة ميكروثانية (ست خانات عشرية للثانية)، لا `originalOccurredAt`، وتنسب الأحداث إلى persisted Scope snapshot. Scope المفقود يعيد صفحة فارغة.
 
 **Boundary**
 

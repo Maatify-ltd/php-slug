@@ -183,7 +183,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             throw new SlugRuntimeCompatibilityException('DATETIME(6) is required.');
         }
         if ($statement->fetchColumn() !== '2026-01-01T01:02:03.123456') {
-            throw new SlugRuntimeCompatibilityException('Six-microsecond DATETIME precision is required.');
+            throw new SlugRuntimeCompatibilityException('Microsecond precision (DATETIME(6)) is required.');
         }
     }
 
@@ -206,7 +206,9 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             throw new SlugRuntimeCompatibilityException('Package schema metadata is unavailable.');
         }
 
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
         $actual = array_map(static function (array $row): string {
             $name = $row['TABLE_NAME'] ?? null;
             if (! is_string($name)) {

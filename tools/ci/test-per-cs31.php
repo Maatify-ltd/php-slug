@@ -44,6 +44,39 @@ switch ($value) {
         break;
 }
 PHP],
+    'switch clear fall-through wording' => [true, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Falls through intentionally.
+    case 2:
+        echo 'two';
+        break;
+}
+PHP],
+    'switch rejects ambiguous fall-through question' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Does this case fall through?
+    case 2:
+        break;
+}
+PHP],
+    'switch rejects nested fall-through comment' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        if ($enabled) {
+            echo 'one';
+            // No break
+        }
+    case 2:
+        break;
+}
+PHP],
     'switch multiline condition' => [true, <<<'PHP'
 <?php
 switch (true) {
@@ -515,6 +548,45 @@ foreach ($cases as $name => [$expectedPass, $source]) {
     $fail++;
     fwrite(STDERR, "FAIL {$name}: " . implode(' | ', $errors) . PHP_EOL);
 }
+
+$reviewed = $root . '/reviewed.php';
+$approvalFile = $root . '/fallthrough.json';
+$approvalCases = [
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 3, true],
+    ['نتعمّد تجاوز break حتى تكمل الحالة التالية.', 'case 1:', 3, true],
+    ['"Does this case continue?"', 'case 1:', 3, false],
+    ['هل نترك break لكي تنتقل الحالة التالية؟', 'case 1:', 3, false],
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 2:', 3, false],
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 4, false],
+];
+foreach ($approvalCases as [$comment, $label, $line, $expectedPass]) {
+    $source = <<<PHP
+<?php
+switch (\$value) {
+    case 1:
+        echo 'one';
+        // {$comment}
+    case 2:
+        break;
+}
+PHP;
+    file_put_contents($reviewed, $source);
+    file_put_contents($approvalFile, json_encode([[
+        'file' => ltrim($reviewed, './'),
+        'line' => $line,
+        'case' => $label,
+        'comment' => $comment,
+    ]], JSON_THROW_ON_ERROR));
+    $errors = $verifier->verifyFiles([$reviewed], $approvalFile);
+    if (($errors === []) === $expectedPass) {
+        $pass++;
+        continue;
+    }
+
+    $fail++;
+    fwrite(STDERR, sprintf("FAIL fall-through approval %s at line %d: %s%s", $label, $line, $comment, PHP_EOL));
+}
+unlink($approvalFile);
 
 $invalid = $root . '/invalid.php';
 file_put_contents($invalid, '<?php function broken( {');

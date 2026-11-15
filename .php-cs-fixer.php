@@ -17,6 +17,8 @@ return (new Config())
         // PER-CS 3.1 requires a multiline array's opening bracket to stay with
         // the preceding expression, superseding PER-CS 3.0's call wrapping.
         'method_argument_space' => ['on_multiline' => 'ignore'],
+        // PER-CS 3.1 permits any clear fall-through comment. The supplemental verifier checks intent.
+        'no_break_comment' => false,
         'declare_strict_types' => true,
     ])
     ->setFinder(

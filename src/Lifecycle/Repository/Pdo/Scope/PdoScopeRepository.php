@@ -139,7 +139,9 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
             throw new SlugPersistenceInvariantException('Unable to prepare the Binding lookup.');
         }
         $statement->execute(['binding_id' => $bindingId]);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->hydrateBinding($row, null, $forUpdate);
     }
@@ -231,7 +233,9 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
             'locale_key' => $localeKey,
             'context_key' => $contextKey,
         ]);
-        return PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        return PdoRowHydrator::one($rawRow);
     }
 
     /** @return array<string, mixed>|null */
@@ -253,7 +257,9 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
             'entity_type' => $entity->entityType,
             'entity_key' => $entity->entityKey,
         ]);
-        return PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        return PdoRowHydrator::one($rawRow);
     }
 
     /** @param array<string, mixed> $row */
@@ -344,7 +350,9 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
         $statement->execute([
             'binding_id' => $bindingId,
         ]);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
 
         $claims = [];
         foreach ($rows as $row) {
@@ -407,11 +415,11 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
         return $this->clock->now()->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
     }
 
-    /** Parses a six-microsecond UTC timestamp from a scope row. */
+    /** Parses a UTC timestamp with microsecond precision from a scope row. */
     private function date(mixed $value, string $field): DateTimeImmutable
     {
         if (! is_string($value) || preg_match('/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\z/', $value) !== 1) {
-            throw new SlugPersistenceInvariantException(sprintf('%s must contain six microseconds.', $field));
+            throw new SlugPersistenceInvariantException(sprintf('%s must contain six fractional-second digits.', $field));
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s.u', $value, new DateTimeZone('UTC'));
         $errors = DateTimeImmutable::getLastErrors();

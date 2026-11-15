@@ -5,13 +5,24 @@ declare(strict_types=1);
 /** Supplemental PER-CS 3.1 checks not established by @PER-CS3x0. */
 final class PerCs31Verifier
 {
+    private const string FALLTHROUGH_APPROVALS = 'tools/ci/per-cs31-fallthrough-approved.json';
+
     /** @var list<string> */
     private array $errors = [];
+
+    /** @var array<string, array<int, array{case: string, comment: string}>> */
+    private array $fallthroughApprovals = [];
 
     public function run(string $root): int
     {
         $files = $this->phpFiles($root);
-        $errors = $this->verifyFiles($files);
+        try {
+            $errors = $this->verifyFiles($files, $root . '/' . self::FALLTHROUGH_APPROVALS);
+        } catch (RuntimeException|JsonException $exception) {
+            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
+
+            return 1;
+        }
 
         if ($errors !== []) {
             fwrite(STDERR, implode(PHP_EOL, $errors) . PHP_EOL);
@@ -25,15 +36,51 @@ final class PerCs31Verifier
     }
 
     /** @param list<string> $files */
-    public function verifyFiles(array $files): array
+    public function verifyFiles(array $files, ?string $approvalFile = null): array
     {
         $this->errors = [];
+        $this->fallthroughApprovals = $approvalFile === null ? [] : $this->readFallthroughApprovals($approvalFile);
 
         foreach ($files as $file) {
             $this->verifyFile($file);
         }
 
         return $this->errors;
+    }
+
+    /** @return array<string, array<int, array{case: string, comment: string}>> */
+    private function readFallthroughApprovals(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $json = file_get_contents($path);
+        if ($json === false) {
+            throw new RuntimeException('Unable to read ' . self::FALLTHROUGH_APPROVALS . '.');
+        }
+
+        $entries = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        if (!is_array($entries) || !array_is_list($entries)) {
+            throw new RuntimeException(self::FALLTHROUGH_APPROVALS . ' must contain a JSON list of exact approvals.');
+        }
+
+        $approvals = [];
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || count($entry) !== 4
+                || !is_string($file = $entry['file'] ?? null) || !str_ends_with($file, '.php')
+                || !is_int($line = $entry['line'] ?? null) || $line < 1
+                || !is_string($case = $entry['case'] ?? null) || $case === ''
+                || !is_string($comment = $entry['comment'] ?? null) || $comment === ''
+                || isset($approvals[$file][$line])
+            ) {
+                throw new RuntimeException(self::FALLTHROUGH_APPROVALS . ' requires unique file, line, case and comment entries.');
+            }
+
+            $approvals[$file][$line] = ['case' => $case, 'comment' => $comment];
+        }
+
+        return $approvals;
     }
 
     /** @return list<string> */
@@ -149,14 +196,21 @@ final class PerCs31Verifier
                 }
 
                 if (!$this->hasDirectCaseTermination($tokens, $bodyStart, $nextCase)) {
-                    if ($nextCase < $closeBrace && $this->hasFallThroughComment($tokens, $bodyStart, $nextCase)) {
-                        continue;
+                    $caseLine = $this->tokenLine($tokens, $caseIndex);
+                    if ($nextCase < $closeBrace) {
+                        $approval = $this->fallthroughApprovals[$this->relative($file)][$caseLine] ?? null;
+                        $label = $this->caseLabel($tokens, $caseIndex, $colon);
+                        $approvedComment = $approval !== null && $approval['case'] === $label ? $approval['comment'] : null;
+
+                        if ($this->hasFallThroughComment($tokens, $colon + 1, $nextCase, $approvedComment)) {
+                            continue;
+                        }
                     }
 
                     $message = $nextCase < $closeBrace
-                        ? 'non-empty fall-through case MUST have an intentional fall-through comment'
+                        ? 'non-empty fall-through case MUST have a clear comment; review unrecognized wording in ' . self::FALLTHROUGH_APPROVALS
                         : 'every non-empty case MUST have a terminating statement';
-                    $this->error($file, $this->tokenLine($tokens, $caseIndex), $message);
+                    $this->error($file, $caseLine, $message);
                 }
             }
         }
@@ -906,15 +960,86 @@ final class PerCs31Verifier
     }
 
     /** @param list<array{0:int,1:string,2:int}|string> $tokens */
-    private function hasFallThroughComment(array $tokens, int $start, int $end): bool
+    private function caseLabel(array $tokens, int $start, int $colon): string
     {
-        foreach (array_slice($tokens, $start, $end - $start) as $token) {
-            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true) && preg_match('/no\s+break|fall[- ]?through|fallthrough|deliberate/i', $token[1])) {
+        return implode('', array_map(
+            static fn(array|string $token): string => is_array($token) ? $token[1] : $token,
+            array_slice($tokens, $start, $colon - $start + 1),
+        ));
+    }
+
+    /** @param list<array{0:int,1:string,2:int}|string> $tokens */
+    private function hasFallThroughComment(array $tokens, int $start, int $end, ?string $approvedComment): bool
+    {
+        $nesting = [];
+        for ($index = $start; $index < $end; $index++) {
+            $token = $tokens[$index];
+            $this->updateListNesting($token, $nesting);
+            if ($nesting !== [] || !is_array($token) || !in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $body = trim($token[1], "/*# \t\r\n");
+            $comment = preg_replace('/\R[ \t]*\*?[ \t]*/u', ' ', $body);
+            if ($comment !== null && !self::isUncertainFallthrough($comment)
+                && (self::declaresFallthrough($comment) || $comment === $approvedComment)
+            ) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static function isUncertainFallthrough(string $comment): bool
+    {
+        $action = '(?:falls?[- ]?through|omit|skip|leave\s+out|continue|proceed)';
+        $hedge = '(?:maybe|perhaps|possibly|may|might|should)';
+        $intent = '(?:intentionally|deliberately|purposely)';
+
+        return self::hasQuestionMarkOutsideQuotedToken($comment) || preg_match(
+            '~\A(?:if|unless|whether|' . $hedge . '|(?:check|consider|decide)\s+whether)\b'
+            . '|\b(?:we|execution|the\s+case)\s+' . $hedge . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\bso\s+(?:maybe|perhaps|possibly)\b|\bif\s+(?:needed|required|necessary)\b'
+            . '|\b(?:never|cannot|(?:must|do|does|did|can|will|would|could)\s+not)'
+            . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\bnot\s+(?:an?\s+)?(?:intentional|deliberate|intended)\b~iu',
+            $comment,
+        ) === 1;
+    }
+
+    private static function hasQuestionMarkOutsideQuotedToken(string $comment): bool
+    {
+        if (!str_contains($comment, '?') && !str_contains($comment, '؟')) {
+            return false;
+        }
+
+        // Ignore only the quoted token; a complete quoted question still counts.
+        $quotedToken = <<<'REGEX'
+            ~(?<![\\\p{L}\p{N}_])(?:'[?؟]'|"[?؟]"|`[?؟]`|“[?؟]”|‘[?؟]’)(?![\p{L}\p{N}_])~u
+            REGEX;
+        $withoutTokens = preg_replace($quotedToken, '', $comment);
+
+        return $withoutTokens === null || str_contains($withoutTokens, '?') || str_contains($withoutTokens, '؟');
+    }
+
+    private static function declaresFallthrough(string $comment): bool
+    {
+        $intent = '(?:intentionally|deliberately|purposely)';
+        $terminator = '(?:the\s+)?(?:break|return|termination)(?:\s+statement)?';
+        $purpose = '(?:\s+(?:so|to)\s+[^.!?]+)?';
+        $nextCase = '(?:into|to)\s+(?:the\s+)?next\s+case';
+
+        return preg_match(
+            '/\A(?:no\s+break|(?:deliberate|intentional)\s+fall[- ]?through'
+            . '|(?:' . $intent . '\s+)?falls?[- ]?through'
+            . '(?:\s+' . $intent . ')?(?:\s+(?:' . $nextCase . '|to\s+[^.!?]+))?'
+            . '|(?:execution\s+)?' . $intent . '\s+(?:continues?|proceeds?)\s+' . $nextCase
+            . '|(?:we\s+)?' . $intent . '\s+(?:omit|skip|leave\s+out)\s+' . $terminator . $purpose
+            . '|' . $terminator . '\s+(?:is\s+)?' . $intent . '\s+(?:omitted|skipped|left\s+out)' . $purpose
+            . ')(?:[.!]|\s*[:;—-]\s+.+)?\z/iu',
+            $comment,
+        ) === 1;
     }
 
     /** @param list<array{0:int,1:string,2:int}|string> $tokens */

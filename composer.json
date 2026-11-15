@@ -35,6 +35,7 @@
     }
   },
   "require": {
+    "ext-filter": "*",
     "ext-intl": "*",
     "ext-mbstring": "*",
     "ext-pdo": "*",

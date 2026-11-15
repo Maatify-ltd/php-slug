@@ -60,7 +60,7 @@ The requirements and usage below describe this checkout. For the published RC.2 
 |---|---|
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | Database | PDO MySQL; `mysql:8.0.36` is the CI reproducibility target |
-| Extensions | `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
+| Extensions | `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
 | Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
 
 CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.

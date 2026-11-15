@@ -35,7 +35,9 @@ final readonly class PdoBindingMaintenanceRepository implements BindingMaintenan
         }
         $statement->execute(['binding_id' => $bindingId]);
         $operationIds = [];
-        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        /** @var list<mixed> $participantRows */
+        $participantRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($participantRows as $row) {
             if (! is_array($row)) {
                 throw new SlugPersistenceInvariantException('Purge participant lookup returned an invalid row.');
             }

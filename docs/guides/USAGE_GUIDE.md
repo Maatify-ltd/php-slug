@@ -11,7 +11,7 @@ Use `maatify/php-slug` when the package needs slug generation, canonicalization,
 ## Checkout Requirements
 
 - PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
-- `ext-intl`, `ext-mbstring`, `ext-pdo`, and `ext-pdo_mysql`.
+- `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, and `ext-pdo_mysql`.
 - Built-in profiles require the normalization and transliteration capabilities of `ext-intl`; those capabilities are verified at runtime. No exact ICU or Unicode version is required.
 - The stateless path requires only the production Composer autoload.
 - The persisted path requires a MySQL-compatible `PDO` connection and the package schema. Local verification uses the [disposable MySQL service from the repository checkout](../../CONTRIBUTING.md#prerequisites-for-local-development).
@@ -200,7 +200,7 @@ This is a Slug-domain Scope snapshot, not a generic dashboard or cross-package m
 
 **Result**
 
-The `PageResultDTO<HistoryEventDTO>` uses `total` for the unfiltered package-wide or exact-Scope boundary and `filtered` after event-type/time-window filters. Filtering uses `occurredAt` at six-microsecond persistence precision, not `originalOccurredAt`; default ordering is deterministic by `occurred_at DESC`, then `id DESC`.
+The `PageResultDTO<HistoryEventDTO>` uses `total` for the unfiltered package-wide or exact-Scope boundary and `filtered` after event-type/time-window filters. Filtering uses `occurredAt` at microsecond persistence precision, not `originalOccurredAt`; default ordering is deterministic by `occurred_at DESC`, then `id DESC`.
 
 **Boundary**
 

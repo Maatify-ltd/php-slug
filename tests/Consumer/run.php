@@ -93,7 +93,7 @@ function databaseConfiguration(): array
 /** Verifies the PHP extensions and PDO driver required by the external consumer. */
 function assertRequiredExtensions(): void
 {
-    foreach (['intl', 'mbstring', 'pdo', 'pdo_mysql'] as $extension) {
+    foreach (['filter', 'intl', 'mbstring', 'pdo', 'pdo_mysql'] as $extension) {
         if (! extension_loaded($extension)) {
             throw new RuntimeException(sprintf('Consumer Harness requires the %s extension.', $extension));
         }

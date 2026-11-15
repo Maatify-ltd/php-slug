@@ -359,7 +359,9 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             'binding_id' => $bindingId,
             'idempotency_key' => $idempotencyKey,
         ]);
-        return PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        return PdoRowHydrator::one($rawRow);
     }
 
     /** @param list<OperationParticipant> $participants */
@@ -387,7 +389,9 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Unable to prepare the operation lookup.');
         }
         $statement->execute(['id' => $id]);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);
     }
@@ -401,7 +405,9 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Unable to prepare the operation-key lookup.');
         }
         $statement->execute(['operation_key' => $operationKey]);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);
     }
@@ -414,7 +420,9 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Unable to prepare the operation participant read.');
         }
         $statement->execute(['operation_id' => $operationId]);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
 
         return array_map(static fn(array $row): OperationParticipant => new OperationParticipant(
             PdoRowHydrator::nonNegativeInt($row, 'binding_id'),
@@ -458,11 +466,11 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         return $this->clock->now()->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
     }
 
-    /** Parses a six-microsecond UTC timestamp from an operation row. */
+    /** Parses a UTC timestamp with microsecond precision from an operation row. */
     private function date(mixed $value, string $field): DateTimeImmutable
     {
         if (! is_string($value) || preg_match('/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\z/', $value) !== 1) {
-            throw new SlugPersistenceInvariantException(sprintf('%s must contain six microseconds.', $field));
+            throw new SlugPersistenceInvariantException(sprintf('%s must contain six fractional-second digits.', $field));
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s.u', $value, new DateTimeZone('UTC'));
         $errors = DateTimeImmutable::getLastErrors();
