@@ -194,7 +194,7 @@ jobs:
 
   runtime-portability:
     name: Runtime portability on macOS / PHP 8.5
-    runs-on: macos-15-intel
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - name: Checkout current commit
@@ -202,21 +202,30 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - name: Refresh Homebrew PHP formulas
-        run: |
-          brew tap shivammathur/php
-          brew update
-      - name: Set up PHP 8.5
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
-        with:
-          php-version: '8.5'
-          extensions: intl, mbstring, pdo, pdo_mysql
-          coverage: none
-          tools: composer:2.10
+      - name: Install bottled PHP 8.5
+        timeout-minutes: 5
         env:
-          update: true
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_FORCE_API_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          brew install --force-bottle homebrew/core/php@8.5
+          printf '%s\n' "$(brew --prefix homebrew/core/php@8.5)/bin" >> "$GITHUB_PATH"
       - name: Verify the installed Stable PHP patch
         run: bash tools/ci/run-gate.sh php-runtime "8.5"
+      - name: Install Composer 2.10.3
+        timeout-minutes: 2
+        run: |
+          composer_bin="$RUNNER_TEMP/slug-composer-bin"
+          mkdir -p "$composer_bin"
+          curl --fail --silent --show-error --location --max-time 60 \
+            --output "$composer_bin/composer" https://getcomposer.org/download/2.10.3/composer.phar
+          (
+            cd "$composer_bin"
+            printf '%s\n' '7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6  composer' | shasum -a 256 -c -
+          )
+          chmod +x "$composer_bin/composer"
+          printf '%s\n' "$composer_bin" >> "$GITHUB_PATH"
       - name: Run runtime portability gate
         env:
           COMPOSER_NO_AUDIT: '0'
