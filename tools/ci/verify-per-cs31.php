@@ -1126,11 +1126,18 @@ final class PerCs31Verifier
             (?:\A|[.!?؟:;—\n]\s*)['"“‘`]?\s*
             REGEX;
         $termination = '(?:break(?:\s+out)?|return|stop|terminate)';
-        $position = '(?:here(?:\s+instead)?|instead)';
+        $position = '(?:(?:right\s+)?(?:here(?:\s+instead)?|now)|instead)';
         $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+case)';
         $modal = '(?:must|should|will|shall|may|might|(?:need|needs|have|has)\s+to)';
-        $directive = $clauseStart . '(?:(?:' . $subject . '\s+' . $modal . '|' . $modal . '\s+' . $subject . ')\s+)?';
-        $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding)\s+(?:into|to))\s+)?' . $target;
+        // Adverb slots keep the action and destination linked, and do not consume negation or objects.
+        $adverb = '(?:(?!(?:barely|hardly|rarely|scarcely)\b)\p{L}+(?:-\p{L}+)*ly'
+            . '|please|just|still|first|then|now|at\s+once|right\s+away|without\s+(?:delay|exception)|as\s+soon\s+as\s+possible)';
+        $separator = '(?:\h*,\s*|\s+)';
+        $qualifiers = '(?:' . $adverb . $separator . ')*+';
+        $head = '(?:' . $subject . '\s+' . $qualifiers . $modal . '|' . $modal . '\s+' . $subject . ')';
+        $directive = $clauseStart . '(?:' . $head . $separator . ')?' . $qualifiers;
+        $afterAction = '(?:\s+(?:' . $adverb . '|' . $position . '))*+';
+        $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
 
         return preg_match(
             '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
@@ -1138,8 +1145,8 @@ final class PerCs31Verifier
             . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
             . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
             . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
-            . '|' . $directive . $termination . '(?:\s+' . $position . ')?,?' . $timing . '\b'
-            . '|' . $directive . '(?:' . $termination . '\s+' . $position
+            . '|' . $directive . $termination . $afterAction . ',?' . $timing . '\b'
+            . '|' . $directive . '(?:' . $termination . '(?:\s+' . $adverb . ')*?\s+' . $position . '(?:\s+' . $adverb . ')*+'
             . '|(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?)(?=\s*[.!]|\s*\z)'
             . '|\b(?:this|the)\s+case\s+(?:must|should|will)\s+(?:break|return|stop|terminate)\b~iu',
             $comment,
