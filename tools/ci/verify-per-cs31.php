@@ -1181,9 +1181,11 @@ final class PerCs31Verifier
         $closingQuote = <<<'REGEX'
             ~['"”’`]\s*\z~u
             REGEX;
-        $trailingQualifier = '~' . $actionQualifier . '\z~iu';
-        $parentheticalProse = '~\A(?!(?:true|false|null)\h)[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?=\h+\()(?i:'
-            . $actionQualifier . ')\z~u';
+        $trailingQualifiers = '~(?<![\s,])(?=(?:' . $actionQualifier . ')++\z)~iu';
+        $word = '[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*';
+        $hyphenatedWord = $word . '(?:-' . $word . ')+';
+        $wordWithAside = $word . '(?:-' . $word . ')*(?=\h+\()(?i:' . $actionQualifier . ')';
+        $ambiguousProse = '~\A(?!(?:true|false|null)\h)(?:' . $hyphenatedWord . '|' . $wordWithAside . ')\z~u';
 
         foreach ($returns[0] as [$prefix, $offset]) {
             $tail = substr($comment, $offset + strlen($prefix));
@@ -1192,13 +1194,15 @@ final class PerCs31Verifier
                 $value = trim(substr($tail, 0, $end));
                 $withoutClosingQuote = preg_replace($closingQuote, '', $value) ?? $value;
                 foreach ([$value, trim($withoutClosingQuote)] as $candidate) {
-                    while (($explicit = self::classifyReturnCandidate($candidate, $parentheticalProse)) === null) {
-                        // Retry after one prose qualifier so a valid operand at the end is preserved.
-                        $withoutQualifier = preg_replace($trailingQualifier, '', $candidate);
-                        if ($withoutQualifier === null || $withoutQualifier === $candidate) {
-                            break;
+                    $explicit = self::classifyReturnCandidate($candidate, $ambiguousProse);
+                    if ($explicit === null && preg_match_all($trailingQualifiers, $candidate, $suffixes, PREG_OFFSET_CAPTURE) > 0) {
+                        // Try the longest expressions first, including when recognized suffixes overlap.
+                        foreach (array_reverse($suffixes[0]) as [, $offset]) {
+                            $explicit = self::classifyReturnCandidate(substr($candidate, 0, $offset), $ambiguousProse);
+                            if ($explicit !== null) {
+                                break;
+                            }
                         }
-                        $candidate = $withoutQualifier;
                     }
                     if ($explicit === true) {
                         return true;
@@ -1211,7 +1215,7 @@ final class PerCs31Verifier
     }
 
     /** Returns null when the candidate cannot be parsed as a PHP expression. */
-    private static function classifyReturnCandidate(string $candidate, string $parentheticalProse): ?bool
+    private static function classifyReturnCandidate(string $candidate, string $ambiguousProse): ?bool
     {
         $explicitCode = strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`');
         $expression = $explicitCode ? trim(substr($candidate, 1, -1)) : $candidate;
@@ -1225,13 +1229,8 @@ final class PerCs31Verifier
             return true;
         }
 
-        // A spaced prose aside after a bare word is ambiguous with a PHP call.
-        if (preg_match($parentheticalProse, $candidate) === 1) {
-            return false;
-        }
-
-        // An unformatted hyphenated word alone is ambiguous with subtraction.
-        if (preg_match('~\A[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?:-[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*)+\z~u', $candidate) === 1) {
+        // A hyphenated word or a spaced prose aside can look like arithmetic or a call.
+        if (preg_match($ambiguousProse, $candidate) === 1) {
             return false;
         }
 
