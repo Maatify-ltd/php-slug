@@ -4,14 +4,27 @@ declare(strict_types=1);
 
 require __DIR__ . '/verify-per-cs31.php';
 
-$root = sys_get_temp_dir() . '/php-slug-per-cs31-regression';
-if (is_dir($root)) {
-    foreach (glob($root . '/*.php') ?: [] as $file) {
-        unlink($file);
+$root = sys_get_temp_dir() . '/php-slug-per-cs31-regression-' . bin2hex(random_bytes(16));
+if (!mkdir($root, 0700)) {
+    throw new RuntimeException('Unable to create the PER-CS regression fixture directory.');
+}
+
+$ownedFiles = [];
+register_shutdown_function(static function () use ($root, &$ownedFiles): void {
+    foreach (array_keys($ownedFiles) as $file) {
+        if (is_file($file)) {
+            unlink($file);
+        }
     }
     rmdir($root);
-}
-mkdir($root, 0755, true);
+});
+
+$writeFixture = static function (string $file, string $contents) use (&$ownedFiles): void {
+    $ownedFiles[$file] = true;
+    if (file_put_contents($file, $contents) === false) {
+        throw new RuntimeException('Unable to write PER-CS regression fixture: ' . $file);
+    }
+};
 
 $verifier = new PerCs31Verifier();
 $pass = 0;
@@ -560,7 +573,7 @@ PHP],
 
 foreach ($cases as $name => [$expectedPass, $source]) {
     $file = $root . '/' . sha1($name) . '.php';
-    file_put_contents($file, $source);
+    $writeFixture($file, $source);
     $errors = $verifier->verifyFiles([$file]);
     $actualPass = $errors === [];
 
@@ -596,6 +609,15 @@ $commentCases = [
     ["Deliberate fall-through.\n        // This branch must return false.", null, 3, false],
     ["Deliberate fall-through.\n        // Return `\$value ?? null`.", null, 3, false],
     ["Deliberate fall-through.\n        // We must return directly from the current function.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return PHP_INT_MAX - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return \\PHP_INT_MAX - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return Vendor\\Domain\\limit + 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return namespace\\DEFAULT_LIMIT - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return from the current function to the caller.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return from this method directly to its caller.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must not return from this method to the caller.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return from this method to the caller if the cache is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return PHP_INT_MAX - 1 if the result overflowed.", null, 3, true],
     ["Deliberate fall-through.\n        // Return the book to its owner.", null, 3, true],
     ["Deliberate fall-through.\n        // We must return from the function.", null, 3, false],
     ["Deliberate fall-through.\n        // We should return null here.", null, 3, false],
@@ -711,9 +733,9 @@ switch (\$value) {
         break;
 }
 PHP;
-    file_put_contents($reviewed, $source);
+    $writeFixture($reviewed, $source);
     if ($label !== null) {
-        file_put_contents($approvalFile, json_encode([[
+        $writeFixture($approvalFile, json_encode([[
             'file' => ltrim($reviewed, './'),
             'line' => $line,
             'case' => $label,
@@ -729,10 +751,9 @@ PHP;
     $fail++;
     fwrite(STDERR, sprintf("FAIL fall-through case %s at line %d: %s%s", $label ?? 'without approval', $line, $comment, PHP_EOL));
 }
-unlink($approvalFile);
 
 $invalid = $root . '/invalid.php';
-file_put_contents($invalid, '<?php function broken( {');
+$writeFixture($invalid, '<?php function broken( {');
 $invalidErrors = $verifier->verifyFiles([$invalid]);
 if ($invalidErrors !== []) {
     $pass++;
@@ -748,11 +769,6 @@ if ($unreadableErrors !== []) {
     $fail++;
     fwrite(STDERR, "FAIL unreadable source was accepted" . PHP_EOL);
 }
-
-foreach (glob($root . '/*.php') ?: [] as $file) {
-    unlink($file);
-}
-rmdir($root);
 
 printf("PER-CS 3.1 regression cases: %d PASS, %d FAIL.%s", $pass, $fail, PHP_EOL);
 exit($fail === 0 ? 0 : 1);

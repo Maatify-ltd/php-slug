@@ -1149,6 +1149,9 @@ final class PerCs31Verifier
         $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
 
         $fromCallable = '\s+from\s+(?:(?:the|this|our)(?:\s+current)?\s+|current\s+)?(?:function|method)';
+        $toCaller = '\s+to\s+(?:(?:the|its|our)\s+)?caller';
+        $returnBoundary = '(?:' . $fromCallable . '(?:' . $afterAction . $toCaller . ')?'
+            . '|' . $toCaller . '(?:' . $afterAction . $fromCallable . ')?)';
 
         return self::hasExplicitReturnValue($comment, $directive, $afterAction) || preg_match(
             '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
@@ -1157,7 +1160,7 @@ final class PerCs31Verifier
             . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
             . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
             . '|' . $directive . $termination . $afterAction . '(?:,?' . $timing . '\b|' . $clauseEnd . ')'
-            . '|' . $directive . 'return' . $afterAction . $fromCallable . $afterAction . $clauseEnd
+            . '|' . $directive . 'return' . $afterAction . $returnBoundary . $afterAction . $clauseEnd
             . '|' . $directive . '(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?' . $clauseEnd
             . '~iu',
             $comment,
@@ -1179,7 +1182,7 @@ final class PerCs31Verifier
             REGEX;
         // Distinguish PHP values from ordinary bare nouns, which PHP can parse as constant names.
         $valueStart = <<<'REGEX'
-            #\A(?:[$'"`0-9(\[!~+\-@]|(?i:true|false|null|clone|throw|yield|fn|function)\b|(?i:new)\s+(?:\\|[A-Z_]|class\b)|\\?[\p{L}_][\p{L}\p{N}_\\]*\s*(?:::|\()|[A-Z_][A-Z0-9_]*\z|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+\z)#u
+            #\A(?:[$'"`0-9(\[!~+\-@]|(?i:true|false|null|clone|throw|yield|fn|function)\b|(?i:new)\s+(?:\\|[A-Z_]|class\b)|\\?[\p{L}_][\p{L}\p{N}_\\]*\s*(?:::|\()|\\[\p{L}_]|[\p{L}_][\p{L}\p{N}_]*\\[\p{L}_]|[A-Z_][A-Z0-9_]*\b|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+\b)#u
             REGEX;
 
         foreach ($returns[0] as [$prefix, $offset]) {
