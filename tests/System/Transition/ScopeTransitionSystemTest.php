@@ -95,6 +95,51 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
     }
 
+    public function testTransitionReadsBackClaimForTargetScopeCommittedAfterHostSnapshot(): void
+    {
+        $engine = $this->engine();
+        $writer = $this->engine($this->newTestConnection());
+        $source = $this->identityInScope('snapshot-read-back-source', 'snapshot-read-back-entity');
+        $target = $this->scope('snapshot-read-back-target');
+        $engine->assignExact(new AssignExactCommand($source, 'snapshot-read-back-source-slug', null, new AuditContextDTO()));
+
+        $this->pdo->exec('CREATE TEMPORARY TABLE transition_host_marker (id INT PRIMARY KEY) ENGINE=InnoDB');
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->beginTransaction();
+
+        try {
+            $this->pdo->exec('INSERT INTO transition_host_marker VALUES (1)');
+            self::assertGreaterThan(0, $this->scopeId('snapshot-read-back-source'));
+            self::assertSame(0, $this->scopeId('snapshot-read-back-target'));
+            $targetScope = $writer->ensureScope($target);
+            self::assertSame(0, $this->scopeId('snapshot-read-back-target'));
+
+            $result = $engine->transitionScope(new TransitionScopeCommand(
+                $source,
+                $target,
+                ScopeTransitionModeEnum::MOVE,
+                new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'snapshot-read-back-target-slug'),
+                1,
+                new AuditContextDTO(idempotencyKey: 'snapshot-read-back-transition'),
+            ));
+            self::assertSame('snapshot-read-back-target-slug', $result->targetAfter->currentClaim?->slug->value);
+            self::assertSame('INACTIVE', $result->sourceAfter->state->status->value);
+            self::assertTrue($this->pdo->inTransaction());
+            self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM transition_host_marker'));
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+
+        self::assertSame($targetScope->id, $this->scopeId('snapshot-read-back-target'));
+        self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM transition_host_marker'));
+        self::assertSame(1, $this->scalarInt("SELECT COUNT(*) FROM maa_slug_bindings WHERE status = 'ACTIVE' AND revision = 1"));
+        self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_bindings'));
+        self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_registry'));
+        self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
+    }
+
     /** @return array<string, array{string}> */
     public static function targetScopeOrder(): array
     {

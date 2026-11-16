@@ -444,7 +444,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         if ($id === false) {
             throw new SlugPersistenceInvariantException('Registry claim insert did not return a valid id.');
         }
-        $claim = $this->findClaimById($id, false);
+        // The write flow already holds the Scope, Binding, and inserted Registry
+        // row. Read their joined projection from current state under Host snapshots.
+        $claim = $this->findClaimById($id, true);
         if ($claim === null) {
             throw new SlugPersistenceInvariantException('Inserted Registry claim cannot be read back.');
         }
