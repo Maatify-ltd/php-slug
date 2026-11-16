@@ -31,8 +31,9 @@ final readonly class PdoRegistryLockProjection
     /**
      * Locks exact current slug keys within one Scope or Binding partition.
      *
-     * Each point lookup uses the indexed MySQL collation and retains the
-     * candidate ordinal. Distinct candidate bytes can match the same record.
+     * Driving the join from ordered candidates keeps each lookup on the full
+     * primary key. MySQL reports every matching request ordinal, including
+     * byte-distinct requests that compare equal under the Registry collation.
      *
      * @param non-empty-list<string> $slugs
      * @return list<array{id: int, scope_id: int, binding_id: int, slug: string, requested_slug: string}>
@@ -41,16 +42,11 @@ final readonly class PdoRegistryLockProjection
     {
         $this->ensureBoundaries($scopeId, $bindingPartition);
         $rows = [];
+        $statements = [];
         foreach (array_chunk($slugs, 100) as $chunk) {
-            $pointLookup = '(SELECT ? AS candidate_index, registry_id, owner_binding_id, slug '
-                . 'FROM maa_slug_registry_lock_keys FORCE INDEX (PRIMARY) '
-                . 'WHERE scope_id = ? AND scope_end = 0 AND binding_partition = ? AND key_kind = 1 AND slug = ? FOR UPDATE)';
-            $statement = $this->prepare(implode(' UNION ALL ', array_fill(0, count($chunk), $pointLookup)));
-            $parameters = [];
-            foreach ($chunk as $index => $slug) {
-                array_push($parameters, $index, $scopeId, $bindingPartition, $slug);
-            }
-            $statement->execute($parameters);
+            $size = count($chunk);
+            $statement = $statements[$size] ??= $this->prepareCandidateLookup($size);
+            $statement->execute([...$chunk, $scopeId, $bindingPartition]);
             /** @var list<array<string, mixed>> $rawRows */
             $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
             foreach (PdoRowHydrator::many($rawRows) as $row) {
@@ -60,6 +56,21 @@ final readonly class PdoRegistryLockProjection
             }
         }
         return $rows;
+    }
+
+    /** Builds a native prepared lookup with one derived row per candidate. */
+    private function prepareCandidateLookup(int $size): PDOStatement
+    {
+        $candidates = [];
+        for ($index = 0; $index < $size; $index++) {
+            $candidates[] = 'SELECT ' . $index . ' AS candidate_index, CAST(? AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_bin AS slug';
+        }
+        return $this->prepare(
+            'SELECT c.candidate_index, k.registry_id, k.owner_binding_id, k.slug FROM (' . implode(' UNION ALL ', $candidates) . ') c '
+            . 'STRAIGHT_JOIN maa_slug_registry_lock_keys k FORCE INDEX (PRIMARY) '
+            . 'ON k.scope_id = ? AND k.scope_end = 0 AND k.binding_partition = ? AND k.key_kind = 1 AND k.slug = c.slug '
+            . 'FOR UPDATE',
+        );
     }
 
     /**

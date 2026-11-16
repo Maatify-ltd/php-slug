@@ -64,7 +64,7 @@ final class CandidateCollationSystemTest extends MySqlIntegrationTestCase
         self::assertSame(['alpha-2'], $policy->candidates);
     }
 
-    public function testOccupancyPreservesBothEquivalentRequestKeysAcrossBatches(): void
+    public function testOccupancyPreservesBothEquivalentRequestKeysWithinAndAcrossBatches(): void
     {
         $owner = $this->identity('existing');
         $engine = $this->engine(new RecordingCandidatePolicy());
@@ -83,11 +83,14 @@ final class CandidateCollationSystemTest extends MySqlIntegrationTestCase
 
             // Sort immediately before alpha to place equivalent bytes in separate batches.
             $free = array_map(static fn(int $index): string => 'a0-' . $index, range(1, 99));
-            $matches = $registry->lockClaimKeysForMutation($scope->id, [$binding->id], [...$free, 'alpha', 'alpha ']);
-            self::assertSame([
+            $expected = [
                 ['id' => $id, 'binding_id' => $binding->id, 'slug' => 'alpha'],
                 ['id' => $id, 'binding_id' => $binding->id, 'slug' => 'alpha '],
-            ], $matches);
+            ];
+            foreach ([['alpha', 'alpha '], [...$free, 'alpha', 'alpha ']] as $candidates) {
+                $matches = $registry->lockClaimKeysForMutation($scope->id, [$binding->id], $candidates);
+                self::assertSame($expected, $matches);
+            }
             $profile = $profiles->get($owner->scopeProfile->expectedProfileKey);
             $stored = $registry->findClaimByBindingSlug($binding->id, Slug::fromProfile($profile, 'alpha'), true);
             self::assertSame('alpha ', $stored?->slugValue);
