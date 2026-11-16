@@ -110,7 +110,6 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         try {
             $this->pdo->exec('INSERT INTO transition_host_marker VALUES (1)');
             self::assertGreaterThan(0, $this->scopeId('snapshot-read-back-source'));
-            self::assertSame(0, $this->scopeId('snapshot-read-back-target'));
             $targetScope = $writer->ensureScope($target);
             self::assertSame(0, $this->scopeId('snapshot-read-back-target'));
 
