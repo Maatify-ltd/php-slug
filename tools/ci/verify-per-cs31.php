@@ -1145,7 +1145,8 @@ final class PerCs31Verifier
         $directive = $clauseStart . $qualifiers . '(?:' . $head . $join . ')?' . $qualifiers;
         // After the verb, admit known adjuncts only so a direct object changes the clause's classification.
         $adjunct = '(?:' . $adverb . '|' . $position . ')';
-        $afterAction = '(?:' . $separator . '(?:' . $adjunct . '|\(\h*' . $adjunct . '\h*\)))*+';
+        $actionQualifier = $separator . '(?:' . $adjunct . '|\(\h*' . $adjunct . '\h*\))';
+        $afterAction = '(?:' . $actionQualifier . ')*+';
         $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
 
         $fromCallable = '\s+from\s+(?:(?:the|this|our)(?:\s+current)?\s+|current\s+)?(?:function|method)';
@@ -1153,7 +1154,7 @@ final class PerCs31Verifier
         $returnBoundary = '(?:' . $fromCallable . '(?:' . $afterAction . $toCaller . ')?'
             . '|' . $toCaller . '(?:' . $afterAction . $fromCallable . ')?)';
 
-        return self::hasExplicitReturnValue($comment, $directive, $afterAction) || preg_match(
+        return self::hasExplicitReturnValue($comment, $directive, $actionQualifier) || preg_match(
             '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
             . '|\b' . $target . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
             . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
@@ -1168,7 +1169,7 @@ final class PerCs31Verifier
     }
 
     /** Checks PHP-shaped return values for syntax without executing any part of the comment. */
-    private static function hasExplicitReturnValue(string $comment, string $directive, string $afterAction): bool
+    private static function hasExplicitReturnValue(string $comment, string $directive, string $actionQualifier): bool
     {
         if (preg_match_all('~' . $directive . 'return\b(?=\s|\()~iu', $comment, $returns, PREG_OFFSET_CAPTURE) < 1) {
             return false;
@@ -1180,6 +1181,10 @@ final class PerCs31Verifier
         $closingQuote = <<<'REGEX'
             ~['"”’`]\s*\z~u
             REGEX;
+        $trailingQualifier = '~' . $actionQualifier . '\z~iu';
+        $parentheticalProse = '~\A(?!(?:true|false|null)\h)[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?=\h+\()(?i:'
+            . $actionQualifier . ')\z~u';
+
         foreach ($returns[0] as [$prefix, $offset]) {
             $tail = substr($comment, $offset + strlen($prefix));
             preg_match_all($clauseBoundary, $tail, $endings, PREG_OFFSET_CAPTURE);
@@ -1187,29 +1192,51 @@ final class PerCs31Verifier
                 $value = trim(substr($tail, 0, $end));
                 $withoutClosingQuote = preg_replace($closingQuote, '', $value) ?? $value;
                 foreach ([$value, trim($withoutClosingQuote)] as $candidate) {
-                    $candidate = preg_replace('~' . $afterAction . '\z~iu', '', $candidate) ?? $candidate;
-                    $explicitCode = strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`');
-                    if ($explicitCode) {
-                        $candidate = trim(substr($candidate, 1, -1));
-                    } elseif (preg_match('~\A[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?:-[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*)+\z~u', $candidate) === 1) {
-                        // An unformatted hyphenated word alone is ambiguous with subtraction.
-                        continue;
-                    }
-
-                    try {
-                        $tokens = token_get_all('<?php return (' . $candidate . ');', TOKEN_PARSE);
-                        // Strip the synthetic opening tag and return statement around the candidate.
-                        if ($explicitCode || self::hasPhpExpressionTokens(array_slice($tokens, 4, -2))) {
-                            return true;
+                    while (($explicit = self::classifyReturnCandidate($candidate, $parentheticalProse)) === null) {
+                        // Retry after one prose qualifier so a valid operand at the end is preserved.
+                        $withoutQualifier = preg_replace($trailingQualifier, '', $candidate);
+                        if ($withoutQualifier === null || $withoutQualifier === $candidate) {
+                            break;
                         }
-                    } catch (ParseError) {
-                        // A prose object or a partial expression is not evidence of a PHP return.
+                        $candidate = $withoutQualifier;
+                    }
+                    if ($explicit === true) {
+                        return true;
                     }
                 }
             }
         }
 
         return false;
+    }
+
+    /** Returns null when the candidate cannot be parsed as a PHP expression. */
+    private static function classifyReturnCandidate(string $candidate, string $parentheticalProse): ?bool
+    {
+        $explicitCode = strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`');
+        $expression = $explicitCode ? trim(substr($candidate, 1, -1)) : $candidate;
+        try {
+            $tokens = token_get_all('<?php return (' . $expression . ');', TOKEN_PARSE);
+        } catch (ParseError) {
+            return null;
+        }
+
+        if ($explicitCode) {
+            return true;
+        }
+
+        // A spaced prose aside after a bare word is ambiguous with a PHP call.
+        if (preg_match($parentheticalProse, $candidate) === 1) {
+            return false;
+        }
+
+        // An unformatted hyphenated word alone is ambiguous with subtraction.
+        if (preg_match('~\A[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?:-[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*)+\z~u', $candidate) === 1) {
+            return false;
+        }
+
+        // Strip the synthetic opening tag and return statement around the candidate.
+        return self::hasPhpExpressionTokens(array_slice($tokens, 4, -2));
     }
 
     /** @param list<array{int, string, int}|string> $tokens */
