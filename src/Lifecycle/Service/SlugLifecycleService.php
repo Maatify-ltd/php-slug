@@ -62,6 +62,7 @@ use Maatify\Slug\Lifecycle\Repository\Operation\OperationPersistenceInterface;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryRepositoryInterface;
 use Maatify\Slug\Lifecycle\Repository\Transaction\TransactionCoordinatorInterface;
 use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotEncoder;
+use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotStorage;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationParticipant;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationReservation;
 use Maatify\Slug\Canonicalization\Contract\SlugProfileInterface;
@@ -142,9 +143,9 @@ final class SlugLifecycleService
             }
 
             $this->assertAssignmentState($record, $command->expectedRevision);
-            $existing = $this->registry->findClaimByScopeSlug($lockedScope->id, $slug);
-            if ($existing !== null) {
-                if ($existing->bindingId === $record->id) {
+            $owners = array_column($this->registry->lockClaimKeysForMutation($lockedScope->id, [], [$slug->value]), 'binding_id', 'slug');
+            if (isset($owners[$slug->value])) {
+                if ($owners[$slug->value] === $record->id) {
                     throw new SlugAssignmentNotPermittedException('Assignment cannot reuse a retained same-Binding role.');
                 }
                 throw new SlugAlreadyClaimedException('The requested slug is owned by another Binding.');
@@ -204,7 +205,7 @@ final class SlugLifecycleService
         $fingerprint = $this->fingerprint($operation, $identity, $intent, null, $expectedRevision, null, null);
 
         return $this->transactions->run(function () use ($identity, $candidateList, $generated, $expectedRevision, $audit, $operation, $fingerprint): SlugMutationResultDTO {
-            [$binding, $claims, $lockedClaims] = $this->lockCandidateBearingBinding($identity, $candidateList);
+            [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($identity, $candidateList);
             $reservation = $this->reserve($operation, 'mutation', $fingerprint, [$binding->id], $audit);
             if ($reservation !== null && ! $reservation->created) {
                 return $this->replayMutation($reservation);
@@ -239,8 +240,7 @@ final class SlugLifecycleService
                     }
                     throw new SlugAliasOperationNotPermittedException('Change cannot operate on an alias claim.');
                 }
-                $owner = $this->claimInRecords($lockedClaims, $candidate);
-                if ($owner !== null) {
+                if (isset($lockedClaimIds[$candidate->value])) {
                     if (! $generated) {
                         throw new SlugAlreadyClaimedException('The requested slug is owned by another Binding.');
                     }
@@ -335,7 +335,7 @@ final class SlugLifecycleService
         $slug = $profile->canonicalizeClaim($candidate)->slug;
         $fingerprint = $this->fingerprint($operation, $identity, ['mode' => 'EXACT', 'value' => $slug->value], null, $expectedRevision, null, null);
         return $this->transactions->run(function () use ($identity, $slug, $expectedRevision, $audit, $operation, $mode, $fingerprint): SlugMutationResultDTO {
-            [$binding, $claims, $lockedClaims] = $this->lockCandidateBearingBinding($identity, [$slug]);
+            [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($identity, [$slug]);
             $reservation = $this->reserve($operation, 'mutation', $fingerprint, [$binding->id], $audit);
             if ($reservation !== null && ! $reservation->created) {
                 return $this->replayMutation($reservation);
@@ -357,8 +357,7 @@ final class SlugLifecycleService
                         throw new SlugAliasOperationNotPermittedException('The requested role cannot be added as an alias.');
                     }
                 } else {
-                    $owner = $this->claimInRecords($lockedClaims, $slug);
-                    if ($owner !== null) {
+                    if (isset($lockedClaimIds[$slug->value])) {
                         throw new SlugAlreadyClaimedException('The requested slug is owned by another Binding.');
                     }
                     if ($this->reservations->isReserved($identity->scopeProfile->scope, $slug)) {
@@ -376,8 +375,7 @@ final class SlugLifecycleService
                 return $this->finishMutation($operation, $reservation, $binding, $after, $this->claimsDto($binding->id, true), null, $after->state->currentSlug, ChangeTypeEnum::ALIAS_ADDED, $events);
             }
             if ($target === null) {
-                $owner = $this->claimInRecords($lockedClaims, $slug);
-                if ($owner !== null) {
+                if (isset($lockedClaimIds[$slug->value])) {
                     throw new SlugAlreadyClaimedException('The requested slug is owned by another Binding.');
                 }
                 throw new SlugNotFoundException('The requested alias claim was not found.');
@@ -447,11 +445,15 @@ final class SlugLifecycleService
             }
             $this->assertAssignmentState($record, $command->expectedRevision);
 
+            $owners = array_column($this->registry->lockClaimKeysForMutation(
+                $lockedScope->id,
+                [],
+                array_map(static fn(Slug $candidate): string => $candidate->value, $candidates),
+            ), 'binding_id', 'slug');
             $claim = null;
             foreach ($candidates as $candidate) {
-                $existing = $this->registry->findClaimByScopeSlug($lockedScope->id, $candidate);
-                if ($existing !== null) {
-                    if ($existing->bindingId === $record->id) {
+                if (isset($owners[$candidate->value])) {
+                    if ($owners[$candidate->value] === $record->id) {
                         throw new SlugAssignmentNotPermittedException('Generated assignment cannot reuse a retained same-Binding role.');
                     }
                     continue;
@@ -709,7 +711,7 @@ final class SlugLifecycleService
         $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $transferredSlug, $replacementCandidates, $fingerprint): AtomicTransferResultDTO {
-            [$source, $sourceClaims, $target, $targetClaims, $lockedClaims] = $this->lockTransferParticipants(
+            [$source, $sourceClaims, $target, $targetClaims, $lockedClaimIds] = $this->lockTransferParticipants(
                 $command->source,
                 $command->target,
                 $transferredSlug,
@@ -736,8 +738,8 @@ final class SlugLifecycleService
                 throw new SlugNotFoundException('The source transfer claim was not found.');
             }
             $originalRole = $moved->role;
-            $targetConflict = $this->claimInRecords($lockedClaims, $transferredSlug);
-            if ($targetConflict !== null && $targetConflict->id !== $moved->id) {
+            $targetConflict = $lockedClaimIds[$transferredSlug->value] ?? null;
+            if ($targetConflict !== null && $targetConflict !== $moved->id) {
                 throw new SlugAlreadyClaimedException('The transferred slug is already claimed in the target Scope.');
             }
             if ($originalRole === RegistryRoleEnum::CURRENT_CANONICAL) {
@@ -768,7 +770,7 @@ final class SlugLifecycleService
                     $command,
                     $source,
                     $sourceClaims,
-                    $lockedClaims,
+                    $lockedClaimIds,
                     $replacementCandidates,
                     $transferredSlug,
                     $reservation,
@@ -864,8 +866,8 @@ final class SlugLifecycleService
     }
 
     /**
-     * @param list<Slug> $candidateKeys
-     * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: list<RegistryClaimRecord>}
+     * @param non-empty-list<Slug> $candidateKeys
+     * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: array<int|string, int>}
      */
     private function lockCandidateBearingBinding(BindingIdentityDTO $identity, array $candidateKeys): array
     {
@@ -875,29 +877,22 @@ final class SlugLifecycleService
             throw new SlugNotFoundException('The requested Binding was not found.');
         }
 
-        $participantClaims = $this->registry->findClaimsForBinding($record->id);
-        $registryKeys = array_map(static fn(Slug $slug): string => $slug->value, $candidateKeys);
-        foreach ($participantClaims as $claim) {
-            $registryKeys[] = $claim->slugValue;
-        }
-        usort($registryKeys, static fn(string $left, string $right): int => strcmp($left, $right));
-        $registryKeys = array_values(array_unique($registryKeys, SORT_STRING));
-        $minimumSlug = $registryKeys[0] ?? throw new SlugPersistenceInvariantException('Lifecycle Registry lock plan is empty.');
-        $maximumSlug = $registryKeys[count($registryKeys) - 1];
-        $lockedClaims = $this->registry->findClaimsInScopeSlugRange(
-            $record->scopeId,
-            $minimumSlug,
-            $maximumSlug,
-            true,
+        $keys = $this->registry->lockClaimKeysForMutation(
+            $scope->id,
+            [$record->id],
+            array_map(static fn(Slug $slug): string => $slug->value, $candidateKeys),
         );
-        $binding = $this->requiredBinding($identity, false);
 
-        return [$binding, $this->claimsForBinding($lockedClaims, $record->id), $lockedClaims];
+        return [
+            $this->requiredBinding($identity, true),
+            $this->registry->findClaimsForBinding($record->id, true),
+            array_column($keys, 'id', 'slug'),
+        ];
     }
 
     /**
      * @param list<Slug> $replacementCandidates
-     * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: BindingDTO, 3: list<RegistryClaimRecord>, 4: list<RegistryClaimRecord>}
+     * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: BindingDTO, 3: list<RegistryClaimRecord>, 4: array<int|string, int>}
      */
     private function lockTransferParticipants(
         BindingIdentityDTO $sourceIdentity,
@@ -947,42 +942,19 @@ final class SlugLifecycleService
             throw new SlugInvalidArgumentException('Atomic transfer source and target must differ.');
         }
 
-        $participantClaims = $this->registry->findClaimsForBindings([$sourceRecord->id, $targetRecord->id]);
-        $registryKeys = [$transferredSlug->value];
-        foreach ($replacementCandidates as $candidate) {
-            $registryKeys[] = $candidate->value;
-        }
-        foreach ($participantClaims as $claim) {
-            $registryKeys[] = $claim->slugValue;
-        }
-        usort($registryKeys, static fn(string $left, string $right): int => strcmp($left, $right));
-        $registryKeys = array_values(array_unique($registryKeys, SORT_STRING));
-        $minimumSlug = $registryKeys[0];
-        $maximumSlug = $registryKeys[count($registryKeys) - 1];
-        $claims = $this->registry->findClaimsInScopeSlugRange(
+        $keys = $this->registry->lockClaimKeysForMutation(
             $sourceRecord->scopeId,
-            $minimumSlug,
-            $maximumSlug,
-            true,
+            [$sourceRecord->id, $targetRecord->id],
+            [$transferredSlug->value, ...array_map(static fn(Slug $slug): string => $slug->value, $replacementCandidates)],
         );
-        $source = $this->requiredBinding($sourceIdentity, false);
-        $target = $this->requiredBinding($targetIdentity, false);
 
         return [
-            $source,
-            $this->claimsForBinding($claims, $sourceRecord->id),
-            $target,
-            $this->claimsForBinding($claims, $targetRecord->id),
-            $claims,
+            $this->requiredBinding($sourceIdentity, true),
+            $this->registry->findClaimsForBinding($sourceRecord->id, true),
+            $this->requiredBinding($targetIdentity, true),
+            $this->registry->findClaimsForBinding($targetRecord->id, true),
+            array_column($keys, 'id', 'slug'),
         ];
-    }
-
-    /** @param list<RegistryClaimRecord> $claims
-     *  @return list<RegistryClaimRecord>
-     */
-    private function claimsForBinding(array $claims, int $bindingId): array
-    {
-        return array_values(array_filter($claims, static fn(RegistryClaimRecord $claim): bool => $claim->bindingId === $bindingId));
     }
 
     /** Loads a binding by identity with optional row locking. */
@@ -1229,7 +1201,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed mutation snapshot for replay. */
     private function replayMutation(OperationReservation $reservation): SlugMutationResultDTO
     {
-        $result = $this->operations->decodeCommitted($reservation->operation->id, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
         if (! $result instanceof SlugMutationResultDTO) {
             throw new SlugPersistenceInvariantException('Mutation operation contains a non-mutation snapshot.');
         }
@@ -1240,7 +1212,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed transfer snapshot for replay. */
     private function replayTransfer(OperationReservation $reservation): AtomicTransferResultDTO
     {
-        $result = $this->operations->decodeCommitted($reservation->operation->id, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
         if (! $result instanceof AtomicTransferResultDTO) {
             throw new SlugPersistenceInvariantException('Transfer operation contains a non-transfer snapshot.');
         }
@@ -1367,7 +1339,7 @@ final class SlugLifecycleService
      * uniqueness race never creates a synthetic historical row.
      *
      * @param list<RegistryClaimRecord> $sourceClaims
-     * @param list<RegistryClaimRecord> $lockedClaims
+     * @param array<int|string, int> $lockedClaimIds
      * @param list<Slug> $candidates
      * @return array{0: array{kind: string, slug: Slug, claim: ?RegistryClaimRecord}, 1: HistoryEventDraft}
      */
@@ -1375,7 +1347,7 @@ final class SlugLifecycleService
         AtomicTransferCommand $command,
         BindingDTO $source,
         array $sourceClaims,
-        array $lockedClaims,
+        array $lockedClaimIds,
         array $candidates,
         Slug $moved,
         ?OperationReservation $reservation,
@@ -1403,8 +1375,7 @@ final class SlugLifecycleService
                 }
                 continue;
             }
-            $owner = $this->claimInRecords($lockedClaims, $candidate);
-            if ($owner !== null) {
+            if (isset($lockedClaimIds[$candidate->value])) {
                 if ($intent->mode->value === 'EXACT') {
                     throw new SlugAlreadyClaimedException('The exact replacement is owned by another Binding.');
                 }

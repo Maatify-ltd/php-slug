@@ -443,17 +443,7 @@ final readonly class ScopeTransitionService
     /** Decodes the current, locked reservation without reading the Host's snapshot. */
     private function decodeReplay(OperationRecord $operation): ScopeTransitionResultDTO
     {
-        if ($operation->status !== 'COMMITTED' || $operation->resultSnapshot === null || $operation->completedAt === null) {
-            throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
-        }
-
-        $result = ResultSnapshotStorage::decodeCommitted(new ResultSnapshotMetadata(
-            $operation->resultType,
-            $operation->resultSchemaVersion,
-            $operation->operationType,
-            $operation->operationKey,
-            $operation->resultSnapshot,
-        ), $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($operation, $this->profiles);
         if (! $result instanceof ScopeTransitionResultDTO) {
             throw new SlugPersistenceInvariantException('Transition operation contains a non-transition snapshot.');
         }

@@ -54,15 +54,21 @@ interface RegistryRepositoryInterface
     public function findClaimsForBindings(array $bindingIds, bool $forUpdate = false): array;
 
     /**
-     * Locks exact Registry keys and returns their ordered occupied subset.
+     * Locks exact Registry keys and returns the occupied requested keys in order.
      *
      * @param list<array{scope_id: int, slug: string}> $keys
      * @return list<array{scope_id: int, slug: string}>
      */
     public function lockOccupiedClaimKeys(array $keys): array;
 
-    /** @return list<RegistryClaimRecord> */
-    public function findClaimsInScopeSlugRange(int $scopeId, string $minimumSlug, string $maximumSlug, bool $forUpdate = false): array;
+    /**
+     * Locks current claims of the supplied locked Bindings and returns occupied requested candidate keys.
+     *
+     * @param list<int> $bindingIds
+     * @param non-empty-list<string> $candidateSlugs
+     * @return list<array{id: int, binding_id: int, slug: string}>
+     */
+    public function lockClaimKeysForMutation(int $scopeId, array $bindingIds, array $candidateSlugs): array;
 
     /** Inserts a claim and returns its row, or null when the persistence race loses. */
     public function insertClaim(int $scopeId, int $bindingId, Slug $slug, RegistryRoleEnum $role): ?RegistryClaimRecord;

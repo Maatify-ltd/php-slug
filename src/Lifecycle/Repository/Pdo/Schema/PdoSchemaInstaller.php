@@ -23,8 +23,9 @@ final readonly class PdoSchemaInstaller
     {
         ($this->capabilities ?? new PdoCapabilityGuard($this->pdo))->assertSupported();
         $paths = glob(dirname(__DIR__, 5) . '/schema/mysql/[0-9][0-9][0-9]_*.sql');
-        if ($paths === false || $paths === []) {
-            throw new SlugPersistenceInvariantException('The package schema assets cannot be found.');
+        $required = ['001_slug_rc1.sql', '002_operational_reporting_indexes.sql', '003_registry_lock_projection.sql'];
+        if ($paths === false || array_diff($required, array_map(basename(...), $paths)) !== []) {
+            throw new SlugPersistenceInvariantException('The ordered package schema assets are incomplete.');
         }
         sort($paths, SORT_STRING);
         foreach ($paths as $path) {

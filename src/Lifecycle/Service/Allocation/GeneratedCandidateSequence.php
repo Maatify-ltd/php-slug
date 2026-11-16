@@ -20,7 +20,7 @@ final class GeneratedCandidateSequence
     /**
      * Returns validated candidates in allocation order, beginning with the generated base.
      *
-     * @return list<Slug>
+     * @return non-empty-list<Slug>
      */
     public function fromSource(SlugProfileInterface $profile, string $source): array
     {

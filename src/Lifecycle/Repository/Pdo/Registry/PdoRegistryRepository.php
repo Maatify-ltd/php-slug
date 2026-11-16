@@ -41,6 +41,8 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
 {
     private PdoCapabilityGuard $capabilities;
 
+    private PdoRegistryLockProjection $lockProjection;
+
     /** Injects PDO, profile/scope dependencies, clock, and capability checks. */
     public function __construct(
         private PDO $pdo,
@@ -50,6 +52,7 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         ?PdoCapabilityGuard $capabilities = null,
     ) {
         $this->capabilities = $capabilities ?? new PdoCapabilityGuard($pdo);
+        $this->lockProjection = new PdoRegistryLockProjection($pdo);
     }
 
     /** Verifies the installed schema before registry access. */
@@ -165,19 +168,31 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
     /** Finds a claim by scope and canonical slug, optionally with a row lock. */
     public function findClaimByScopeSlug(int $scopeId, Slug $slug, bool $forUpdate = false): ?RegistryClaimRecord
     {
+        if ($forUpdate) {
+            $rows = $this->lockProjection->readCurrentClaims($this->lockProjection->lockExactKeys($scopeId, [$slug->value]));
+            return $rows === [] ? null : $this->claimFromRow($rows[0]);
+        }
         return $this->findClaim('r.scope_id = :scope_id AND r.slug = :slug', [
             'scope_id' => $scopeId,
             'slug' => $slug->value,
-        ], $forUpdate);
+        ], false);
     }
 
     /** Finds a claim by binding and canonical slug, optionally with a row lock. */
     public function findClaimByBindingSlug(int $bindingId, Slug $slug, bool $forUpdate = false): ?RegistryClaimRecord
     {
+        if ($forUpdate) {
+            $scopeId = $this->lockProjection->currentBindingScope($bindingId);
+            if ($scopeId === null) {
+                return null;
+            }
+            $rows = $this->lockProjection->readCurrentClaims($this->lockProjection->lockExactKeys($scopeId, [$slug->value], $bindingId));
+            return $rows === [] ? null : $this->claimFromRow($rows[0]);
+        }
         return $this->findClaim('r.binding_id = :binding_id AND r.slug = :slug', [
             'binding_id' => $bindingId,
             'slug' => $slug->value,
-        ], $forUpdate);
+        ], false);
     }
 
     /**
@@ -190,14 +205,21 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         if ($bindingId < 0) {
             throw new SlugPersistenceInvariantException('Binding id cannot be negative.');
         }
-        $suffix = $forUpdate ? ' FOR UPDATE' : '';
+        if ($forUpdate) {
+            $scopeId = $this->lockProjection->currentBindingScope($bindingId);
+            if ($scopeId === null) {
+                return [];
+            }
+            $rows = $this->lockProjection->readCurrentClaims($this->lockProjection->lockBinding($scopeId, $bindingId));
+            return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $rows);
+        }
         $statement = $this->pdo->prepare(
             'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '
             . 's.namespace, s.locale_key, s.context_key, s.profile_key, b.entity_type, b.entity_key '
             . 'FROM maa_slug_registry r '
             . 'INNER JOIN maa_slug_scopes s ON s.id = r.scope_id '
             . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id '
-            . 'WHERE r.binding_id = :binding_id ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC' . $suffix,
+            . 'WHERE r.binding_id = :binding_id ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim list lookup.');
@@ -234,7 +256,16 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Binding ids must be distinct for a multi-binding claim lock.');
         }
 
-        $suffix = $forUpdate ? ' FOR UPDATE' : '';
+        if ($forUpdate) {
+            sort($bindingIds, SORT_NUMERIC);
+            $claims = [];
+            foreach ($bindingIds as $bindingId) {
+                array_push($claims, ...$this->findClaimsForBinding($bindingId, true));
+            }
+            usort($claims, static fn(RegistryClaimRecord $left, RegistryClaimRecord $right): int => $left->scopeId <=> $right->scopeId ?: strcmp($left->slugValue, $right->slugValue) ?: $left->id <=> $right->id);
+            return $claims;
+        }
+
         $statement = $this->pdo->prepare(
             'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '
             . 's.namespace, s.locale_key, s.context_key, s.profile_key, b.entity_type, b.entity_key '
@@ -242,7 +273,7 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             . 'INNER JOIN maa_slug_scopes s ON s.id = r.scope_id '
             . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id '
             . 'WHERE r.binding_id IN (' . implode(', ', $placeholders) . ') '
-            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC' . $suffix,
+            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the multi-binding Registry claim list lookup.');
@@ -265,126 +296,70 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
      */
     public function lockOccupiedClaimKeys(array $keys): array
     {
+        return array_map(static fn(array $row): array => [
+            'scope_id' => $row['scope_id'],
+            'slug' => $row['requested_slug'],
+        ], $this->lockRegistryKeyRows($keys));
+    }
+
+    /**
+     * @param list<array{scope_id: int, slug: string}> $keys
+     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string, requested_slug: string}>
+     */
+    private function lockRegistryKeyRows(array $keys): array
+    {
         if ($keys === []) {
             return [];
         }
 
-        $normalized = [];
+        $byScope = [];
         foreach ($keys as $key) {
-            if ($key['scope_id'] < 0 || $key['slug'] === '') {
+            if ($key['scope_id'] < 1 || $key['slug'] === '') {
                 throw new SlugPersistenceInvariantException('Registry lock key is invalid.');
             }
-            $normalized[$key['scope_id'] . "\0" . $key['slug']] = $key;
+            $byScope[$key['scope_id']][] = $key['slug'];
         }
-        $normalized = array_values($normalized);
-        usort($normalized, static fn(array $left, array $right): int => $left['scope_id'] <=> $right['scope_id'] ?: strcmp($left['slug'], $right['slug']));
-
-        $predicates = [];
-        $parameters = [];
-        foreach ($normalized as $index => $key) {
-            $scopeParameter = 'lock_scope_' . $index;
-            $slugParameter = 'lock_slug_' . $index;
-            $predicates[] = '(r.scope_id = :' . $scopeParameter . ' AND r.slug = :' . $slugParameter . ')';
-            $parameters[$scopeParameter] = $key['scope_id'];
-            $parameters[$slugParameter] = $key['slug'];
+        ksort($byScope, SORT_NUMERIC);
+        $rows = [];
+        foreach ($byScope as $scopeId => $slugs) {
+            $slugs = array_values(array_unique($slugs, SORT_STRING));
+            sort($slugs, SORT_STRING);
+            array_push($rows, ...$this->lockProjection->lockExactKeys($scopeId, $slugs));
         }
-
-        // This phase locks Registry rows only. A join to the owner Binding
-        // could introduce a Binding lock after the Binding lock phase.
-        $statement = $this->pdo->prepare(
-            'SELECT r.scope_id, r.slug FROM maa_slug_registry r WHERE ' . implode(' OR ', $predicates)
-            . ' ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC FOR UPDATE',
+        usort(
+            $rows,
+            static fn(array $left, array $right): int => $left['scope_id'] <=> $right['scope_id']
+                ?: strcmp($left['requested_slug'], $right['requested_slug']),
         );
-        if ($statement === false) {
-            throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan lookup.');
-        }
-        $statement->execute($parameters);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        $rows = PdoRowHydrator::many($rawRows);
-
-        return array_map(static fn(array $row): array => [
-            'scope_id' => PdoRowHydrator::nonNegativeInt($row, 'scope_id'),
-            'slug' => PdoRowHydrator::string($row, 'slug'),
-        ], $rows);
+        return $rows;
     }
 
     /**
-     * Read one deterministic Registry key range and, when requested, retain
-     * its Registry row locks for the remainder of the enclosing transaction.
+     * Locks current participant keys by Binding partition, then exact candidate
+     * keys within the Scope occupancy partition. The preceding Scope lock
+     * serializes its writers before either Registry phase.
      *
-     * The range is intentionally scoped to one Scope. Callers must include
-     * every existing participant key and every candidate key before mutation;
-     * the binary Scope/slug index then acquires the existing range in
-     * (scope_id, slug, id) order. Correctness for an absent candidate does not
-     * depend on a gap lock; the unique Registry key handles a later insert race.
-     *
-     * @return list<RegistryClaimRecord>
+     * @param list<int> $bindingIds
+     * @param non-empty-list<string> $candidateSlugs
+     * @return list<array{id: int, binding_id: int, slug: string}>
      */
-    public function findClaimsInScopeSlugRange(
-        int $scopeId,
-        string $minimumSlug,
-        string $maximumSlug,
-        bool $forUpdate = false,
-    ): array {
-        if ($scopeId < 0) {
-            throw new SlugPersistenceInvariantException('Scope id cannot be negative.');
-        }
-        if ($minimumSlug === '' || $maximumSlug === '') {
-            throw new SlugPersistenceInvariantException('Registry slug range bounds must be non-empty.');
-        }
-        if (strcmp($minimumSlug, $maximumSlug) > 0) {
-            throw new SlugPersistenceInvariantException('Registry slug range bounds must be ordered.');
+    public function lockClaimKeysForMutation(int $scopeId, array $bindingIds, array $candidateSlugs): array
+    {
+        $bindingIds = array_values(array_unique($bindingIds));
+        sort($bindingIds, SORT_NUMERIC);
+        foreach ($bindingIds as $bindingId) {
+            $this->lockProjection->lockBinding($scopeId, $bindingId);
         }
 
-        $suffix = $forUpdate ? ' FOR UPDATE' : '';
-        $statement = $this->pdo->prepare(
-            'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at '
-            . 'FROM maa_slug_registry r '
-            . 'WHERE r.scope_id = :scope_id AND r.slug >= :minimum_slug AND r.slug <= :maximum_slug '
-            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC' . $suffix,
+        $keys = array_map(
+            static fn(string $slug): array => ['scope_id' => $scopeId, 'slug' => $slug],
+            $candidateSlugs,
         );
-        if ($statement === false) {
-            throw new SlugPersistenceInvariantException('Unable to prepare the Registry slug range lookup.');
-        }
-        $statement->execute([
-            'scope_id' => $scopeId,
-            'minimum_slug' => $minimumSlug,
-            'maximum_slug' => $maximumSlug,
-        ]);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        $rows = PdoRowHydrator::many($rawRows);
-        if ($rows === []) {
-            return [];
-        }
-
-        $ids = array_map(static fn(array $row): int => PdoRowHydrator::nonNegativeInt($row, 'id'), $rows);
-        $placeholders = [];
-        $parameters = [];
-        foreach ($ids as $index => $id) {
-            $parameter = 'registry_id_' . $index;
-            $placeholders[] = ':' . $parameter;
-            $parameters[$parameter] = $id;
-        }
-        $hydration = $this->pdo->prepare(
-            'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '
-            . 's.namespace, s.locale_key, s.context_key, s.profile_key, b.entity_type, b.entity_key '
-            . 'FROM maa_slug_registry r '
-            . 'INNER JOIN maa_slug_scopes s ON s.id = r.scope_id '
-            . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id '
-            . 'WHERE r.id IN (' . implode(', ', $placeholders) . ') '
-            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
-        );
-        if ($hydration === false) {
-            throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim hydration.');
-        }
-        $hydration->execute($parameters);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $hydration->fetchAll(PDO::FETCH_ASSOC);
-        $hydratedRows = PdoRowHydrator::many($rawRows);
-
-        return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $hydratedRows);
+        return array_map(static fn(array $row): array => [
+            'id' => $row['id'],
+            'binding_id' => $row['binding_id'],
+            'slug' => $row['requested_slug'],
+        ], $this->lockRegistryKeyRows($keys));
     }
 
     /** Inserts a claim and returns its raw row, or null when a uniqueness race loses. */
@@ -419,6 +394,8 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         if ($id === false) {
             throw new SlugPersistenceInvariantException('Registry claim insert did not return a valid id.');
         }
+        $this->lockProjection->insertClaimKeys($scopeId, $bindingId, $slug->value, $id);
+
         // The write flow already holds the Scope, Binding, and inserted Registry
         // row. Read their joined projection from current state under Host snapshots.
         $claim = $this->findClaimById($id, true);
@@ -504,7 +481,7 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         if ($statement->rowCount() !== 1) {
             throw new SlugPersistenceInvariantException('Registry role update did not affect exactly one claim.');
         }
-        $claim = $this->findClaimById($registryId, false);
+        $claim = $this->findClaimById($registryId, true);
         if ($claim === null) {
             throw new SlugPersistenceInvariantException('Updated Registry claim cannot be read back.');
         }
@@ -518,6 +495,12 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         if ($registryId < 0) {
             throw new SlugPersistenceInvariantException('Registry id cannot be negative.');
         }
+        $claim = $this->findClaimById($registryId, true);
+        if ($claim === null) {
+            throw new SlugPersistenceInvariantException('Registry claim to delete is missing.');
+        }
+        $this->lockProjection->deleteClaimKeys($claim->scopeId, $claim->bindingId, $claim->slugValue, $registryId);
+
         $statement = $this->pdo->prepare('DELETE FROM maa_slug_registry WHERE id = :registry_id');
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim delete.');

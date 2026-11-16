@@ -115,6 +115,18 @@ SlugEngine::assignExact(new AssignExactCommand(...)).
 
 يمر الاستدعاء عبر SlugEngine وlifecycle service وPersistence المملوكة للحزمة. لا يعيد Host تنفيذ claim أو uniqueness أو History.
 
+### حذف Binding محرَّر نهائيًا
+
+استدعِ `purgeBinding()` مباشرةً لحذف Binding نهائيًا إذا كانت حالته `RELEASED` ولا توجد له مطالبات قائمة. مرّر هويته من نوع `BindingIdentityDTO` في `$binding` ومراجعته الحالية في `$revision` كمراجعة متوقعة.
+
+```php
+use Maatify\Slug\Lifecycle\Command\PurgeBindingCommand;
+
+$engine->purgeBinding(new PurgeBindingCommand($binding, $revision));
+```
+
+إذا لم تكن هناك معاملة خارجية، تفتح الحزمة معاملة للحذف ثم تنفّذ لها `commit` أو `rollback`. إذا كان لدى الـHost معاملة مفتوحة بالفعل على اتصال PDO المُمرَّر، يظل قرار `commit` أو `rollback` بيده. قد تظل الأقفال التي أخذتها عملية الحذف قائمة حتى تنتهي المعاملة. راجع [§9 من مرجع الحزمة](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
+
 ### Consumer reads / resolution
 
 **Input**

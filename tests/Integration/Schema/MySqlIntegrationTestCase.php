@@ -125,6 +125,7 @@ abstract class MySqlIntegrationTestCase extends TestCase
     {
         foreach ([
             'maa_slug_history',
+            'maa_slug_registry_lock_keys',
             'maa_slug_registry',
             'maa_slug_operation_bindings',
             'maa_slug_operations',

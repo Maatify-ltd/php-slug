@@ -6,7 +6,7 @@ It is a discovery registry only. It is not a Decision Record, does not duplicate
 
 ## Current State
 
-The active built-in profile compatibility and shared pagination decisions are registered below.
+The active decisions cover built-in profile compatibility, shared pagination, and Registry lock boundaries.
 
 ## Registered Decisions
 
@@ -14,3 +14,4 @@ The active built-in profile compatibility and shared pagination decisions are re
 |---|---|---|---|---|---|---|---|
 | `DEC-001` | Built-in Profile Runtime Compatibility | `ACTIVE` | `/` — Built-in slug profile runtime compatibility | [DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md](DEC-001_BUILTIN_PROFILE_RUNTIME_COMPATIBILITY.md) | `SLUG_PACKAGE_REFERENCE.md` §§4–5 | — | — |
 | `DEC-002` | Shared Pagination Persistence Trial | `ACTIVE` | `/` — Shared management pagination dependency and public pagination types | [DEC-002_SHARED_PAGINATION_PERSISTENCE_TRIAL.md](DEC-002_SHARED_PAGINATION_PERSISTENCE_TRIAL.md) | `SLUG_PACKAGE_REFERENCE.md` §§3–4, 6.2, 10 | — | — |
+| `DEC-003` | Registry Lock Boundaries | `ACTIVE` | `/` — InnoDB lock boundaries for Registry lifecycle current reads | [DEC-003_REGISTRY_LOCK_PROJECTION.md](DEC-003_REGISTRY_LOCK_PROJECTION.md) | `SLUG_PACKAGE_REFERENCE.md` §§9, 10.2 and `schema/mysql/README.md` | — | — |

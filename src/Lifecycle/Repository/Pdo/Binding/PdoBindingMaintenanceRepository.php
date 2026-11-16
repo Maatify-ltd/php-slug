@@ -7,6 +7,7 @@ namespace Maatify\Slug\Lifecycle\Repository\Pdo\Binding;
 use PDO;
 use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\Binding\BindingMaintenanceRepositoryInterface;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Registry\PdoRegistryLockProjection;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
 
 /** Internal destructive binding maintenance used only by authorized purgeBinding. */
@@ -70,6 +71,13 @@ final readonly class PdoBindingMaintenanceRepository implements BindingMaintenan
         foreach (array_values(array_unique($operationIds)) as $operationId) {
             $deleteOperation->execute(['operation_id' => $operationId]);
         }
+
+        $projection = new PdoRegistryLockProjection($this->pdo);
+        $scopeId = $projection->currentBindingScope($bindingId);
+        if ($scopeId === null) {
+            throw new SlugPersistenceInvariantException('Binding to purge is missing.');
+        }
+        $projection->deleteBindingBoundaries($scopeId, $bindingId);
 
         $deleteBinding = $this->pdo->prepare('DELETE FROM maa_slug_bindings WHERE id = :binding_id');
         if ($deleteBinding === false) {

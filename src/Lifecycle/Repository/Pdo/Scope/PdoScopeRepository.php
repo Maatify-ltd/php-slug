@@ -22,6 +22,7 @@ use Maatify\Slug\Lifecycle\Exception\SlugScopeProfileMismatchException;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Canonicalization\ValueObject\Slug;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Registry\PdoRegistryLockProjection;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoDuplicateClassifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
@@ -419,7 +420,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
             $bindingId = $this->nonNegativeInt($row['id'], 'binding.id');
             $scopeId = $this->nonNegativeInt($row['scope_id'], 'binding.scope_id');
             $claims = $this->hydrateRegistryClaims(
-                $observedClaims ?? $this->registryClaimRows($bindingId, $forUpdate),
+                $observedClaims ?? $this->registryClaimRows($scopeId, $bindingId, $forUpdate),
                 $bindingId,
                 $scopeId,
                 $entity->entityType,
@@ -465,9 +466,12 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
     }
 
     /** @return list<array<string, mixed>> */
-    private function registryClaimRows(int $bindingId, bool $forUpdate): array
+    private function registryClaimRows(int $scopeId, int $bindingId, bool $forUpdate): array
     {
-        $suffix = $forUpdate ? ' FOR UPDATE' : '';
+        if ($forUpdate) {
+            $projection = new PdoRegistryLockProjection($this->pdo);
+            return $projection->readCurrentClaims($projection->lockBinding($scopeId, $bindingId));
+        }
         $statement = $this->pdo->prepare(
             'SELECT r.id, r.binding_id, r.scope_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '
             . 's.namespace, s.locale_key, s.context_key, s.profile_key, '
@@ -475,7 +479,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
             . 'FROM maa_slug_registry r '
             . 'INNER JOIN maa_slug_scopes s ON s.id = r.scope_id '
             . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id '
-            . 'WHERE r.binding_id = :binding_id ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC' . $suffix,
+            . 'WHERE r.binding_id = :binding_id ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the current claim lookup.');

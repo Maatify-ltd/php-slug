@@ -421,6 +421,8 @@ The persisted path uses direct PDO inside package infrastructure only:
 - First-create races on Binding and Scope are reread under lock in the defined paths. There is no savepoint for an attempted `INSERT` and no automatic deadlock retry.
 - `revision` protects same-Binding CAS, and multi-row lifecycle and History mutations are atomic. Lock ordering in transfer and transition is part of the execution contract.
 
+Gap-sensitive Registry current reads for lifecycle mutations use an internal InnoDB projection with per-Scope and per-Binding lock boundaries. The package initializes new partitions when first needed and maintains the projection in the Registry write transaction on the Host PDO. Registry uniqueness remains authoritative. The lock boundaries cover these targeted reads. Requests for shared keys can still contend. During `purgeBinding()`, InnoDB's `fk_registry_binding_scope` check can take a gap lock on the underlying Registry index and contend with writes in another Scope, even when the Registry is empty.
+
 On failure or invariant violation, partial mutation, uncommitted History, and uncommitted operations must be removed by the operation rollback. The original throwable is rethrown unless a documented semantic conversion applies.
 
 ## 10. Management, Resolution, and Pagination
@@ -537,11 +539,11 @@ public reporting for internal operations or idempotency tables
 
 The package does not add APIs for these dimensions merely to satisfy a Reporting standard. Internal operation or idempotency rows, although persisted, are not public reporting contracts.
 
-### 10.2 Ordered Schema Assets and RC1 Upgrade
+### 10.2 Ordered Schema Assets and Upgrade
 
-The published `v1.0.0-rc.1` baseline is represented by `schema/mysql/001_slug_rc1.sql`. `schema/mysql/002_operational_reporting_indexes.sql` is the additive operational-reporting asset published with `v1.0.0-rc.2`; the published RC1 artifact does not contain `002`.
+The published `v1.0.0-rc.1` baseline contains `schema/mysql/001_slug_rc1.sql`. Published `v1.0.0-rc.2` adds `schema/mysql/002_operational_reporting_indexes.sql`. The current checkout also requires the additive `schema/mysql/003_registry_lock_projection.sql` for the persisted runtime.
 
-For a fresh current installation, the Host applies ordered assets `001_*.sql`, then `002_*.sql`, then any future ordered assets. For an existing published RC1 installation, the Host keeps the existing `001` schema, applies `002_operational_reporting_indexes.sql`, and then runs current Runtime schema verification. This ordered upgrade path is required before the current Runtime is considered schema-compatible.
+Apply the outstanding assets in order. The [schema installation and upgrade guide](schema/mysql/README.md#installation-and-upgrade) lists the order for fresh, RC1, and RC2 installations and the quiesced backfill procedure for installed databases. Verify the upgraded schema before resuming Slug traffic.
 
 ### 10.3 Extension Guide
 

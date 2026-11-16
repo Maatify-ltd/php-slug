@@ -21,6 +21,7 @@ use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Canonicalization\ValueObject\Slug;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Registry\PdoRegistryLockProjection;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Registry\PdoRegistryRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Scope\PdoScopeRepository;
 use Maatify\Slug\Lifecycle\Service\Ownership\RegistryClaimCoordinator;
@@ -322,23 +323,27 @@ final class RegistryClaimPersistenceTest extends MySqlIntegrationTestCase
 
     private function insertRegistryFixture(int $scopeId, int $bindingId, string $slug): int
     {
-        $statement = $this->pdo->prepare(
-            'INSERT INTO maa_slug_registry '
-            . '(scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
-            . 'VALUES (:scope_id, :binding_id, :slug, :claim_role, :claimed_at, :updated_at)',
-        );
-        self::assertNotFalse($statement);
-        $timestamp = $this->clock()->now()->format('Y-m-d H:i:s.u');
-        $statement->execute([
-            'scope_id' => $scopeId,
-            'binding_id' => $bindingId,
-            'slug' => $slug,
-            'claim_role' => RegistryRoleEnum::CURRENT_CANONICAL->value,
-            'claimed_at' => $timestamp,
-            'updated_at' => $timestamp,
-        ]);
+        return (new PdoTransactionCoordinator($this->pdo))->run(function () use ($scopeId, $bindingId, $slug): int {
+            $statement = $this->pdo->prepare(
+                'INSERT INTO maa_slug_registry '
+                . '(scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+                . 'VALUES (:scope_id, :binding_id, :slug, :claim_role, :claimed_at, :updated_at)',
+            );
+            self::assertNotFalse($statement);
+            $timestamp = $this->clock()->now()->format('Y-m-d H:i:s.u');
+            $statement->execute([
+                'scope_id' => $scopeId,
+                'binding_id' => $bindingId,
+                'slug' => $slug,
+                'claim_role' => RegistryRoleEnum::CURRENT_CANONICAL->value,
+                'claimed_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ]);
 
-        return (int) $this->pdo->lastInsertId();
+            $id = (int) $this->pdo->lastInsertId();
+            (new PdoRegistryLockProjection($this->pdo))->insertClaimKeys($scopeId, $bindingId, $slug, $id);
+            return $id;
+        });
     }
 
     private function expectInvariantFailure(BindingIdentityDTO $identity): void
