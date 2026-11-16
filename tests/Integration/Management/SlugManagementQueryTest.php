@@ -370,62 +370,125 @@ final class SlugManagementQueryTest extends MySqlIntegrationTestCase
         self::assertSame(1, $page->data[0]->sequenceNo);
     }
 
-    public function testManagementPrefixFiltersTreatWildcardAndEscapeCharactersAsLiteral(): void
+    /** @return iterable<string, array{string}> */
+    public static function prefixSqlModes(): iterable
+    {
+        yield 'backslash escapes' => ['STRICT_TRANS_TABLES'];
+        yield 'no backslash escapes' => ['STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('prefixSqlModes')]
+    public function testBindingPrefixTreatsWildcardAndEscapeCharactersAsLiteral(string $sqlMode): void
     {
         $engine = $this->engine();
+        $scope = $this->identity('literal%owner')->scopeProfile;
         foreach ([
             'literal%owner' => 'percent-slug',
             'literal_owner' => 'underscore-slug',
+            'literal!owner' => 'bang-slug',
             'literal-escape' => 'escape-slug',
             'literalXowner' => 'ordinary-slug',
         ] as $entityKey => $slug) {
             $engine->assignExact(new AssignExactCommand($this->identity($entityKey), $slug, null, new AuditContextDTO()));
         }
+        $this->setPrefixSqlMode($sqlMode);
 
-        $percent = $engine->searchBindings(new BindingSearchCriteria(
-            $this->identity('literal%owner')->scopeProfile,
-            new PageRequest(1, 1, 'entity_key', 'ASC'),
-            entityType: 'product',
-            entityKeyPrefix: 'literal%',
-        ));
-        self::assertSame(1, $percent->filtered);
-        self::assertSame('literal%owner', $percent->data[0]->identity->entity->entityKey);
+        foreach ([
+            'literal%' => ['literal%owner'],
+            'literal_' => ['literal_owner'],
+            'literal!' => ['literal!owner'],
+            'literal\\' => [],
+            'literalX' => ['literalXowner'],
+        ] as $prefix => $expectedKeys) {
+            $page = $engine->searchBindings(new BindingSearchCriteria(
+                $scope,
+                new PageRequest(1, 10, 'entity_key', 'ASC'),
+                entityType: 'product',
+                entityKeyPrefix: $prefix,
+            ));
+            self::assertSame(5, $page->total);
+            self::assertSame(count($expectedKeys), $page->filtered);
+            self::assertSame($expectedKeys, array_map(static fn($binding): string => $binding->identity->entity->entityKey, $page->data));
+        }
+    }
 
-        $underscore = $engine->searchBindings(new BindingSearchCriteria(
-            $this->identity('literal_owner')->scopeProfile,
-            new PageRequest(1, 10),
-            entityKeyPrefix: 'literal_',
-        ));
-        self::assertSame(1, $underscore->filtered);
-        self::assertSame('literal_owner', $underscore->data[0]->identity->entity->entityKey);
+    #[\PHPUnit\Framework\Attributes\DataProvider('prefixSqlModes')]
+    public function testRegistryPrefixTreatsWildcardAndEscapeCharactersAsLiteral(string $sqlMode): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('registry-prefix');
+        $engine->assignExact(new AssignExactCommand($identity, 'prefix-main', null, new AuditContextDTO()));
+        $engine->addAlias(new AddAliasCommand($identity, 'prefix-alias', 1, new AuditContextDTO()));
+        $this->setPrefixSqlMode($sqlMode);
 
-        $escape = $engine->searchBindings(new BindingSearchCriteria(
-            $this->identity('literal-escape')->scopeProfile,
-            new PageRequest(1, 10),
-            entityKeyPrefix: 'literal\\',
-        ));
-        self::assertSame(0, $escape->filtered);
-        self::assertCount(0, $escape->data);
+        foreach (['prefix%', 'prefix_', 'prefix!', 'prefix\\'] as $prefix) {
+            $page = $engine->searchRegistry(new RegistrySearchCriteria($identity->scopeProfile, new PageRequest(), $prefix));
+            self::assertSame(2, $page->total);
+            self::assertSame(0, $page->filtered, $prefix);
+            self::assertSame([], $page->data);
+        }
 
-        $ordinary = $engine->searchBindings(new BindingSearchCriteria(
-            $this->identity('literalXowner')->scopeProfile,
-            new PageRequest(1, 10),
-            entityKeyPrefix: 'literalX',
-        ));
-        self::assertSame(1, $ordinary->filtered);
+        $page = $engine->searchRegistry(new RegistrySearchCriteria($identity->scopeProfile, new PageRequest(), 'prefix-m'));
+        self::assertSame(2, $page->total);
+        self::assertSame(1, $page->filtered);
+        self::assertSame('prefix-main', $page->data[0]->slug->value);
+    }
 
-        $wildcardSlug = $engine->searchRegistry(new RegistrySearchCriteria(
-            $this->identity('literal%owner')->scopeProfile,
-            new PageRequest(1, 10),
-            slugPrefix: 'percent%',
-        ));
-        self::assertSame(0, $wildcardSlug->filtered);
-        $normalSlug = $engine->searchRegistry(new RegistrySearchCriteria(
-            $this->identity('literal%owner')->scopeProfile,
-            new PageRequest(1, 10),
-            slugPrefix: 'percent-',
-        ));
-        self::assertSame(1, $normalSlug->filtered);
+    #[\PHPUnit\Framework\Attributes\DataProvider('prefixSqlModes')]
+    public function testScopePrefixTreatsWildcardAndEscapeCharactersAsLiteral(string $sqlMode): void
+    {
+        $engine = $this->engine();
+        foreach (['prefix-catalog', 'other-catalog'] as $namespace) {
+            $identity = $this->identityInScope($namespace, null, null, 'ascii-v1');
+            $engine->assignExact(new AssignExactCommand($identity, 'scope-slug', null, new AuditContextDTO()));
+        }
+        $this->setPrefixSqlMode($sqlMode);
+
+        foreach (['prefix%', 'prefix_', 'prefix!', 'prefix\\'] as $prefix) {
+            $page = $engine->searchScopes(new ScopeSearchCriteria(new PageRequest(), $prefix));
+            self::assertSame(2, $page->total);
+            self::assertSame(0, $page->filtered, $prefix);
+            self::assertSame([], $page->data);
+        }
+
+        $page = $engine->searchScopes(new ScopeSearchCriteria(new PageRequest(), 'prefix-'));
+        self::assertSame(2, $page->total);
+        self::assertSame(1, $page->filtered);
+        self::assertSame('prefix-catalog', $page->data[0]->scope->namespace);
+    }
+
+    public function testRegistryCriteriaForMissingBindingDoesNotWidenWithinSameScope(): void
+    {
+        $engine = $this->engine();
+        $present = $this->identity('present-binding');
+        $missing = $this->identity('missing-binding');
+        $engine->assignExact(new AssignExactCommand($present, 'main-slug', null, new AuditContextDTO()));
+        $engine->addAlias(new AddAliasCommand($present, 'alias-slug', 1, new AuditContextDTO()));
+        $request = new PageRequest(1, 1, 'slug', 'DESC');
+
+        $unfiltered = $engine->inspectRegistry(new RegistryCriteria($present->scopeProfile, $request));
+        self::assertSame(2, $unfiltered->total);
+        self::assertSame(2, $unfiltered->filtered);
+        self::assertTrue($unfiltered->hasNext);
+
+        foreach ([null, RegistryRoleEnum::CURRENT_CANONICAL] as $role) {
+            $page = $engine->inspectRegistry(new RegistryCriteria($missing->scopeProfile, $request, $missing, $role));
+            self::assertSame(2, $page->total);
+            self::assertSame(0, $page->filtered);
+            self::assertSame([], $page->data);
+            self::assertFalse($page->hasNext);
+            self::assertFalse($page->hasPrevious);
+            self::assertSame(1, $page->perPage);
+            self::assertSame('slug', $page->sortBy);
+            self::assertSame('DESC', $page->sortDirection->value);
+        }
+    }
+
+    private function setPrefixSqlMode(string $sqlMode): void
+    {
+        $statement = $this->pdo->prepare('SET SESSION sql_mode = :sql_mode');
+        self::assertNotFalse($statement);
+        $statement->execute(['sql_mode' => $sqlMode]);
     }
 
     public function testRegistryCriteriaRejectsBindingFromAnotherScope(): void

@@ -133,7 +133,7 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
             $params['entity_type'] = $criteria->entityType;
         }
         if ($criteria->entityKeyPrefix !== null) {
-            $predicate .= " AND b.entity_key LIKE :entity_key_prefix ESCAPE '\\\\'";
+            $predicate .= " AND b.entity_key LIKE :entity_key_prefix ESCAPE '!'";
             $params['entity_key_prefix'] = $this->likePrefix($criteria->entityKeyPrefix);
         }
         if ($criteria->status !== null) {
@@ -162,7 +162,7 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
         $predicate = 'r.scope_id = :scope_id';
         $params = ['scope_id' => $scopeId];
         if ($criteria->slugPrefix !== null) {
-            $predicate .= " AND r.slug LIKE :slug_prefix ESCAPE '\\\\'";
+            $predicate .= " AND r.slug LIKE :slug_prefix ESCAPE '!'";
             $params['slug_prefix'] = $this->likePrefix($criteria->slugPrefix);
         }
         if ($criteria->role !== null) {
@@ -195,7 +195,7 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
         $predicate = '1 = 1';
         $params = [];
         if ($criteria->namespacePrefix !== null) {
-            $predicate .= " AND s.namespace LIKE :namespace_prefix ESCAPE '\\\\'";
+            $predicate .= " AND s.namespace LIKE :namespace_prefix ESCAPE '!'";
             $params['namespace_prefix'] = $this->likePrefix($criteria->namespacePrefix);
         }
         if ($criteria->profileKey !== null) {
@@ -594,10 +594,10 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
         return $value === '' ? null : $value;
     }
 
-    /** Escapes LIKE metacharacters before applying a prefix wildcard. */
+    /** Escapes the LIKE pattern with '!' so backslashes stay literal in either SQL mode. */
     private function likePrefix(string $prefix): string
     {
-        return strtr($prefix, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
+        return strtr($prefix, ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
     }
 
     /** @param array<string, mixed> $row */

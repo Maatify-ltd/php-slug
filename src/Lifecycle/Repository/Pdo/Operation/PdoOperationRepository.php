@@ -415,7 +415,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
     /** @return list<OperationParticipant> */
     private function participantsForOperation(int $operationId): array
     {
-        $statement = $this->pdo->prepare('SELECT binding_id, idempotency_key, participant_role FROM maa_slug_operation_bindings WHERE operation_id = :operation_id ORDER BY participant_role ASC, binding_id ASC');
+        $statement = $this->pdo->prepare('SELECT binding_id, idempotency_key, participant_role FROM maa_slug_operation_bindings WHERE operation_id = :operation_id ORDER BY participant_role ASC, binding_id ASC LOCK IN SHARE MODE');
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the operation participant read.');
         }

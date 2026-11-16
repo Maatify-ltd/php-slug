@@ -427,6 +427,8 @@ On failure or invariant violation, partial mutation, uncommitted History, and un
 
 `resolve` reads a decoded segment and returns `SlugResolutionDTO` even for `NONE` and `INVALID`. `MatchKindEnum` distinguishes `CURRENT`, `ALIAS`, `HISTORICAL`, `RETIRED_ALIAS`, and `NONE`, and does not return live resolution for `RELEASED`. `INACTIVE` remains matchable; the Host owns the 404, 410, or redirect decision.
 
+When `getBinding()`, `getCurrent()`, or `resolve()` consults persisted state through the PDO factory, it observes the Scope, Binding, and relevant registry state in a single consistent read under `READ COMMITTED` or `REPEATABLE READ` isolation. These reads use the Host's PDO and leave its transaction and isolation settings under its control.
+
 Management queries separate the live Registry from History:
 
 ```text
@@ -476,7 +478,7 @@ getHistory(HistoryCriteria)
 → History for one Binding with optional HistoryEventTypeEnum and pagination
 
 inspectRegistry(RegistryCriteria)
-→ Registry for one Scope with optional Binding, optional RegistryRoleEnum, and pagination
+→ Registry for one Scope with optional Binding, optional RegistryRoleEnum, and pagination. If the requested same-Scope Binding is missing, data is empty and filtered is zero. total still counts all claims in the Scope.
 
 inspectScope(ScopeCriteria)
 → Scope matching ScopeProfileRequestDTO; returns ScopeDTO or null
@@ -501,10 +503,10 @@ searchHistory(HistorySearchCriteria)
 → package-wide History when `scopeProfile` is null, or History attributed to the exact persisted Scope snapshot when it is supplied. A missing Scope produces an empty page. `eventType` and the half-open UTC window `[occurredFromInclusive, occurredUntilExclusive)` are optional filters; when both bounds exist, `from < until` is required. Inputs are normalized to UTC and compared at the package's microsecond persistence precision. Filtering uses `occurredAt`, not `originalOccurredAt`. `total` is the unfiltered base boundary; `filtered` is the result after event-type and time-window filters. The deterministic default sort is `occurred_at DESC`, then `id DESC`; callers may use the supported paginator sort fields.
 
 searchBindings(BindingSearchCriteria)
-→ Scope with optional entityType, entityKeyPrefix, BindingStatusEnum, and pagination
+→ Scope with optional entityType, literal entityKeyPrefix, BindingStatusEnum, and pagination
 
 searchRegistry(RegistrySearchCriteria)
-→ Scope with optional slugPrefix, RegistryRoleEnum, BindingStatusEnum, and pagination
+→ Scope with optional literal slugPrefix, RegistryRoleEnum, BindingStatusEnum, and pagination
 ```
 
 These Management APIs do not mutate state and are not an alternate mutation path. The package owns the meanings of Slug scopes, Bindings, claims, History, status, and revision; the Host owns presentation, permissions, HTTP, exports, entity meaning and names, and cross-package aggregation.

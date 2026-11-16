@@ -83,7 +83,7 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
     }
 
     /**
-     * Returns scoped registry claims and rejects a binding from another scope/profile.
+     * Returns scoped registry claims, or an empty page for a missing requested binding.
      *
      * @return PageResultDTO<RegistryClaimDTO>
      */
@@ -98,7 +98,9 @@ final readonly class SlugManagementQuery implements SlugManagementQueryInterface
         if ($binding !== null && ! $this->sameScopeProfile($criteria->scopeProfile, $binding->identity->scopeProfile)) {
             throw new SlugScopeProfileMismatchException('Registry criteria Binding does not belong to the requested Scope.');
         }
-        return $this->queries->inspectRegistry($scope === null ? -1 : $scope->id, $binding === null ? null : $binding->id, $criteria->role, $criteria->pageRequest);
+        $bindingId = $criteria->binding === null ? null : ($binding->id ?? -1);
+
+        return $this->queries->inspectRegistry($scope === null ? -1 : $scope->id, $bindingId, $criteria->role, $criteria->pageRequest);
     }
 
     /** Returns a matching scope snapshot or null when it has not been persisted. */

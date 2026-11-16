@@ -10,15 +10,19 @@ use Maatify\Slug\Lifecycle\Consumer\Criteria\AvailabilityCriteria;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
 use Maatify\Slug\Lifecycle\Consumer\Criteria\ResolutionCriteria;
 use Maatify\Slug\Lifecycle\DTO\CurrentSlugDTO;
+use Maatify\Slug\Lifecycle\DTO\BindingDTO;
+use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
 use Maatify\Slug\Lifecycle\Consumer\DTO\SlugAvailabilityDTO;
 use Maatify\Slug\Lifecycle\Consumer\DTO\SlugResolutionDTO;
-use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\InputFormCanonicalityEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\MatchKindEnum;
 use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryRepositoryInterface;
+use Maatify\Slug\Lifecycle\Repository\Registry\RegistryResolutionReaderInterface;
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
+use Maatify\Slug\Canonicalization\ValueObject\Slug;
 
 /** Read-only resolution service combining profile canonicalization with registry state. */
 final readonly class SlugQueryService implements SlugQueryServiceInterface
@@ -29,6 +33,7 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
         private RegistryRepositoryInterface $registry,
         private SlugAvailabilityChecker $availability,
         private CapabilityGuardInterface $capabilities,
+        private ?RegistryResolutionReaderInterface $resolutionReader = null,
     ) {}
 
     /** Returns advisory availability without reserving or mutating a slug. */
@@ -69,21 +74,17 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
             );
         }
 
-        $scope = $this->registry->findScope(
-            $criteria->scopeProfile->scope,
-            $criteria->scopeProfile->expectedProfileKey,
-        );
-        if ($scope === null) {
-            return $this->none($criteria, InputFormCanonicalityEnum::NOT_APPLICABLE, $lookup->canonicalSlug);
-        }
-        $claim = $this->registry->findClaimByScopeSlug($scope->id, $lookup->canonicalSlug);
-        if ($claim === null) {
+        $observation = $this->resolutionReader === null
+            ? $this->findResolution($criteria, $lookup->canonicalSlug)
+            : $this->resolutionReader->findResolution($criteria->scopeProfile, $lookup->canonicalSlug);
+        if ($observation === null) {
             return $this->none($criteria, InputFormCanonicalityEnum::NOT_APPLICABLE, $lookup->canonicalSlug);
         }
 
-        $owner = $this->registry->binding($claim->toDto($this->profiles)->binding);
-        if ($owner === null || $owner->currentClaim === null) {
-            throw new \Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException('Resolution claim owner Binding cannot be read.');
+        $claim = $observation['claim'];
+        $owner = $observation['owner'];
+        if ($owner->currentClaim === null) {
+            throw new SlugPersistenceInvariantException('Resolution claim owner Binding cannot be read.');
         }
 
         $matchKind = match ($claim->role) {
@@ -98,7 +99,7 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
             $criteria->decodedSegment,
             $lookup->canonicality,
             $lookup->canonicalSlug,
-            $claim->toDto($this->profiles)->slug,
+            $claim->slug,
             $matchKind,
             $owner->state->status,
             $owner->currentClaim->slug,
@@ -107,8 +108,30 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
         );
     }
 
+    /**
+     * Reads from a registry supplied directly by an existing adapter caller.
+     *
+     * @return array{claim: RegistryClaimDTO, owner: BindingDTO}|null
+     */
+    private function findResolution(ResolutionCriteria $criteria, Slug $slug): ?array
+    {
+        $scope = $this->registry->findScope($criteria->scopeProfile->scope, $criteria->scopeProfile->expectedProfileKey);
+        $record = $scope === null ? null : $this->registry->findClaimByScopeSlug($scope->id, $slug);
+        if ($record === null) {
+            return null;
+        }
+
+        $claim = $record->toDto($this->profiles);
+        $owner = $this->registry->binding($claim->binding);
+        if ($owner === null) {
+            throw new SlugPersistenceInvariantException('Resolution claim owner Binding cannot be read.');
+        }
+
+        return ['claim' => $claim, 'owner' => $owner];
+    }
+
     /** Builds the stable unmatched result while preserving lookup canonicality. */
-    private function none(ResolutionCriteria $criteria, InputFormCanonicalityEnum $canonicality, \Maatify\Slug\Canonicalization\ValueObject\Slug $canonicalSlug): SlugResolutionDTO
+    private function none(ResolutionCriteria $criteria, InputFormCanonicalityEnum $canonicality, Slug $canonicalSlug): SlugResolutionDTO
     {
         return new SlugResolutionDTO(
             $criteria->scopeProfile,

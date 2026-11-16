@@ -179,9 +179,8 @@ final readonly class AdoptionService
                 $claims,
             );
             $registryKeys[] = ['scope_id' => $scope->id, 'slug' => $slug->value];
-            $lockedClaims = $this->registry->findClaimsForKeys($registryKeys, true);
-            $existing = $this->claimForSlug($lockedClaims, $slug);
-            if ($existing !== null) {
+            $occupiedKeys = $this->registry->lockOccupiedClaimKeys($registryKeys);
+            if (in_array($slug->value, array_column($occupiedKeys, 'slug'), true)) {
                 throw new SlugAlreadyClaimedException('The adopted slug is already claimed in the requested Scope.');
             }
             if ($this->reservations->isReserved($scope->scope, $slug)) {
@@ -293,18 +292,6 @@ final readonly class AdoptionService
         }
 
         return $binding;
-    }
-
-    /** @param list<RegistryClaimRecord> $claims */
-    private function claimForSlug(array $claims, Slug $slug): ?RegistryClaimRecord
-    {
-        foreach ($claims as $claim) {
-            if ($claim->slugValue === $slug->value) {
-                return $claim;
-            }
-        }
-
-        return null;
     }
 
     /** Reserves an adoption operation when the caller supplied an idempotency key. */

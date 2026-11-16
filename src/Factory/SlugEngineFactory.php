@@ -95,7 +95,7 @@ final class SlugEngineFactory
             $operationKeys,
         );
         $lifecycle = new PersistedSlugLifecycleService($legacyLifecycle, $transition, $adoption);
-        $resolution = new SlugQueryService($profiles, $registry, new SlugAvailabilityChecker($registry, $profiles, $reservedPolicy), $capabilities);
+        $resolution = new SlugQueryService($profiles, $registry, new SlugAvailabilityChecker($registry, $profiles, $reservedPolicy), $capabilities, $scopePersistence);
         $query = new PublicSlugQueryService($resolution);
         $management = new SlugManagementQuery($registry, new PdoSlugManagementQueryRepository($pdo, $profiles), $capabilities);
         $text = SlugTextServiceFactory::create($profiles);
