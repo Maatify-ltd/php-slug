@@ -7,7 +7,7 @@ final class PerCs31Verifier
 {
     private const string FALLTHROUGH_APPROVALS = 'tools/ci/per-cs31-fallthrough-approved.json';
     private const string FALLTHROUGH_HEDGE = '(?:maybe|perhaps|possibly|may|might|should)';
-    private const string FALLTHROUGH_NEGATIVE = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:can|does|did|would|could|should|must)n't|won't)";
+    private const string FALLTHROUGH_NEGATIVE = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:ca|do|does|did|wo|would|could|should|must)n['’]t)";
 
     /** @var list<string> */
     private array $errors = [];
