@@ -112,7 +112,7 @@ The following requirements are implemented in the repository:
 |---|---|
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | PHP (CI matrix) | PHP 8.4 and 8.5 |
-| Extensions | `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
+| Extensions | `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
 | Runtime compatibility | `ext-intl` capability and observable-behavior probes; no exact ICU or Unicode-data version pin |
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
@@ -389,7 +389,7 @@ An ordinary change preserves the previous canonical as historical and does not r
 - `transitionScope` creates a new target Binding after target-profile canonicalization. `MOVE` makes the source `INACTIVE`, while `PARALLEL` leaves the source unchanged; it does not rewrite `scope_id`. Cross-scope transfer remains unsupported in the current Runtime.
 - `atomicTransfer` is same-Scope only and requires a target Binding that exists before the operation. It moves a claim in one transaction; transferring a current claim requires a different replacement, and the target preserves the original role exactly.
 - `adoptCurrent` permits an absent or `RELEASED` Binding according to `expectedRevision`, while `adoptHistorical` and `adoptAlias` require an `ACTIVE` or `INACTIVE` Binding with a current claim.
-- `originalOccurredAt` in adoption is a `DateTimeImmutable` in any timezone, converted to UTC with six microseconds preserved. It is rejected only outside the MySQL `DATETIME(6)` range; it is not compared with the Clock for future or past validation.
+- `originalOccurredAt` in adoption is a `DateTimeImmutable` in any timezone, converted to UTC while preserving the six fractional-second digits. It is rejected only outside the MySQL `DATETIME(6)` range; it is not compared with the Clock for future or past validation.
 
 ## 8. Replay and Result Snapshot
 
@@ -498,7 +498,7 @@ int historyEventsTotal
 All counts are non-negative. `bindingsTotal = bindingsActive + bindingsInactive + bindingsReleased`; `registryClaimsTotal = registryCurrentCanonical + registryHistoricalCanonical + registryActiveAliases + registryRetiredAliases`. Binding counts describe current Binding rows, Registry counts describe live Registry rows, and History counts use each event's persisted Scope snapshot.
 
 searchHistory(HistorySearchCriteria)
-→ package-wide History when `scopeProfile` is null, or History attributed to the exact persisted Scope snapshot when it is supplied. A missing Scope produces an empty page. `eventType` and the half-open UTC window `[occurredFromInclusive, occurredUntilExclusive)` are optional filters; when both bounds exist, `from < until` is required. Inputs are normalized to UTC and compared at the package's six-microsecond persistence precision. Filtering uses `occurredAt`, not `originalOccurredAt`. `total` is the unfiltered base boundary; `filtered` is the result after event-type and time-window filters. The deterministic default sort is `occurred_at DESC`, then `id DESC`; callers may use the supported paginator sort fields.
+→ package-wide History when `scopeProfile` is null, or History attributed to the exact persisted Scope snapshot when it is supplied. A missing Scope produces an empty page. `eventType` and the half-open UTC window `[occurredFromInclusive, occurredUntilExclusive)` are optional filters; when both bounds exist, `from < until` is required. Inputs are normalized to UTC and compared at the package's microsecond persistence precision. Filtering uses `occurredAt`, not `originalOccurredAt`. `total` is the unfiltered base boundary; `filtered` is the result after event-type and time-window filters. The deterministic default sort is `occurred_at DESC`, then `id DESC`; callers may use the supported paginator sort fields.
 
 searchBindings(BindingSearchCriteria)
 → Scope with optional entityType, entityKeyPrefix, BindingStatusEnum, and pagination

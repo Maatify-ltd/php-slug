@@ -355,7 +355,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
             throw new SlugPersistenceInvariantException('Unable to prepare the operational summary query.');
         }
         $statement->execute($params);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
         if ($row === null) {
             throw new SlugPersistenceInvariantException('Operational summary query returned no aggregate row.');
         }
@@ -607,11 +609,11 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
         return PdoRowHydrator::nonNegativeInt($row, $field);
     }
 
-    /** Parses the repository's six-microsecond UTC timestamp representation. */
+    /** Parses a UTC timestamp with microsecond precision. */
     private function date(string $value, string $field): DateTimeImmutable
     {
         if (preg_match('/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\z/', $value) !== 1) {
-            throw new SlugPersistenceInvariantException(sprintf('%s must contain six microseconds.', $field));
+            throw new SlugPersistenceInvariantException(sprintf('%s must contain six fractional-second digits.', $field));
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s.u', $value, new DateTimeZone('UTC'));
         $errors = DateTimeImmutable::getLastErrors();

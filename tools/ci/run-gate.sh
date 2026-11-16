@@ -96,7 +96,7 @@ style() {
         echo 'PHP CS Fixer is unavailable; run a dependency gate first.' >&2
         exit 1
     fi
-    vendor/bin/php-cs-fixer fix --dry-run --diff --allow-risky=yes --sequential
+    vendor/bin/php-cs-fixer fix --dry-run --diff --allow-risky=yes --sequential --using-cache=no
     php tools/ci/test-per-cs31.php
     php tools/ci/verify-per-cs31.php
 }

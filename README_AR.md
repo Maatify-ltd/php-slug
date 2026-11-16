@@ -44,7 +44,7 @@
 |---|---|
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | قاعدة البيانات | PDO MySQL؛ وmysql:8.0.36 هو هدف قابلية إعادة الإنتاج في CI |
-| Extensions | ext-intl, ext-mbstring, ext-pdo, ext-pdo_mysql |
+| Extensions | ext-filter, ext-intl, ext-mbstring, ext-pdo, ext-pdo_mysql |
 | الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, `maatify/php-persistence 1.0.0-rc.1` (تجربة الـCheckout) |
 
 تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.

@@ -4,14 +4,27 @@ declare(strict_types=1);
 
 require __DIR__ . '/verify-per-cs31.php';
 
-$root = sys_get_temp_dir() . '/php-slug-per-cs31-regression';
-if (is_dir($root)) {
-    foreach (glob($root . '/*.php') ?: [] as $file) {
-        unlink($file);
+$root = sys_get_temp_dir() . '/php-slug-per-cs31-regression-' . bin2hex(random_bytes(16));
+if (!mkdir($root, 0700)) {
+    throw new RuntimeException('Unable to create the PER-CS regression fixture directory.');
+}
+
+$ownedFiles = [];
+register_shutdown_function(static function () use ($root, &$ownedFiles): void {
+    foreach (array_keys($ownedFiles) as $file) {
+        if (is_file($file)) {
+            unlink($file);
+        }
     }
     rmdir($root);
-}
-mkdir($root, 0755, true);
+});
+
+$writeFixture = static function (string $file, string $contents) use (&$ownedFiles): void {
+    $ownedFiles[$file] = true;
+    if (file_put_contents($file, $contents) === false) {
+        throw new RuntimeException('Unable to write PER-CS regression fixture: ' . $file);
+    }
+};
 
 $verifier = new PerCs31Verifier();
 $pass = 0;
@@ -41,6 +54,63 @@ switch ($value) {
         // no break
     case 2:
         echo 'two';
+        break;
+}
+PHP],
+    'switch clear fall-through wording' => [true, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Falls through intentionally.
+    case 2:
+        echo 'two';
+        break;
+}
+PHP],
+    'switch rejects ambiguous fall-through question' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Does this case fall through?
+    case 2:
+        break;
+}
+PHP],
+    'switch rejects opposition in a multiline comment' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        echo 'one';
+        // Deliberate fall-through.
+        /* Do not enter
+         * the next case.
+         */
+    case 2:
+        break;
+}
+PHP],
+    'switch rejects opposition separated from affirmative comment by code' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        // Do not enter the next case.
+        echo 'one';
+        // Deliberate fall-through.
+    case 2:
+        break;
+}
+PHP],
+    'switch rejects nested fall-through comment' => [false, <<<'PHP'
+<?php
+switch ($value) {
+    case 1:
+        if ($enabled) {
+            echo 'one';
+            // No break
+        }
+    case 2:
         break;
 }
 PHP],
@@ -503,7 +573,7 @@ PHP],
 
 foreach ($cases as $name => [$expectedPass, $source]) {
     $file = $root . '/' . sha1($name) . '.php';
-    file_put_contents($file, $source);
+    $writeFixture($file, $source);
     $errors = $verifier->verifyFiles([$file]);
     $actualPass = $errors === [];
 
@@ -516,8 +586,213 @@ foreach ($cases as $name => [$expectedPass, $source]) {
     fwrite(STDERR, "FAIL {$name}: " . implode(' | ', $errors) . PHP_EOL);
 }
 
+$reviewed = $root . '/reviewed.php';
+$approvalFile = $root . '/fallthrough.json';
+$commentCases = [
+    ['No break: continue to the next case.', null, 3, true],
+    ['Deliberate fall-through.', null, 3, true],
+    ["Deliberate fall-through.\n        // Do not enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Don't enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Can't enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Don’t enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Can’t enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // The next case won’t execute.", null, 3, false],
+    ["Deliberate fall-through.\n        // Cannot enter the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Don't enter the settings page.", null, 3, true],
+    ["Deliberate fall-through.\n        // Output: “Don’t enter the next case.”", null, 3, true, "echo 'Don’t enter the next case.';"],
+    ["Do not enter the next case.\n        // Deliberate fall-through.", null, 3, false],
+    ["Deliberate fall-through.\n        // Do not enter\n        // the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Should we enter the next case?", null, 3, false],
+    ["Deliberate fall-through.\n        // Break here.", null, 3, false],
+    ["Deliberate fall-through.\n        // Stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We should stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must immediately stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We should stop now before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must now stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We now must stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must stop here immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return false.", null, 3, false],
+    ["Deliberate fall-through.\n        // This branch must return false.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return `\$value ?? null`.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return directly from the current function.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return PHP_INT_MAX - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + monthly.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + monthly immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + monthly without delay.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return `baseLimit + monthly` immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return false immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + right now.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + right, now.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + right without delay.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit + monthly immediately without delay.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return false right now.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return home immediately.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return home (immediately).", null, 3, true],
+    ["Deliberate fall-through.\n        // Return on-site (immediately).", null, 3, true],
+    ["Deliberate fall-through.\n        // Return on-site(immediately).", null, 3, false],
+    ["Deliberate fall-through.\n        // Return `on-site (immediately)`.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return on - site (immediately).", null, 3, false],
+    ["Deliberate fall-through.\n        // Return home(immediately).", null, 3, false],
+    ["Deliberate fall-through.\n        // Return `home (immediately)`.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return baseLimit+1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return carry-on.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return min - limit.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return `min-limit`.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return limit << width.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return الحد ?? البداية.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return some . other.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return some . other if the input is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return `baseLimit`.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return home.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return home and rest.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return new books.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return \\PHP_INT_MAX - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return Vendor\\Domain\\limit + 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return namespace\\DEFAULT_LIMIT - 1.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return from the current function to the caller.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return from this method directly to its caller.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must not return from this method to the caller.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return from this method to the caller if the cache is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return PHP_INT_MAX - 1 if the result overflowed.", null, 3, true],
+    ["Deliberate fall-through.\n        // Return the book to its owner.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return from the function.", null, 3, false],
+    ["Deliberate fall-through.\n        // We should return null here.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return \$result;", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return 42.5.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return [\$answer, null];", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return factory()->get(\$result, \"a.b\") ?? false.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return compute(\$result).", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return directly from this method.", null, 3, false],
+    ["Deliberate fall-through.\n        // Output: \"We must return false.\"", null, 3, true, "echo 'We must return false.';"],
+    ["Deliberate fall-through.\n        // \"We must return false.\"", null, 3, false, "echo 'We must return false.';"],
+    ["Deliberate fall-through.\n        // We must return the book to the library.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return book.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return 42.5 kg of goods.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return \"the book\" to the library.", null, 3, true],
+    ["Deliberate fall-through.\n        // The helper will return false.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return false if the data is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return \$value ? 1 : 2 if the input is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return \$first . \$last if the name is invalid.", null, 3, true],
+    ["Deliberate fall-through.\n        // We, if data is missing, must return false.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must not return false.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must return immediately; the branch has completed its work.", null, 3, false],
+    ["Deliberate fall-through.\n        // We should stop the download now; the next case processes its data.", null, 3, true],
+    ["Deliberate fall-through.\n        // We, of course, must stop here before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // Break.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return.", null, 3, false],
+    ["Deliberate fall-through.\n        // We (by the existing protocol) must return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We (of course) must return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We, if loading fails, must return.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must (under the current protocol) return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must stop (without delay) before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must stop, of course, before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Of course, we must return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must not immediately stop.", null, 3, true],
+    ["Deliberate fall-through.\n        // We, of course, must not return immediately.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must (not immediately) stop here before the next case.", null, 3, true],
+    ["Deliberate fall-through.\n        // We must stop (the download) before the next case processes its data.", null, 3, true],
+    ["Deliberate fall-through.\n        // This case should stop the download next.", null, 3, true],
+    ["Deliberate fall-through.\n        // Output: \"We must return immediately.\"", null, 3, true, "echo 'We must return immediately.';"],
+    ["Deliberate fall-through.\n        // \"We must return immediately\"", null, 3, false, "echo 'We must return immediately';"],
+    ["Deliberate fall-through.\n        // \"Must we return immediately?\"", null, 3, false, "echo 'Must we return immediately?';"],
+    ["Deliberate fall-through.\n        // We must promptly stop before reaching the following case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We really must promptly stop right here before proceeding to the following case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Please stop right away before going into the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must, without delay, stop before the next case.", null, 3, false],
+    ["Deliberate fall-through.\n        // Should we promptly stop before the next case?", null, 3, false],
+    ["Deliberate fall-through.\n        // We must not immediately stop here before the next case.", null, 3, true],
+    ["Deliberate fall-through.\n        // We should absolutely not stop now before the next case.", null, 3, true],
+    ["Deliberate fall-through.\n        // The helper should promptly stop fetching pages before the next case reads the results.", null, 3, true],
+    ["Deliberate fall-through.\n        // We should promptly stop the download before the next case processes its data.", null, 3, true],
+    ["Deliberate fall-through.\n        // Output: \"We must immediately stop here before the next case.\"", null, 3, true, "echo 'We must immediately stop here before the next case.';"],
+    ["Deliberate fall-through.\n        // \"We must immediately stop here before the next case.\"", null, 3, false, "echo 'We must immediately stop here before the next case.';"],
+    ["Deliberate fall-through.\n        // Execution needs to stop here before reaching the following case.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must not stop here before the next case.", null, 3, true],
+    ["Deliberate fall-through.\n        // The displayed message is \"It's displayed. Do not enter the next case.\"", null, 3, true, "echo 'It\\'s displayed. Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // Output: \"Path C:\\logs. Do not enter the next case.\"", null, 3, true, "echo 'Path C:\\\\logs. Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // The displayed message is 'Do not enter the next case named \"B\".'", null, 3, true, "echo \"Do not enter the next case named \\\"B\\\".\";"],
+    ["Deliberate fall-through.\n        // Output: \"It's displayed. Do not enter the next case.\"", null, 3, true, "echo \"It\\047s displayed. Do not enter the next case.\";"],
+    ["Deliberate fall-through.\n        // Output: \"It's displayed. Do not enter the next case.\"", null, 3, true, "echo \"It\\x27s displayed. Do not enter the next case.\";"],
+    ["Deliberate fall-through.\n        // Output: \"A. Do not enter the next case.\"", null, 3, true, "echo \"\\u{41}. Do not enter the next case.\";"],
+    ["Deliberate fall-through.\n        // Output: \"0. Do not enter the next case.\"", null, 3, true, "echo \"\\u{30}. Do not enter the next case.\";"],
+    ["Deliberate fall-through.\n        // Output: \"Path C:\\logs. Do not enter the next case.\"", null, 3, true, "echo \"Path C:\\logs. Do not enter the next case.\";"],
+    ["Deliberate fall-through.\n        // \"It's displayed. Do not enter the next case.\"", null, 3, false, "echo 'It\\'s displayed. Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // \"Does this case continue?\"", null, 3, false, "echo \"Does this case continue\\077\";"],
+    ["Deliberate fall-through.\n        // Return here before entering the following case.", null, 3, false],
+    ["Deliberate fall-through.\n        // A helper can return here before the next case reads its data.", null, 3, true],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\"", null, 3, true, "echo 'Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\"", null, 3, false],
+    ["Deliberate fall-through.\n        // \"Do not enter the next case.\"", null, 3, false, "echo 'Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // \"Stop here before the next case.\"", null, 3, false, "echo 'Stop here before the next case.';"],
+    ["Deliberate fall-through.\n        // \"Does this case continue?\"", null, 3, false, "echo 'Does this case continue?';"],
+    ["Deliberate fall-through.\n        // Output: “Does this case continue?”", null, 3, true, "echo 'Does this case continue?';"],
+    ["Deliberate fall-through.\n        // The displayed message is \"Do not enter the next case.\" Stop here before the next case.", null, 3, false, "echo 'Do not enter the next case.';"],
+    ["Deliberate fall-through.\n        // Add a break.", null, 3, false],
+    ["Deliberate fall-through.\n        // Should we break?", null, 3, false],
+    ["Deliberate fall-through.\n        // Which report contains the total?", null, 3, true],
+    ["Which report contains the total?\n        // Deliberate fall-through.", null, 3, true],
+    ["Deliberate fall-through.\n        // What data does the next case need?", null, 3, true],
+    ["Deliberate fall-through.\n        // Should the next case execute?", null, 3, false],
+    ["Deliberate fall-through.\n        // The helper may return here with an empty payload.", null, 3, true],
+    ['No break here; the next case handles the result.', 'case 1:', 3, true],
+    ['We intentionally omit the break so the following case executes.', null, 3, true],
+    ['No break: the next case must not execute.', null, 3, false],
+    ['No break: do not enter the next case.', null, 3, false],
+    ['No break: maybe use the next case.', null, 3, false],
+    ['Fall through to prevent the next case from running.', null, 3, false],
+    ['We intentionally omit the break so the next case is skipped.', null, 3, false],
+    ['No break: the next case handles the result.', null, 3, false],
+    ['No break: the next case handles the result.', 'case 1:', 3, true],
+    ['No break: the next case must not execute.', 'case 1:', 3, false],
+    ['No break: do not enter the next case.', 'case 1:', 3, false],
+    ['No break: maybe use the next case.', 'case 1:', 3, false],
+    ['We intentionally omit the break so the next case is skipped.', 'case 1:', 3, false],
+    ['Fall through to prevent the next case from running.', 'case 1:', 3, false],
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 3, true],
+    ['نتعمّد تجاوز break حتى تكمل الحالة التالية.', 'case 1:', 3, true],
+    ['"Does this case continue?"', 'case 1:', 3, false],
+    ['هل نترك break لكي تنتقل الحالة التالية؟', 'case 1:', 3, false],
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 2:', 3, false],
+    ['The break is left out on purpose so the next case handles the “?” token.', 'case 1:', 4, false],
+];
+foreach ($commentCases as $case) {
+    [$comment, $label, $line, $expectedPass] = $case;
+    $statement = $case[4] ?? "echo 'one';";
+    $source = <<<PHP
+<?php
+switch (\$value) {
+    case 1:
+        {$statement}
+        // {$comment}
+    case 2:
+        break;
+}
+PHP;
+    $writeFixture($reviewed, $source);
+    if ($label !== null) {
+        $writeFixture($approvalFile, json_encode([[
+            'file' => ltrim($reviewed, './'),
+            'line' => $line,
+            'case' => $label,
+            'comment' => $comment,
+        ]], JSON_THROW_ON_ERROR));
+    }
+    $errors = $verifier->verifyFiles([$reviewed], $label === null ? null : $approvalFile);
+    if (($errors === []) === $expectedPass) {
+        $pass++;
+        continue;
+    }
+
+    $fail++;
+    fwrite(STDERR, sprintf("FAIL fall-through case %s at line %d: %s%s", $label ?? 'without approval', $line, $comment, PHP_EOL));
+}
+
 $invalid = $root . '/invalid.php';
-file_put_contents($invalid, '<?php function broken( {');
+$writeFixture($invalid, '<?php function broken( {');
 $invalidErrors = $verifier->verifyFiles([$invalid]);
 if ($invalidErrors !== []) {
     $pass++;
@@ -533,11 +808,6 @@ if ($unreadableErrors !== []) {
     $fail++;
     fwrite(STDERR, "FAIL unreadable source was accepted" . PHP_EOL);
 }
-
-foreach (glob($root . '/*.php') ?: [] as $file) {
-    unlink($file);
-}
-rmdir($root);
 
 printf("PER-CS 3.1 regression cases: %d PASS, %d FAIL.%s", $pass, $fail, PHP_EOL);
 exit($fail === 0 ? 0 : 1);

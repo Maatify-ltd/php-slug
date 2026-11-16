@@ -35,6 +35,7 @@
     }
   },
   "require": {
+    "ext-filter": "*",
     "ext-intl": "*",
     "ext-mbstring": "*",
     "ext-pdo": "*",
@@ -79,6 +80,12 @@
         "audit": "fail"
       }
     }
+  },
+  "archive": {
+    "exclude": [
+      "/.php-cs-fixer.cache",
+      "/composer.lock"
+    ]
   },
   "minimum-stability": "stable",
   "prefer-stable": true

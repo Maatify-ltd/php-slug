@@ -203,7 +203,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim list lookup.');
         }
         $statement->execute(['binding_id' => $bindingId]);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
 
         return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $rows);
     }
@@ -246,7 +248,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the multi-binding Registry claim list lookup.');
         }
         $statement->execute($parameters);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
 
         return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $rows);
     }
@@ -295,7 +299,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan lookup.');
         }
         $statement->execute($parameters);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
         if ($rows === []) {
             return [];
         }
@@ -321,7 +327,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan hydration.');
         }
         $hydration->execute($hydrationParameters);
-        $hydratedRows = PdoRowHydrator::many($hydration->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $hydration->fetchAll(PDO::FETCH_ASSOC);
+        $hydratedRows = PdoRowHydrator::many($rawRows);
 
         return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $hydratedRows);
     }
@@ -369,7 +377,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             'minimum_slug' => $minimumSlug,
             'maximum_slug' => $maximumSlug,
         ]);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
         if ($rows === []) {
             return [];
         }
@@ -395,7 +405,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim hydration.');
         }
         $hydration->execute($parameters);
-        $hydratedRows = PdoRowHydrator::many($hydration->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $hydration->fetchAll(PDO::FETCH_ASSOC);
+        $hydratedRows = PdoRowHydrator::many($rawRows);
 
         return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $hydratedRows);
     }
@@ -567,7 +579,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             throw new SlugPersistenceInvariantException('Unable to prepare the Registry claim lookup.');
         }
         $statement->execute($parameters);
-        $row = PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->claimFromRow($row);
     }
@@ -590,7 +604,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             'context_key' => $scope->contextKey ?? '',
         ]);
 
-        return PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        return PdoRowHydrator::one($rawRow);
     }
 
     /** @return array<string, mixed>|null */
@@ -611,7 +627,9 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             'entity_key' => $entity->entityKey,
         ]);
 
-        return PdoRowHydrator::one($statement->fetch(PDO::FETCH_ASSOC));
+        /** @var array<string, mixed>|false $rawRow */
+        $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        return PdoRowHydrator::one($rawRow);
     }
 
     /** Re-reads a binding after mutation to validate its persisted lifecycle state. */
@@ -711,11 +729,11 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         return $this->clock->now()->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
     }
 
-    /** Parses a six-microsecond UTC timestamp from a registry row. */
+    /** Parses a UTC timestamp with microsecond precision from a registry row. */
     private function date(string $value, string $field): DateTimeImmutable
     {
         if (preg_match('/\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}\z/', $value) !== 1) {
-            throw new SlugPersistenceInvariantException(sprintf('%s must contain six microseconds.', $field));
+            throw new SlugPersistenceInvariantException(sprintf('%s must contain six fractional-second digits.', $field));
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d H:i:s.u', $value, new DateTimeZone('UTC'));
         $errors = DateTimeImmutable::getLastErrors();

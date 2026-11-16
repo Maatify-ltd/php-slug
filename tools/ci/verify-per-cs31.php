@@ -5,13 +5,26 @@ declare(strict_types=1);
 /** Supplemental PER-CS 3.1 checks not established by @PER-CS3x0. */
 final class PerCs31Verifier
 {
+    private const string FALLTHROUGH_APPROVALS = 'tools/ci/per-cs31-fallthrough-approved.json';
+    private const string FALLTHROUGH_HEDGE = '(?:maybe|perhaps|possibly|may|might|should)';
+    private const string FALLTHROUGH_NEGATIVE = "(?:never|cannot|(?:must|do|does|did|can|will|would|could|should|may|might)\s+not|(?:ca|do|does|did|wo|would|could|should|must)n['’]t)";
+
     /** @var list<string> */
     private array $errors = [];
+
+    /** @var array<string, array<int, array{case: string, comment: string}>> */
+    private array $fallthroughApprovals = [];
 
     public function run(string $root): int
     {
         $files = $this->phpFiles($root);
-        $errors = $this->verifyFiles($files);
+        try {
+            $errors = $this->verifyFiles($files, $root . '/' . self::FALLTHROUGH_APPROVALS);
+        } catch (RuntimeException|JsonException $exception) {
+            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
+
+            return 1;
+        }
 
         if ($errors !== []) {
             fwrite(STDERR, implode(PHP_EOL, $errors) . PHP_EOL);
@@ -25,15 +38,51 @@ final class PerCs31Verifier
     }
 
     /** @param list<string> $files */
-    public function verifyFiles(array $files): array
+    public function verifyFiles(array $files, ?string $approvalFile = null): array
     {
         $this->errors = [];
+        $this->fallthroughApprovals = $approvalFile === null ? [] : $this->readFallthroughApprovals($approvalFile);
 
         foreach ($files as $file) {
             $this->verifyFile($file);
         }
 
         return $this->errors;
+    }
+
+    /** @return array<string, array<int, array{case: string, comment: string}>> */
+    private function readFallthroughApprovals(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $json = file_get_contents($path);
+        if ($json === false) {
+            throw new RuntimeException('Unable to read ' . self::FALLTHROUGH_APPROVALS . '.');
+        }
+
+        $entries = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        if (!is_array($entries) || !array_is_list($entries)) {
+            throw new RuntimeException(self::FALLTHROUGH_APPROVALS . ' must contain a JSON list of exact approvals.');
+        }
+
+        $approvals = [];
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || count($entry) !== 4
+                || !is_string($file = $entry['file'] ?? null) || !str_ends_with($file, '.php')
+                || !is_int($line = $entry['line'] ?? null) || $line < 1
+                || !is_string($case = $entry['case'] ?? null) || $case === ''
+                || !is_string($comment = $entry['comment'] ?? null) || $comment === ''
+                || isset($approvals[$file][$line])
+            ) {
+                throw new RuntimeException(self::FALLTHROUGH_APPROVALS . ' requires unique file, line, case and comment entries.');
+            }
+
+            $approvals[$file][$line] = ['case' => $case, 'comment' => $comment];
+        }
+
+        return $approvals;
     }
 
     /** @return list<string> */
@@ -149,14 +198,21 @@ final class PerCs31Verifier
                 }
 
                 if (!$this->hasDirectCaseTermination($tokens, $bodyStart, $nextCase)) {
-                    if ($nextCase < $closeBrace && $this->hasFallThroughComment($tokens, $bodyStart, $nextCase)) {
-                        continue;
+                    $caseLine = $this->tokenLine($tokens, $caseIndex);
+                    if ($nextCase < $closeBrace) {
+                        $approval = $this->fallthroughApprovals[$this->relative($file)][$caseLine] ?? null;
+                        $label = $this->caseLabel($tokens, $caseIndex, $colon);
+                        $approvedComment = $approval !== null && $approval['case'] === $label ? $approval['comment'] : null;
+
+                        if ($this->hasFallThroughComment($tokens, $colon + 1, $nextCase, $approvedComment)) {
+                            continue;
+                        }
                     }
 
                     $message = $nextCase < $closeBrace
-                        ? 'non-empty fall-through case MUST have an intentional fall-through comment'
+                        ? 'non-empty fall-through case MUST have a clear comment; review unrecognized wording in ' . self::FALLTHROUGH_APPROVALS
                         : 'every non-empty case MUST have a terminating statement';
-                    $this->error($file, $this->tokenLine($tokens, $caseIndex), $message);
+                    $this->error($file, $caseLine, $message);
                 }
             }
         }
@@ -906,15 +962,365 @@ final class PerCs31Verifier
     }
 
     /** @param list<array{0:int,1:string,2:int}|string> $tokens */
-    private function hasFallThroughComment(array $tokens, int $start, int $end): bool
+    private function caseLabel(array $tokens, int $start, int $colon): string
     {
-        foreach (array_slice($tokens, $start, $end - $start) as $token) {
-            if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true) && preg_match('/no\s+break|fall[- ]?through|fallthrough|deliberate/i', $token[1])) {
+        return implode('', array_map(
+            static fn(array|string $token): string => is_array($token) ? $token[1] : $token,
+            array_slice($tokens, $start, $colon - $start + 1),
+        ));
+    }
+
+    /** @param list<array{0:int,1:string,2:int}|string> $tokens */
+    private function hasFallThroughComment(array $tokens, int $start, int $end, ?string $approvedComment): bool
+    {
+        $nesting = [];
+        $commentGroups = [];
+        $adjacentComments = [];
+        $caseLiterals = [];
+        for ($index = $start; $index < $end; $index++) {
+            $token = $tokens[$index];
+            $this->updateListNesting($token, $nesting);
+            if (is_array($token) && $token[0] === T_CONSTANT_ENCAPSED_STRING) {
+                $caseLiterals[self::constantStringValue($token[1])] = true;
+            }
+            if ($nesting === [] && is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                $body = trim($token[1], "/*# \t\r\n");
+                $comment = preg_replace('/\R[ \t]*\*?[ \t]*/u', ' ', $body);
+                if ($comment !== null) {
+                    $adjacentComments[] = $comment;
+                }
+                continue;
+            }
+            if (is_array($token) && $token[0] === T_WHITESPACE && substr_count($token[1], "\n") < 2) {
+                continue;
+            }
+
+            if ($adjacentComments !== []) {
+                $commentGroups[] = $adjacentComments;
+                $adjacentComments = [];
+            }
+        }
+
+        if ($adjacentComments !== []) {
+            $commentGroups[] = $adjacentComments;
+        }
+
+        $hasDeclaration = false;
+        foreach ($commentGroups as $comments) {
+            $flowComments = [];
+            foreach ($comments as $comment) {
+                $flowComment = self::withoutAttributedLiterals($comment, $caseLiterals);
+                $flowComments[] = $flowComment;
+                $approved = $comment === $approvedComment;
+                if (($approved && self::isUncertainFallthrough($flowComment)) || self::hasUncertainFallthroughClause($flowComment)) {
+                    return false;
+                }
+
+                $hasDeclaration = $hasDeclaration || $approved
+                    || (self::declaresFallthrough($comment) && !self::isUncertainFallthrough($flowComment));
+            }
+
+            // Check wrapped instructions that span adjacent comment tokens.
+            if (self::opposesFallthrough(implode("\n", $flowComments))) {
+                return false;
+            }
+        }
+
+        return $hasDeclaration;
+    }
+
+    /** Reads the value of a T_CONSTANT_ENCAPSED_STRING token without evaluating PHP. */
+    private static function constantStringValue(string $token): string
+    {
+        $quoted = ltrim($token, 'bB');
+        $value = substr($quoted, 1, -1);
+        if ($quoted[0] === "'") {
+            return strtr($value, ["\\'" => "'", "\\\\" => "\\"]);
+        }
+
+        $escapePattern = <<<'REGEX'
+            ~\\(?:[nrtvef\\$"]|[0-7]{1,3}|x[0-9a-fA-F]{1,2}|u\{[0-9a-fA-F]+\})~
+            REGEX;
+
+        return preg_replace_callback($escapePattern, static function (array $match): string {
+            $escape = $match[0];
+
+            $decoded = match ($escape[1]) {
+                'n' => "\n",
+                'r' => "\r",
+                't' => "\t",
+                'v' => "\v",
+                'e' => "\e",
+                'f' => "\f",
+                '\\', '$', '"' => $escape[1],
+                'x' => chr((int) hexdec(substr($escape, 2))),
+                'u' => mb_chr((int) hexdec(substr($escape, 3, -1)), 'UTF-8'),
+                default => chr(octdec(substr($escape, 1)) & 0xff),
+            };
+
+            return $decoded === false ? $escape : $decoded;
+        }, $value) ?? $value;
+    }
+
+    /**
+     * Removes quoted data explicitly described by the comment and present as a case string literal.
+     *
+     * @param array<string, true> $caseLiterals
+     */
+    private static function withoutAttributedLiterals(string $comment, array $caseLiterals): string
+    {
+        if ($caseLiterals === []) {
+            return $comment;
+        }
+
+        $quotation = <<<'REGEX'
+            ~(?<prefix>\b(?:(?:(?:displayed|printed|rendered|logged|emitted|literal|expected)\s+)?(?:message|text|label|output|string|payload|value)\s*(?:(?:is|reads|says|equals)\s+|[:=]\s*)|(?:prints?|displays?|renders?|logs?|emits?|echoes?)\s+))(?:"(?<double>[^"]+)"|'(?<single>[^']+)'|“(?<curlyDouble>[^”]+)”|‘(?<curlySingle>[^’]+)’|`(?<code>[^`]+)`)~iu
+            REGEX;
+
+        return preg_replace_callback(
+            $quotation,
+            static function (array $match) use ($caseLiterals): string {
+                $literal = $match['double'] ?? $match['single'] ?? $match['curlyDouble'] ?? $match['curlySingle'] ?? $match['code'];
+                if (!isset($caseLiterals[$literal])) {
+                    return $match[0];
+                }
+
+                // Keep a sentence boundary so following instructions remain independently visible.
+                $boundary = preg_match('~[.!?؟]\z~u', $literal) === 1 ? '.' : '';
+
+                return $match['prefix'] . '[quoted text]' . $boundary;
+            },
+            $comment,
+            flags: PREG_UNMATCHED_AS_NULL,
+        ) ?? $comment;
+    }
+
+    private static function hasUncertainFallthroughClause(string $comment): bool
+    {
+        $clauses = preg_split('~(?<=[.!?؟])\s+~u', $comment) ?: [$comment];
+        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
+        $action = '(?:enter|run|execute|reach|skip|bypass|avoid|(?:continue|proceed|jump|go)\s+(?:into|to|with))';
+        $auxiliary = '(?:does|should|will|must|can|could|would|may|might)';
+        $reference = '~\b(?:falls?[- ]?through|no\s+break'
+            . '|' . $action . '\s+' . $nextCase
+            . '|(?:' . $auxiliary . '\s+' . $nextCase . '|' . $nextCase . '(?:\s+' . $auxiliary . ')?)\s+(?:runs?|executes?|be\s+(?:entered|executed|reached|run))'
+            . '|(?:break|return|stop|terminate)\s+(?:here|instead)|(?:add|omit|need)\s+(?:a|the)\s+break'
+            . '|(?:should|must|do|does|can|could|would|will|may|might)\s+(?:we|it|this\s+case)\s+(?:break|continue|proceed|stop|return|terminate)(?=\s*[.!?؟]|\s*\z)'
+            . '|(?:ندخل|تدخل|الدخول|ننفذ|تنفذ|تنفيذ|ننتقل|تنتقل|الانتقال)\s+(?:إلى\s+)?الحالة\s+(?:التالية|القادمة))\b~iu';
+        foreach ($clauses as $clause) {
+            if (preg_match($reference, $clause) === 1 && self::isUncertainFallthrough($clause)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static function opposesFallthrough(string $comment): bool
+    {
+        $target = '(?:the\s+)?(?:next|following)\s+case';
+        $negative = self::FALLTHROUGH_NEGATIVE;
+        $hedge = self::FALLTHROUGH_HEDGE;
+        $execution = '(?:run|execute|be\s+(?:entered|executed|reached|run))';
+        $clauseStart = <<<'REGEX'
+            (?:\A|[.!?؟:;—\n]\s*)['"“‘`]?\s*
+            REGEX;
+        $clauseEnd = <<<'REGEX'
+            (?=\s*['"”’`]?(?:[.!?؟;]|\z))
+            REGEX;
+        $termination = '(?:break(?:\s+out)?|return|stop|terminate|exit)';
+        $position = '(?:(?:right\s+)?(?:here(?:\s+instead)?|now)|instead)';
+        $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+(?:case|branch))';
+        $modal = '(?:must|should|will|shall|can|could|would|may|might|(?:need|needs|have|has)\s+to)';
+        $adverb = '(?:(?!(?:barely|hardly|rarely|scarcely)\b)\p{L}+(?:-\p{L}+)*ly'
+            . '|please|just|still|first|then|now|at\s+once|right\s+away|without\s+(?:delay|exception)|as\s+soon\s+as\s+possible'
+            . '|of\s+course|as\s+(?:usual|expected)|by\s+design|in\s+(?:fact|practice)|for\s+(?:clarity|safety))';
+        $separator = '(?:\h*,\s*|\s+)';
+        $qualifiers = '(?:(?:' . $adverb . '|\(\h*' . $adverb . '\h*\))' . $separator . ')*+';
+
+        // Paired asides can separate the subject, modal and verb without consuming negation or conditions.
+        $aside = '(?![\p{L}\h-]*\b(?:not|no|never|unless|hardly|barely|scarcely|if|when|whenever|until|except|provided|depending\s+on)\b)[\p{L}][\p{L}\h-]*';
+        $join = '(?:\h*,\h*' . $aside . '\h*,\s*|\s*\(\h*' . $aside . '\h*\)\s+|\s+)';
+        $head = '(?:' . $subject . $join . $qualifiers . $modal . '|' . $modal . $join . $subject . ')';
+        $directive = $clauseStart . $qualifiers . '(?:' . $head . $join . ')?' . $qualifiers;
+        // After the verb, admit known adjuncts only so a direct object changes the clause's classification.
+        $adjunct = '(?:' . $adverb . '|' . $position . ')';
+        $actionQualifier = $separator . '(?:' . $adjunct . '|\(\h*' . $adjunct . '\h*\))';
+        $afterAction = '(?:' . $actionQualifier . ')*+';
+        $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
+
+        $fromCallable = '\s+from\s+(?:(?:the|this|our)(?:\s+current)?\s+|current\s+)?(?:function|method)';
+        $toCaller = '\s+to\s+(?:(?:the|its|our)\s+)?caller';
+        $returnBoundary = '(?:' . $fromCallable . '(?:' . $afterAction . $toCaller . ')?'
+            . '|' . $toCaller . '(?:' . $afterAction . $fromCallable . ')?)';
+
+        return self::hasExplicitReturnValue($comment, $directive, $actionQualifier) || preg_match(
+            '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
+            . '|\b' . $target . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
+            . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
+            . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
+            . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
+            . '|' . $directive . $termination . $afterAction . '(?:,?' . $timing . '\b|' . $clauseEnd . ')'
+            . '|' . $directive . 'return' . $afterAction . $returnBoundary . $afterAction . $clauseEnd
+            . '|' . $directive . '(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?' . $clauseEnd
+            . '~iu',
+            $comment,
+        ) === 1;
+    }
+
+    /** Checks PHP-shaped return values for syntax without executing any part of the comment. */
+    private static function hasExplicitReturnValue(string $comment, string $directive, string $actionQualifier): bool
+    {
+        if (preg_match_all('~' . $directive . 'return\b(?=\s|\()~iu', $comment, $returns, PREG_OFFSET_CAPTURE) < 1) {
+            return false;
+        }
+
+        $clauseBoundary = <<<'REGEX'
+            ~;|(?<!\s)[.!؟](?=\s|['"”’`]|\z)|\?(?=\h*['"”’`]?\h*(?:\n|\z))|\z~u
+            REGEX;
+        $closingQuote = <<<'REGEX'
+            ~['"”’`]\s*\z~u
+            REGEX;
+        $trailingQualifiers = '~(?<![\s,])(?=(?:' . $actionQualifier . ')++\z)~iu';
+        $word = '[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*';
+        $hyphenatedWord = $word . '(?:-' . $word . ')+';
+        $wordWithAside = $word . '(?:-' . $word . ')*(?=\h+\()(?i:' . $actionQualifier . ')';
+        $ambiguousProse = '~\A(?!(?:true|false|null)\h)(?:' . $hyphenatedWord . '|' . $wordWithAside . ')\z~u';
+
+        foreach ($returns[0] as [$prefix, $offset]) {
+            $tail = substr($comment, $offset + strlen($prefix));
+            preg_match_all($clauseBoundary, $tail, $endings, PREG_OFFSET_CAPTURE);
+            foreach ($endings[0] as [, $end]) {
+                $value = trim(substr($tail, 0, $end));
+                $withoutClosingQuote = preg_replace($closingQuote, '', $value) ?? $value;
+                foreach ([$value, trim($withoutClosingQuote)] as $candidate) {
+                    $explicit = self::classifyReturnCandidate($candidate, $ambiguousProse);
+                    if ($explicit === null && preg_match_all($trailingQualifiers, $candidate, $suffixes, PREG_OFFSET_CAPTURE) > 0) {
+                        // Try the longest expressions first, including when recognized suffixes overlap.
+                        foreach (array_reverse($suffixes[0]) as [, $offset]) {
+                            $explicit = self::classifyReturnCandidate(substr($candidate, 0, $offset), $ambiguousProse);
+                            if ($explicit !== null) {
+                                break;
+                            }
+                        }
+                    }
+                    if ($explicit === true) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** Returns null when the candidate cannot be parsed as a PHP expression. */
+    private static function classifyReturnCandidate(string $candidate, string $ambiguousProse): ?bool
+    {
+        $explicitCode = strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`');
+        $expression = $explicitCode ? trim(substr($candidate, 1, -1)) : $candidate;
+        try {
+            $tokens = token_get_all('<?php return (' . $expression . ');', TOKEN_PARSE);
+        } catch (ParseError) {
+            return null;
+        }
+
+        if ($explicitCode) {
+            return true;
+        }
+
+        // A hyphenated word or a spaced prose aside can look like arithmetic or a call.
+        if (preg_match($ambiguousProse, $candidate) === 1) {
+            return false;
+        }
+
+        // Strip the synthetic opening tag and return statement around the candidate.
+        return self::hasPhpExpressionTokens(array_slice($tokens, 4, -2));
+    }
+
+    /** @param list<array{int, string, int}|string> $tokens */
+    private static function hasPhpExpressionTokens(array $tokens): bool
+    {
+        $afterNew = false;
+        foreach ($tokens as $token) {
+            if (is_string($token)) {
+                return true;
+            }
+
+            [$type, $text] = $token;
+            if ($type === T_STRING) {
+                // Preserve conventional standalone constants while allowing arbitrary names in expressions.
+                if (preg_match('~\A(?:(?i:true|false|null)|[A-Z_][A-Z0-9_]*|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+)\z~u', $text) === 1
+                    || ($afterNew && preg_match('~\A[A-Z_]~', $text) === 1)
+                ) {
+                    return true;
+                }
+            } elseif (!in_array($type, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_LOGICAL_AND, T_LOGICAL_OR, T_LOGICAL_XOR, T_NEW], true)) {
+                // Literals, qualified names and symbolic operators make the PHP syntax explicit.
+                return true;
+            }
+
+            if ($type !== T_WHITESPACE) {
+                $afterNew = $type === T_NEW;
+            }
+        }
+
+        return false;
+    }
+
+    private static function isUncertainFallthrough(string $comment): bool
+    {
+        $action = '(?:falls?[- ]?through|omit|skip|leave\s+out|continue|proceed)';
+        $hedge = self::FALLTHROUGH_HEDGE;
+        $intent = '(?:intentionally|deliberately|purposely)';
+        $negative = self::FALLTHROUGH_NEGATIVE;
+
+        return self::hasQuestionMarkOutsideQuotedToken($comment) || preg_match(
+            '~\A(?:if|unless|whether|' . $hedge . '|(?:check|consider|decide)\s+whether)\b'
+            . '|\b(?:we|execution|the\s+case)\s+' . $hedge . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\bso\s+(?:maybe|perhaps|possibly)\b|\bif\s+(?:needed|required|necessary)\b'
+            . '|\b' . $negative . '\s+(?:' . $intent . '\s+)?' . $action . '\b'
+            . '|\bnot\s+(?:an?\s+)?(?:intentional|deliberate|intended)\b~iu',
+            $comment,
+        ) === 1;
+    }
+
+    private static function hasQuestionMarkOutsideQuotedToken(string $comment): bool
+    {
+        if (!str_contains($comment, '?') && !str_contains($comment, '؟')) {
+            return false;
+        }
+
+        // Ignore only the quoted token; a complete quoted question still counts.
+        $quotedToken = <<<'REGEX'
+            ~(?<![\\\p{L}\p{N}_])(?:'[?؟]'|"[?؟]"|`[?؟]`|“[?؟]”|‘[?؟]’)(?![\p{L}\p{N}_])~u
+            REGEX;
+        $withoutTokens = preg_replace($quotedToken, '', $comment);
+
+        return $withoutTokens === null || str_contains($withoutTokens, '?') || str_contains($withoutTokens, '؟');
+    }
+
+    private static function declaresFallthrough(string $comment): bool
+    {
+        $intent = '(?:intentionally|deliberately|purposely)';
+        $terminator = '(?:the\s+)?(?:break|return|termination)(?:\s+statement)?';
+        $nextCase = '(?:the\s+)?(?:next|following)\s+case';
+        $destination = '(?:into|to)\s+' . $nextCase;
+        $continuation = '(?:(?:' . $intent . '\s+)?falls?[- ]?through'
+            . '(?:\s+' . $intent . ')?(?:\s+' . $destination . ')?'
+            . '|(?:execution\s+)?(?:' . $intent . '\s+)?(?:continues?|proceeds?)\s+' . $destination . ')';
+        $omission = '(?:(?:we\s+)?' . $intent . '\s+(?:omit|skip|leave\s+out)\s+' . $terminator
+            . '|' . $terminator . '\s+(?:is\s+)?' . $intent . '\s+(?:omitted|skipped|left\s+out))';
+        $purpose = '(?:\s+so\s+' . $nextCase . '\s+(?:(?:can|will)\s+(?:run|execute)|runs|executes))?';
+
+        // Match a complete declaration. Additional prose requires an exact review entry.
+        return preg_match(
+            '~\A(?:' . $continuation
+            . '|(?:no\s+break|(?:deliberate|intentional)\s+fall[- ]?through)(?:\s*[,;:—-]\s+' . $continuation . ')?'
+            . '|' . $omission . $purpose
+            . ')[.!]?\z~iu',
+            $comment,
+        ) === 1;
     }
 
     /** @param list<array{0:int,1:string,2:int}|string> $tokens */

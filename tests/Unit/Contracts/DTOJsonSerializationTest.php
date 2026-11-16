@@ -8,6 +8,7 @@ use Maatify\Slug\Lifecycle\DTO\AliasDTO;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Canonicalization\DTO\CanonicalSlugDTO;
 use Maatify\Slug\Lifecycle\DTO\CurrentSlugDTO;
+use Maatify\Slug\Lifecycle\DTO\OwnershipClaimResultDTO;
 use Maatify\Slug\Canonicalization\DTO\GeneratedSlugDTO;
 use Maatify\Slug\Canonicalization\DTO\LookupCanonicalizationDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeDTO;
@@ -62,6 +63,21 @@ final class DTOJsonSerializationTest extends TestCase
 
         self::assertSame($keys, array_keys($serialized));
         json_encode($dto, JSON_THROW_ON_ERROR);
+    }
+
+    public function testInternalOwnershipClaimResultPreservesItsSerializedFields(): void
+    {
+        $binding = ContractFixtures::binding(ContractFixtures::identity(1), 100);
+        $claim = $binding->currentClaim;
+        if ($claim === null) {
+            throw new \LogicException('Fixture binding must have a claim.');
+        }
+        $result = new OwnershipClaimResultDTO($binding, $claim, 2);
+        $expected = ['binding' => $binding, 'claim' => $claim, 'attempts' => 2];
+
+        self::assertInstanceOf(\JsonSerializable::class, $result);
+        self::assertSame($expected, $result->jsonSerialize());
+        self::assertSame(json_encode($expected, JSON_THROW_ON_ERROR), json_encode($result, JSON_THROW_ON_ERROR));
     }
 
     /** @return array<string, mixed> */

@@ -10,6 +10,11 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - The PHP constraint is now `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5.
 - Management pagination uses `maatify/php-persistence`. Import `PageRequest` and `SortDirectionEnum` from the replacement package and use `PageResultDTO` for pagination results.
 
+### Fixed
+
+- Declared `ext-filter` as a Composer runtime requirement for integer validation.
+- The persisted lifecycle example refuses databases with pre-existing Slug tables or views before installing its schema, protecting those objects from deletion.
+
 ## [1.0.0-rc.2] - 2026-09-25
 
 ### Added
