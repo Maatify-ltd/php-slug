@@ -114,6 +114,18 @@ A `SlugMutationResultDTO` is returned and the current slug is `hello-world`.
 
 The call passes through `SlugEngine`, the lifecycle service, and package-owned persistence. The Host does not reimplement claiming, uniqueness, or history.
 
+### Purge a Released Binding
+
+Call `purgeBinding()` directly to permanently delete a Binding in `RELEASED` status with no live claims. Pass its `BindingIdentityDTO` as `$binding` and its current revision as the expected `$revision`.
+
+```php
+use Maatify\Slug\Lifecycle\Command\PurgeBindingCommand;
+
+$engine->purgeBinding(new PurgeBindingCommand($binding, $revision));
+```
+
+When there is no outer transaction, the package opens a purge transaction and then commits or rolls it back. If the Host already has a transaction on the injected PDO, the Host controls its commit or rollback. Locks taken by the purge can remain held until that transaction ends. See [Package Reference §9](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
+
 ### Consumer Reads / Resolution
 
 **Input**
