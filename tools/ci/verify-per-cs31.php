@@ -981,7 +981,7 @@ final class PerCs31Verifier
             $token = $tokens[$index];
             $this->updateListNesting($token, $nesting);
             if (is_array($token) && $token[0] === T_CONSTANT_ENCAPSED_STRING) {
-                $caseLiterals[substr(ltrim($token[1], 'bB'), 1, -1)] = true;
+                $caseLiterals[self::constantStringValue($token[1])] = true;
             }
             if ($nesting === [] && is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
                 $body = trim($token[1], "/*# \t\r\n");
@@ -1027,6 +1027,39 @@ final class PerCs31Verifier
         }
 
         return $hasDeclaration;
+    }
+
+    /** Reads the value of a T_CONSTANT_ENCAPSED_STRING token without evaluating PHP. */
+    private static function constantStringValue(string $token): string
+    {
+        $quoted = ltrim($token, 'bB');
+        $value = substr($quoted, 1, -1);
+        if ($quoted[0] === "'") {
+            return strtr($value, ["\\'" => "'", "\\\\" => "\\"]);
+        }
+
+        $escapePattern = <<<'REGEX'
+            ~\\(?:[nrtvef\\$"]|[0-7]{1,3}|x[0-9a-fA-F]{1,2}|u\{[0-9a-fA-F]+\})~
+            REGEX;
+
+        return preg_replace_callback($escapePattern, static function (array $match): string {
+            $escape = $match[0];
+
+            $decoded = match ($escape[1]) {
+                'n' => "\n",
+                'r' => "\r",
+                't' => "\t",
+                'v' => "\v",
+                'e' => "\e",
+                'f' => "\f",
+                '\\', '$', '"' => $escape[1],
+                'x' => chr((int) hexdec(substr($escape, 2))),
+                'u' => mb_chr((int) hexdec(substr($escape, 3, -1)), 'UTF-8'),
+                default => chr(octdec(substr($escape, 1)) & 0xff),
+            };
+
+            return $decoded === false ? $escape : $decoded;
+        }, $value) ?? $value;
     }
 
     /**
@@ -1094,6 +1127,9 @@ final class PerCs31Verifier
             REGEX;
         $termination = '(?:break(?:\s+out)?|return|stop|terminate)';
         $position = '(?:here(?:\s+instead)?|instead)';
+        $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+case)';
+        $modal = '(?:must|should|will|shall|may|might|(?:need|needs|have|has)\s+to)';
+        $directive = $clauseStart . '(?:(?:' . $subject . '\s+' . $modal . '|' . $modal . '\s+' . $subject . ')\s+)?';
         $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding)\s+(?:into|to))\s+)?' . $target;
 
         return preg_match(
@@ -1102,8 +1138,8 @@ final class PerCs31Verifier
             . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
             . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
             . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
-            . '|' . $clauseStart . $termination . '(?:\s+' . $position . ')?,?' . $timing . '\b'
-            . '|' . $clauseStart . '(?:' . $termination . '\s+' . $position
+            . '|' . $directive . $termination . '(?:\s+' . $position . ')?,?' . $timing . '\b'
+            . '|' . $directive . '(?:' . $termination . '\s+' . $position
             . '|(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?)(?=\s*[.!]|\s*\z)'
             . '|\b(?:this|the)\s+case\s+(?:must|should|will)\s+(?:break|return|stop|terminate)\b~iu',
             $comment,
