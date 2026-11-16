@@ -83,7 +83,8 @@
   },
   "archive": {
     "exclude": [
-      "/.php-cs-fixer.cache"
+      "/.php-cs-fixer.cache",
+      "/composer.lock"
     ]
   },
   "minimum-stability": "stable",

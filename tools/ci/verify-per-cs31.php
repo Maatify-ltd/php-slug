@@ -1180,11 +1180,6 @@ final class PerCs31Verifier
         $closingQuote = <<<'REGEX'
             ~['"”’`]\s*\z~u
             REGEX;
-        // Distinguish PHP values from ordinary bare nouns, which PHP can parse as constant names.
-        $valueStart = <<<'REGEX'
-            #\A(?:[$'"`0-9(\[!~+\-@]|(?i:true|false|null|clone|throw|yield|fn|function)\b|(?i:new)\s+(?:\\|[A-Z_]|class\b)|\\?[\p{L}_][\p{L}\p{N}_\\]*\s*(?:::|\()|\\[\p{L}_]|[\p{L}_][\p{L}\p{N}_]*\\[\p{L}_]|[A-Z_][A-Z0-9_]*\b|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+\b)#u
-            REGEX;
-
         foreach ($returns[0] as [$prefix, $offset]) {
             $tail = substr($comment, $offset + strlen($prefix));
             preg_match_all($clauseBoundary, $tail, $endings, PREG_OFFSET_CAPTURE);
@@ -1193,21 +1188,54 @@ final class PerCs31Verifier
                 $withoutClosingQuote = preg_replace($closingQuote, '', $value) ?? $value;
                 foreach ([$value, trim($withoutClosingQuote)] as $candidate) {
                     $candidate = preg_replace('~' . $afterAction . '\z~iu', '', $candidate) ?? $candidate;
-                    if (strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`')) {
+                    $explicitCode = strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`');
+                    if ($explicitCode) {
                         $candidate = trim(substr($candidate, 1, -1));
-                    }
-                    if (preg_match($valueStart, $candidate) !== 1) {
+                    } elseif (preg_match('~\A[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*(?:-[\p{Ll}\p{Lo}][\p{Ll}\p{Lo}\p{M}]*)+\z~u', $candidate) === 1) {
+                        // An unformatted hyphenated word alone is ambiguous with subtraction.
                         continue;
                     }
 
                     try {
-                        token_get_all('<?php return (' . $candidate . ');', TOKEN_PARSE);
-
-                        return true;
+                        $tokens = token_get_all('<?php return (' . $candidate . ');', TOKEN_PARSE);
+                        // Strip the synthetic opening tag and return statement around the candidate.
+                        if ($explicitCode || self::hasPhpExpressionTokens(array_slice($tokens, 4, -2))) {
+                            return true;
+                        }
                     } catch (ParseError) {
                         // A prose object or a partial expression is not evidence of a PHP return.
                     }
                 }
+            }
+        }
+
+        return false;
+    }
+
+    /** @param list<array{int, string, int}|string> $tokens */
+    private static function hasPhpExpressionTokens(array $tokens): bool
+    {
+        $afterNew = false;
+        foreach ($tokens as $token) {
+            if (is_string($token)) {
+                return true;
+            }
+
+            [$type, $text] = $token;
+            if ($type === T_STRING) {
+                // Preserve conventional standalone constants while allowing arbitrary names in expressions.
+                if (preg_match('~\A(?:(?i:true|false|null)|[A-Z_][A-Z0-9_]*|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+)\z~u', $text) === 1
+                    || ($afterNew && preg_match('~\A[A-Z_]~', $text) === 1)
+                ) {
+                    return true;
+                }
+            } elseif (!in_array($type, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_LOGICAL_AND, T_LOGICAL_OR, T_LOGICAL_XOR, T_NEW], true)) {
+                // Literals, qualified names and symbolic operators make the PHP syntax explicit.
+                return true;
+            }
+
+            if ($type !== T_WHITESPACE) {
+                $afterNew = $type === T_NEW;
             }
         }
 
