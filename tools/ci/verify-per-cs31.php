@@ -1125,18 +1125,27 @@ final class PerCs31Verifier
         $clauseStart = <<<'REGEX'
             (?:\A|[.!?؟:;—\n]\s*)['"“‘`]?\s*
             REGEX;
-        $termination = '(?:break(?:\s+out)?|return|stop|terminate)';
+        $clauseEnd = <<<'REGEX'
+            (?=\s*['"”’`]?(?:[.!?؟]|\z))
+            REGEX;
+        $termination = '(?:break(?:\s+out)?|return|stop|terminate|exit)';
         $position = '(?:(?:right\s+)?(?:here(?:\s+instead)?|now)|instead)';
         $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+case)';
-        $modal = '(?:must|should|will|shall|may|might|(?:need|needs|have|has)\s+to)';
-        // Adverb slots keep the action and destination linked, and do not consume negation or objects.
+        $modal = '(?:must|should|will|shall|can|could|would|may|might|(?:need|needs|have|has)\s+to)';
         $adverb = '(?:(?!(?:barely|hardly|rarely|scarcely)\b)\p{L}+(?:-\p{L}+)*ly'
-            . '|please|just|still|first|then|now|at\s+once|right\s+away|without\s+(?:delay|exception)|as\s+soon\s+as\s+possible)';
+            . '|please|just|still|first|then|now|at\s+once|right\s+away|without\s+(?:delay|exception)|as\s+soon\s+as\s+possible'
+            . '|of\s+course|as\s+(?:usual|expected)|by\s+design|in\s+(?:fact|practice)|for\s+(?:clarity|safety))';
         $separator = '(?:\h*,\s*|\s+)';
-        $qualifiers = '(?:' . $adverb . $separator . ')*+';
-        $head = '(?:' . $subject . '\s+' . $qualifiers . $modal . '|' . $modal . '\s+' . $subject . ')';
-        $directive = $clauseStart . '(?:' . $head . $separator . ')?' . $qualifiers;
-        $afterAction = '(?:\s+(?:' . $adverb . '|' . $position . '))*+';
+        $qualifiers = '(?:(?:' . $adverb . '|\(\h*' . $adverb . '\h*\))' . $separator . ')*+';
+
+        // Paired asides can separate the subject, modal and verb without consuming negation or conditions.
+        $aside = '(?![\p{L}\h-]*\b(?:not|no|never|unless|hardly|barely|scarcely|if|when|whenever|until|except|provided|depending\s+on)\b)[\p{L}][\p{L}\h-]*';
+        $join = '(?:\h*,\h*' . $aside . '\h*,\s*|\s*\(\h*' . $aside . '\h*\)\s+|\s+)';
+        $head = '(?:' . $subject . $join . $qualifiers . $modal . '|' . $modal . $join . $subject . ')';
+        $directive = $clauseStart . $qualifiers . '(?:' . $head . $join . ')?' . $qualifiers;
+        // After the verb, admit known adjuncts only so a direct object changes the clause's classification.
+        $adjunct = '(?:' . $adverb . '|' . $position . ')';
+        $afterAction = '(?:' . $separator . '(?:' . $adjunct . '|\(\h*' . $adjunct . '\h*\)))*+';
         $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
 
         return preg_match(
@@ -1145,10 +1154,9 @@ final class PerCs31Verifier
             . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
             . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
             . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
-            . '|' . $directive . $termination . $afterAction . ',?' . $timing . '\b'
-            . '|' . $directive . '(?:' . $termination . '(?:\s+' . $adverb . ')*?\s+' . $position . '(?:\s+' . $adverb . ')*+'
-            . '|(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?)(?=\s*[.!]|\s*\z)'
-            . '|\b(?:this|the)\s+case\s+(?:must|should|will)\s+(?:break|return|stop|terminate)\b~iu',
+            . '|' . $directive . $termination . $afterAction . '(?:,?' . $timing . '\b|' . $clauseEnd . ')'
+            . '|' . $directive . '(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?' . $clauseEnd
+            . '~iu',
             $comment,
         ) === 1;
     }
