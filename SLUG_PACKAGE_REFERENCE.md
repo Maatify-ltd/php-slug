@@ -2,7 +2,7 @@
 
 > **Canonical root Package Reference** for `maatify/php-slug`.
 >
-> **Lifecycle:** Pre-Stable. `v1.0.0-rc.2` is the current published Release Candidate. This file records the current checkout contract. For the published package, see the [RC.2 Package Reference](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/SLUG_PACKAGE_REFERENCE.md).
+> **Release target:** `1.0.0-rc.3` (Pre-Stable Release Candidate). For RC.2, see its [versioned Package Reference](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/SLUG_PACKAGE_REFERENCE.md).
 
 ## 1. Package Identity and Status
 
@@ -13,12 +13,13 @@
 | Namespace | `Maatify\Slug\` |
 | Artifact | Standalone reusable PHP/Composer library |
 | Host model | Host-agnostic |
-| Release lifecycle | Published Release Candidate / Pre-Stable |
+| Release lifecycle | Release Candidate / Pre-Stable |
+| Exact release target | `1.0.0-rc.3` |
 | Exact first RC identifier | `v1.0.0-rc.1` |
-| Current published RC identifier | `v1.0.0-rc.2` |
+| Published RC at qualification | `1.0.0-rc.2` via Packagist |
 | Published Stable line | None |
-| Publication state | Published and externally resolvable through Packagist |
-| Publication truth source | Packagist / approved external Composer distribution source |
+| RC.3 publication state at qualification | Unpublished |
+| Publication truth source | Packagist |
 
 The durable references associated with this document are:
 
@@ -54,13 +55,13 @@ The package has no Host foreign keys, Host table joins, or Host repository depen
 
 ## 3. Supported State and Installation
 
-The current published Release Candidate is `v1.0.0-rc.2`. It is externally resolvable through Packagist and remains Pre-Stable without a Stable support line. Install this exact version with:
+Once RC.3 is published through Packagist, install the exact versions with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.2@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ```
 
-The requirements and examples below describe this checkout, which trials `maatify/php-persistence`. The published artifact keeps the requirements in its [tagged Composer manifest](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/composer.json).
+The two explicit `@RC` allowances let the project keep `minimum-stability` set to `stable`. The examples below describe RC.3. For RC.2, see its [tagged Composer manifest](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/composer.json).
 
 The Runtime provides implemented examples. The current stateless construction path is:
 
@@ -116,7 +117,7 @@ The following requirements are implemented in the repository:
 | Runtime compatibility | `ext-intl` capability and observable-behavior probes; no exact ICU or Unicode-data version pin |
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
-| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
+| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
 | Evidence tools | `phpstan/phpstan ^2.1`, `phpunit/phpunit ^11.5`, `friendsofphp/php-cs-fixer ^3.94` in `require-dev` |
 
 Newer PHP 8 minors admitted by Composer require minor-specific security and compatibility evidence before they can be listed as supported.
@@ -437,6 +438,8 @@ Management queries separate the live Registry from History:
 listAliases, getHistory, inspectRegistry, searchBindings, searchRegistry
 ```
 
+Use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` for paging requests and `Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum` where a sort direction enum is used.
+
 Every unbounded list or search returns `Maatify\PhpPersistence\Pagination\DTO\PageResultDTO` from `maatify/php-persistence`. The `data` and `pagination` keys and their metadata have the same shape as in RC.2. Slug owns filters, selected columns, count/data predicate alignment, and row mapping; `PdoPaginator` owns shared mechanics. Current package-specific values are:
 
 ```text
@@ -541,7 +544,7 @@ The package does not add APIs for these dimensions merely to satisfy a Reporting
 
 ### 10.2 Ordered Schema Assets and Upgrade
 
-The published `v1.0.0-rc.1` baseline contains `schema/mysql/001_slug_rc1.sql`. Published `v1.0.0-rc.2` adds `schema/mysql/002_operational_reporting_indexes.sql`. The current checkout also requires the additive `schema/mysql/003_registry_lock_projection.sql` for the persisted runtime.
+The published `v1.0.0-rc.1` baseline contains `schema/mysql/001_slug_rc1.sql`. Published `v1.0.0-rc.2` adds `schema/mysql/002_operational_reporting_indexes.sql`. The RC.3 persisted runtime also requires the additive `schema/mysql/003_registry_lock_projection.sql` asset.
 
 Apply the outstanding assets in order. The [schema installation and upgrade guide](schema/mysql/README.md#installation-and-upgrade) lists the order for fresh, RC1, and RC2 installations and the quiesced backfill procedure for installed databases. Verify the upgraded schema before resuming Slug traffic.
 
@@ -729,9 +732,9 @@ SlugUnsupportedDriverException, SlugPersistenceInvariantException
 
 The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions propagate unchanged.
 
-## 13. Current Release State
+## 13. Release State
 
-`v1.0.0-rc.2` is the current published Release Candidate for `maatify/php-slug`, externally resolvable through Packagist. The package lifecycle remains Pre-Stable, with no Published Stable release and no Stable support line. CI and review execution evidence is maintained in GitHub PR/CI history rather than duplicated in this current-state contract.
+This artifact targets `1.0.0-rc.3` as a Pre-Stable Release Candidate. At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available through Packagist. No Stable support line is established.
 
 The current adopted Standards baseline is recorded by [repository Standards Manifest](https://github.com/Maatify-ltd/php-slug/blob/main/docs/php-engineering-standards/STANDARDS_MANIFEST.md) with the pinned upstream commit and applicable Standard versions.
 

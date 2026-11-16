@@ -83,8 +83,19 @@
   },
   "archive": {
     "exclude": [
+      "*.iml",
+      ".DS_Store",
+      ".env",
+      ".env.*",
+      ".fleet",
+      ".idea",
+      ".vscode",
+      "auth.json",
       "/.php-cs-fixer.cache",
-      "/composer.lock"
+      "/.phpunit.cache",
+      "/.phpunit.result.cache",
+      "/composer.lock",
+      "/vendor"
     ]
   },
   "minimum-stability": "stable",

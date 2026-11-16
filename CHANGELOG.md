@@ -3,17 +3,23 @@
 All notable changes to `maatify/php-slug` are documented here.
 The format follows Keep a Changelog conventions and Semantic Versioning.
 
-## [Unreleased]
+## 1.0.0-rc.3
+
+### Added
+
+- Added `003_registry_lock_projection.sql` to backfill internal Registry lock keys and constrain targeted lifecycle reads to their Scope and Binding boundaries. See the [schema upgrade guide](schema/mysql/README.md#installation-and-upgrade).
 
 ### Changed
 
 - The PHP constraint is now `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5.
-- Management pagination uses `maatify/php-persistence`. Import `PageRequest` and `SortDirectionEnum` from the replacement package and use `PageResultDTO` for pagination results.
+- Management pagination replaces `maatify/persistence` with `maatify/php-persistence` at `1.0.0-rc.1`. Update `PageRequest`, `SortDirectionEnum`, and `PageResultDTO` imports.
 
 ### Fixed
 
-- Declared `ext-filter` as a Composer runtime requirement for integer validation.
-- The persisted lifecycle example refuses databases with pre-existing Slug tables or views before installing its schema, protecting those objects from deletion.
+- Lifecycle mutations reject a missing or incomplete Schema 003 with `SlugRuntimeCompatibilityException` before taking lifecycle locks.
+- Declared `ext-filter` for runtime integer validation and hardened the persisted lifecycle example against deleting pre-existing Slug tables or views.
+- Made PDO consumer reads consistent across Scope, Binding, and Registry state. Fixed transition, lifecycle mutations, and operation replay when the Host transaction has an older snapshot.
+- Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 
 ## [1.0.0-rc.2] - 2026-09-25
 
@@ -45,6 +51,5 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - **Release Lifecycle:** `v1.0.0-rc.1` is the first SemVer Release Candidate. It is Pre-Stable and does not create a Stable support line.
 - **Publication Truth:** A CHANGELOG entry alone is not publication proof; Published state is determined by external Composer resolvability of the matching version through the approved distribution source.
 
-[Unreleased]: https://github.com/Maatify-ltd/php-slug/compare/v1.0.0-rc.2...HEAD
 [1.0.0-rc.2]: https://github.com/Maatify-ltd/php-slug/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/Maatify-ltd/php-slug/releases/tag/v1.0.0-rc.1

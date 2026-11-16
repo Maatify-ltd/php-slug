@@ -9,7 +9,7 @@
 </picture>
 
 [![Status](https://img.shields.io/badge/Status-Release%20Candidate-orange.svg)](#publication-state)
-[![Version](https://img.shields.io/badge/Version-v1.0.0--rc.2-blue.svg)](https://packagist.org/packages/maatify/php-slug)
+[![Version](https://img.shields.io/badge/Version-1.0.0--rc.3-blue.svg)](#publication-state)
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D8.4.27%20%3C8.5.0%20%7C%7C%20%3E%3D8.5.12%20%3C9.0.0-8892BF)](composer.json)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PHPStan](https://img.shields.io/badge/PHPStan-Max-brightgreen.svg)](#quality-status)
@@ -18,7 +18,7 @@
 [![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Total Downloads](https://img.shields.io/packagist/dt/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify-ltd)
-[![Install](https://img.shields.io/badge/Install-1.0.0--rc.2%40RC-blue.svg)](#installation)
+[![Install after publication](https://img.shields.io/badge/Install%20after%20publication-1.0.0--rc.3%40RC-blue.svg)](#installation)
 
 [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue.svg)](docs/guides/USAGE_GUIDE.md)
 [![Examples](https://img.shields.io/badge/Examples-View-blue.svg)](examples/)
@@ -35,11 +35,13 @@ An independent PHP slug lifecycle engine with clear boundaries between the slug 
 
 ## Publication State
 
-`v1.0.0-rc.2` is the current Published Release Candidate available through Packagist. It remains Pre-Stable, does not create a Stable support line, and there is no Published Stable release. Publication does not imply Stable readiness.
+**Release target:** `1.0.0-rc.3`, a Pre-Stable Release Candidate.
+
+At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available through Packagist. No Stable support line is established.
 
 The current public contract is owned by [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). Execution evidence is maintained in GitHub PR and CI history rather than duplicated in this consumer-facing README.
 
-The requirements and usage below describe this checkout. For the published RC.2 requirements, see its linked usage guide under Installation.
+The requirements and examples below are for RC.3.
 
 ## Package Summary
 
@@ -61,7 +63,7 @@ The requirements and usage below describe this checkout. For the published RC.2 
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | Database | PDO MySQL; `mysql:8.0.36` is the CI reproducibility target |
 | Extensions | `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
-| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (checkout trial) |
+| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
 
 CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 
@@ -69,13 +71,15 @@ Built-in profiles require the normalization and transliteration capabilities pro
 
 ## Installation
 
-Install the published Release Candidate with:
+Once RC.3 is published to Packagist, install the exact target and its Persistence dependency using the following command. Keep your project's `minimum-stability` set to `stable`; the two `@RC` allowances apply to these packages.
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.2@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ```
 
-After installation, follow the [published RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
+**Upgrading from RC.2.** Stop Slug traffic and apply the additive `003_registry_lock_projection.sql` migration before enabling the RC.3 persisted runtime. Follow the [schema upgrade guide](schema/mysql/README.md#installation-and-upgrade) for the backfill and verification steps. Update any pagination imports from the retired `maatify/persistence` dependency to the [types from `maatify/php-persistence`](SLUG_PACKAGE_REFERENCE.md#10-management-resolution-and-pagination).
+
+For RC.2, use its [versioned usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Quick Usage
 
@@ -100,7 +104,7 @@ The public Runtime provides actual paths for:
 - canonicalization through `SlugTextServiceInterface`, `generateFromSource`, `canonicalizeClaim`, and `canonicalizeLookup`;
 - lifecycle ownership through `SlugEngine` and `SlugLifecycleServiceInterface`, including `assignExact`;
 - consumer reads through `checkAvailability`, `getCurrent`, and `resolve`; and
-- management reads through `SlugManagementQueryInterface`, including `searchScopes`, `getScopeOperationalSummary`, and `searchHistory` in the published RC2 Runtime.
+- management reads through `SlugManagementQueryInterface`, including `searchScopes`, `getScopeOperationalSummary`, and `searchHistory`.
 
 This overview does not replace the complete inventory and contracts in [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md).
 
@@ -136,7 +140,7 @@ Package-defined semantic and domain failures use the `SlugExceptionInterface` / 
 
 ## Quality Status
 
-The package is maintained behind the repository's configured CI and quality gates. Current execution evidence is maintained in GitHub PR and CI history. The Published Release Candidate remains Pre-Stable and does not claim Stable readiness.
+The package is maintained behind the repository's configured CI and quality gates. Current execution evidence is maintained in GitHub PR and CI history.
 
 ## Development and Testing
 

@@ -109,6 +109,64 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame([[0, 101], [101, 101]], $this->readRows("SELECT binding_partition, owner_binding_id FROM maa_slug_registry_lock_keys WHERE slug = 'post-upgrade' ORDER BY binding_partition"));
     }
 
+    #[DataProvider('missingProjectionRequirements')]
+    public function testFacadeRejectsMissingSchemaMigrationBeforeMutation(bool $projectionTableExists, string $reason): void
+    {
+        $this->dropSchemaForUpgradeProof();
+        $installer = new PdoSchemaInstaller($this->pdo);
+        $installer->installSql($this->readSchemaAsset('001_slug_rc1.sql'));
+        $installer->installSql($this->readSchemaAsset('002_operational_reporting_indexes.sql'));
+        $this->seedPublishedRegistry();
+        if ($projectionTableExists) {
+            $installer->installSql($this->readSchemaAsset('003_registry_lock_projection.sql'));
+            $this->pdo->exec('DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0');
+        }
+
+        $profiles = new SlugProfileRegistry();
+        $profiles->register(new TestSlugProfile());
+        $engine = SlugEngineFactory::create($this->pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
+        $scope = new ScopeProfileRequestDTO(new SlugScope('upgrade-with-claims', null, null), new SlugProfileKey('ascii-v1'));
+        $binding = new BindingIdentityDTO($scope, new EntityReference('article', 'primary'));
+        $criteria = new ResolutionCriteria($scope, 'retained-alias');
+        $before = $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id');
+        self::assertSame('current-origin', $engine->resolve($criteria)->currentSlug?->value);
+
+        $this->pdo->beginTransaction();
+        try {
+            // The caller's own write must survive the rejected package call.
+            $this->pdo->exec('UPDATE maa_slug_bindings SET updated_at = created_at + INTERVAL 1 DAY WHERE id = 102');
+            try {
+                $engine->changeExact(new ChangeExactCommand($binding, 'must-not-persist', 1, new AuditContextDTO(idempotencyKey: 'upgrade-test')));
+                self::fail('The public mutation accepted an incomplete Schema 003.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString($reason, $exception->getMessage());
+            }
+            self::assertTrue($this->pdo->inTransaction());
+            $observer = $this->newTestConnection();
+            $lock = $observer->query('SELECT id FROM maa_slug_scopes WHERE id = 11 FOR UPDATE NOWAIT');
+            self::assertNotFalse($lock);
+            self::assertSame(11, $lock->fetchColumn());
+            self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
+            self::assertSame([[1]], $this->readRows('SELECT revision FROM maa_slug_bindings WHERE id = 101'));
+            self::assertSame([], $this->readRows('SELECT id FROM maa_slug_history'));
+            self::assertSame([], $this->readRows('SELECT id FROM maa_slug_operations'));
+            self::assertSame([[1]], $this->readRows('SELECT DATEDIFF(updated_at, created_at) FROM maa_slug_bindings WHERE id = 102'));
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+        self::assertSame([[0]], $this->readRows('SELECT DATEDIFF(updated_at, created_at) FROM maa_slug_bindings WHERE id = 102'));
+        self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
+    }
+
+    /** @return iterable<string, array{bool, string}> */
+    public static function missingProjectionRequirements(): iterable
+    {
+        yield 'RC.2 schema without migration' => [false, 'installed package table set is not exact'];
+        yield '003 table without completion marker' => [true, 'Registry lock projection is unavailable or incompatible'];
+    }
+
     #[DataProvider('incompleteProjectionSchemas')]
     public function testIncompleteProjectionIsRejectedByVerifierAndRuntime(string $change, string $reason): void
     {

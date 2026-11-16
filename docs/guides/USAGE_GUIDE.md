@@ -1,6 +1,6 @@
 # Maatify Slug — Usage Guide
 
-> **Release lifecycle:** Pre-Stable. `v1.0.0-rc.2` is the current published Release Candidate, externally resolvable through the approved Composer distribution source. There is no Stable support line.
+> **Release target:** `1.0.0-rc.3` (Pre-Stable Release Candidate).
 >
 > [`SLUG_PACKAGE_REFERENCE.md`](../../SLUG_PACKAGE_REFERENCE.md) is the normative technical contract. This guide explains usage and does not create a competing contract.
 
@@ -8,7 +8,7 @@
 
 Use `maatify/php-slug` when the package needs slug generation, canonicalization, or persistent scoped ownership with resolution and history. The stateless path is suitable for text that does not require persistence; the persisted path is suitable when the package owns the slug lifecycle and claims.
 
-## Checkout Requirements
+## Requirements
 
 - PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 - `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, and `ext-pdo_mysql`.
@@ -16,15 +16,17 @@ Use `maatify/php-slug` when the package needs slug generation, canonicalization,
 - The stateless path requires only the production Composer autoload.
 - The persisted path requires a MySQL-compatible `PDO` connection and the package schema. Local verification uses the [disposable MySQL service from the repository checkout](../../CONTRIBUTING.md#prerequisites-for-local-development).
 
-## Publication State
+## Installation
 
-`v1.0.0-rc.2` is the published Release Candidate and is externally resolvable through the approved Composer distribution source. It remains Pre-Stable and does not create a Stable support line. Install it with:
+At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available through Packagist. No Stable support line is established.
+
+Once RC.3 is published to Packagist, install it with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.2@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ```
 
-The examples below describe this checkout. For the exact published version, follow the [RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
+Keep the project's `minimum-stability` set to `stable`. For the RC.2 migration and pagination changes, see [Installation in the README](../../README.md#installation). If you use RC.2, follow its [versioned usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Non-goals / Host Boundaries
 

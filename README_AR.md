@@ -19,11 +19,13 @@
 
 ## حالة النشر
 
-إن `v1.0.0-rc.2` هي Published Release Candidate الحالية والمتاحة عبر Packagist. وتبقى Pre-Stable، ولا تنشئ Stable support line، ولا يوجد Published Stable release. النشر الفعلي لا يعني الجاهزية للإصدار Stable.
+**الإصدار المستهدف:** `1.0.0-rc.3`، نسخة Release Candidate قبل الإصدار المستقر.
+
+حالة النشر عند التأهيل: `1.0.0-rc.3` غير منشورة، و`1.0.0-rc.2` متاحة عبر Packagist. لا يوجد خط دعم Stable.
 
 المرجع الحالي للعقد العام هو [`SLUG_PACKAGE_REFERENCE.md`](SLUG_PACKAGE_REFERENCE.md). تُحفظ أدلة التنفيذ في سجل GitHub PR وCI بدل تكرارها في ملف README هذا الموجّه للمستهلك.
 
-المتطلبات والأمثلة أدناه تخص نسخة الـCheckout الحالية. متطلبات RC.2 المنشورة موجودة في دليل نسختها المرتبط بقسم التثبيت.
+المتطلبات والأمثلة أدناه تخص RC.3.
 
 ## ملخص الحزمة
 
@@ -45,7 +47,7 @@
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | قاعدة البيانات | PDO MySQL؛ وmysql:8.0.36 هو هدف قابلية إعادة الإنتاج في CI |
 | Extensions | ext-filter, ext-intl, ext-mbstring, ext-pdo, ext-pdo_mysql |
-| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, `maatify/php-persistence 1.0.0-rc.1` (تجربة الـCheckout) |
+| الحزم المباشرة | maatify/exceptions ^1.0, maatify/shared-common ^1.0, `maatify/php-persistence 1.0.0-rc.1` (اعتماد RC مؤقت) |
 
 تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.
 
@@ -53,13 +55,15 @@
 
 ## التثبيت
 
-ثبّت Published Release Candidate بالأمر المحدد:
+بعد نشر RC.3 عبر Packagist، ثبّت الإصدار المحدد واعتماد Persistence بالأمر التالي. أبقِ قيمة `minimum-stability` في مشروعك على `stable`. يسمح `@RC` بالإصدارين المحددين للحزمتين.
 
 ~~~bash
-composer require maatify/php-slug:1.0.0-rc.2@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ~~~
 
-بعد التثبيت، اتبع [دليل استخدام RC.2 المنشورة](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
+**الترقية من RC.2.** أوقف حركة Slug وطبّق الترحيل الإضافي `003_registry_lock_projection.sql` قبل تشغيل مسار التخزين في RC.3. اتبع [دليل ترقية قاعدة البيانات](schema/mysql/README.md#installation-and-upgrade) لاستكمال ملء البيانات والتحقق. حدّث استيرادات أنواع الترقيم من اعتماد `maatify/persistence` السابق إلى [أنواع `maatify/php-persistence`](SLUG_PACKAGE_REFERENCE.md#10-management-resolution-and-pagination).
+
+إذا كنت تستخدم RC.2، ارجع إلى [دليل نسختها](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## الاستخدام السريع
 
@@ -84,7 +88,7 @@ $slug = $text->generateFromSource(
 - canonicalization عبر SlugTextServiceInterface وgenerateFromSource وcanonicalizeClaim وcanonicalizeLookup.
 - lifecycle ownership عبر SlugEngine وSlugLifecycleServiceInterface، بما في ذلك assignExact.
 - consumer reads عبر checkAvailability وgetCurrent وresolve.
-- management reads عبر SlugManagementQueryInterface، ومنها `searchScopes` و`getScopeOperationalSummary` و`searchHistory` في Runtime RC2 المنشور.
+- management reads عبر SlugManagementQueryInterface، ومنها `searchScopes` و`getScopeOperationalSummary` و`searchHistory`.
 
 لا يحل هذا الملخص محل الفهرس والعقود الكاملة في SLUG_PACKAGE_REFERENCE.md.
 
@@ -120,7 +124,7 @@ $slug = $text->generateFromSource(
 
 ## حالة الجودة
 
-تُصان الحزمة خلف بوابات CI والجودة المهيأة للمستودع. تُحفظ أدلة التنفيذ الحالية في سجل GitHub PR وCI. وتبقى Published Release Candidate في حالة Pre-Stable ولا تدعي الجاهزية للإصدار Stable.
+تُصان الحزمة خلف بوابات CI والجودة المهيأة للمستودع. تُحفظ أدلة التنفيذ الحالية في سجل GitHub PR وCI.
 
 ## التطوير والاختبار
 

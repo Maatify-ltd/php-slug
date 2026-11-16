@@ -123,6 +123,8 @@ final class SlugLifecycleService
             null,
         );
 
+        $this->capabilities->assertInstalledSchemaSupported();
+
         return $this->transactions->run(function () use ($command, $slug, $fingerprint): SlugMutationResultDTO {
             $scope = $this->registry->ensureScope($command->binding->scopeProfile->scope, $command->binding->scopeProfile->expectedProfileKey);
             $lockedScope = $this->registry->lockScope($scope->scope, $scope->profileKey);
@@ -203,6 +205,8 @@ final class SlugLifecycleService
         $candidateList = $generated ? $this->candidates->fromSource($profile, $value) : [$profile->canonicalizeClaim($value)->slug];
         $intent = ['mode' => $generated ? 'GENERATED' : 'EXACT', 'value' => $generated ? $value : $candidateList[0]->value];
         $fingerprint = $this->fingerprint($operation, $identity, $intent, null, $expectedRevision, null, null);
+
+        $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($identity, $candidateList, $generated, $expectedRevision, $audit, $operation, $fingerprint): SlugMutationResultDTO {
             [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($identity, $candidateList);
@@ -305,6 +309,9 @@ final class SlugLifecycleService
         ChangeTypeEnum $changeType,
     ): SlugMutationResultDTO {
         $fingerprint = $this->fingerprint($operation, $identity, null, null, $expectedRevision, null, null);
+
+        $this->capabilities->assertInstalledSchemaSupported();
+
         return $this->transactions->run(function () use ($identity, $expectedRevision, $audit, $operation, $from, $to, $eventType, $changeType, $fingerprint): SlugMutationResultDTO {
             [$binding] = $this->lockExistingBinding($identity);
             $reservation = $this->reserve($operation, 'mutation', $fingerprint, [$binding->id], $audit);
@@ -334,6 +341,9 @@ final class SlugLifecycleService
         $profile = $this->profiles->get($identity->scopeProfile->expectedProfileKey);
         $slug = $profile->canonicalizeClaim($candidate)->slug;
         $fingerprint = $this->fingerprint($operation, $identity, ['mode' => 'EXACT', 'value' => $slug->value], null, $expectedRevision, null, null);
+
+        $this->capabilities->assertInstalledSchemaSupported();
+
         return $this->transactions->run(function () use ($identity, $slug, $expectedRevision, $audit, $operation, $mode, $fingerprint): SlugMutationResultDTO {
             [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($identity, [$slug]);
             $reservation = $this->reserve($operation, 'mutation', $fingerprint, [$binding->id], $audit);
@@ -427,6 +437,8 @@ final class SlugLifecycleService
             null,
             null,
         );
+
+        $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $candidates, $fingerprint): SlugMutationResultDTO {
             $scope = $this->registry->ensureScope($command->binding->scopeProfile->scope, $command->binding->scopeProfile->expectedProfileKey);
@@ -528,6 +540,8 @@ final class SlugLifecycleService
         $slug = $profile->canonicalizeClaim($command->slugCandidate)->slug;
         $fingerprint = $this->fingerprint(OperationTypeEnum::RESTORE_HISTORICAL, $command->binding, ['mode' => 'EXACT', 'value' => $slug->value], null, $command->expectedRevision, null, null);
 
+        $this->capabilities->assertInstalledSchemaSupported();
+
         return $this->transactions->run(function () use ($command, $slug, $fingerprint): SlugMutationResultDTO {
             [$binding, $claims] = $this->lockExistingBinding($command->binding);
             $reservation = $this->reserve(OperationTypeEnum::RESTORE_HISTORICAL, 'mutation', $fingerprint, [$binding->id], $command->audit);
@@ -610,6 +624,8 @@ final class SlugLifecycleService
         $slug = $profile->canonicalizeClaim($command->slugCandidate)->slug;
         $fingerprint = $this->fingerprint(OperationTypeEnum::RELEASE_CLAIM, $command->binding, ['mode' => 'EXACT', 'value' => $slug->value], null, $command->expectedRevision, null, null);
 
+        $this->capabilities->assertInstalledSchemaSupported();
+
         return $this->transactions->run(function () use ($command, $slug, $fingerprint): SlugMutationResultDTO {
             [$binding, $claims] = $this->lockExistingBinding($command->binding);
             $reservation = $this->reserve(OperationTypeEnum::RELEASE_CLAIM, 'mutation', $fingerprint, [$binding->id], $command->audit);
@@ -637,6 +653,8 @@ final class SlugLifecycleService
     public function releaseAllOwnership(ReleaseAllOwnershipCommand $command): SlugMutationResultDTO
     {
         $fingerprint = $this->fingerprint(OperationTypeEnum::RELEASE_ALL, $command->binding, null, null, $command->expectedRevision, null, null);
+
+        $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $fingerprint): SlugMutationResultDTO {
             [$binding, $claims] = $this->lockExistingBinding($command->binding);
