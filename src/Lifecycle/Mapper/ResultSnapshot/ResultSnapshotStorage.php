@@ -9,6 +9,7 @@ use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeTransitionResultDTO;
 use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
 use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
+use Maatify\Slug\Lifecycle\Repository\Operation\OperationRecord;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationSnapshotState;
 use Maatify\Slug\Lifecycle\Repository\Operation\ResultSnapshotMetadata;
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
@@ -16,6 +17,24 @@ use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
 /** Provides immutable snapshot storage semantics for operation replay. */
 final class ResultSnapshotStorage
 {
+    /** Decodes a complete immutable snapshot from the operation already read by the caller. */
+    public static function decodeOperation(
+        OperationRecord $operation,
+        SlugProfileRegistryInterface $profiles,
+    ): SlugMutationResultDTO|ScopeTransitionResultDTO|AtomicTransferResultDTO|AdoptionResultDTO {
+        if ($operation->status !== 'COMMITTED' || $operation->resultSnapshot === null || $operation->completedAt === null) {
+            throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
+        }
+
+        return self::decodeCommitted(new ResultSnapshotMetadata(
+            $operation->resultType,
+            $operation->resultSchemaVersion,
+            $operation->operationType,
+            $operation->operationKey,
+            $operation->resultSnapshot,
+        ), $profiles);
+    }
+
     /**
      * Decodes and validates a committed snapshot as a replay result.
      *

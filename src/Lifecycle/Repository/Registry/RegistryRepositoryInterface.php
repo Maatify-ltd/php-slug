@@ -61,8 +61,14 @@ interface RegistryRepositoryInterface
      */
     public function lockOccupiedClaimKeys(array $keys): array;
 
-    /** @return list<RegistryClaimRecord> */
-    public function findClaimsInScopeSlugRange(int $scopeId, string $minimumSlug, string $maximumSlug, bool $forUpdate = false): array;
+    /**
+     * Locks the candidate range and all claims of the supplied locked Bindings.
+     *
+     * @param list<int> $bindingIds
+     * @param non-empty-list<string> $candidateSlugs
+     * @return list<array{id: int, binding_id: int, slug: string}>
+     */
+    public function lockClaimKeysForMutation(int $scopeId, array $bindingIds, array $candidateSlugs): array;
 
     /** Inserts a claim and returns its row, or null when the persistence race loses. */
     public function insertClaim(int $scopeId, int $bindingId, Slug $slug, RegistryRoleEnum $role): ?RegistryClaimRecord;

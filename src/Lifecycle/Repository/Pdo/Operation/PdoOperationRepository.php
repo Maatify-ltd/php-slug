@@ -190,19 +190,11 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
     public function decodeCommitted(int $operationId, SlugProfileRegistryInterface $profiles): SlugMutationResultDTO|ScopeTransitionResultDTO|AtomicTransferResultDTO|AdoptionResultDTO
     {
         $operation = $this->findOperationById($operationId, false);
-        if ($operation === null || $operation->status !== 'COMMITTED' || $operation->resultSnapshot === null || $operation->completedAt === null) {
+        if ($operation === null) {
             throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
         }
 
-        $metadata = new ResultSnapshotMetadata(
-            $operation->resultType,
-            $operation->resultSchemaVersion,
-            $operation->operationType,
-            $operation->operationKey,
-            $operation->resultSnapshot,
-        );
-
-        return ResultSnapshotStorage::decodeCommitted($metadata, $profiles);
+        return ResultSnapshotStorage::decodeOperation($operation, $profiles);
     }
 
     /** @param list<OperationParticipant> $participants */

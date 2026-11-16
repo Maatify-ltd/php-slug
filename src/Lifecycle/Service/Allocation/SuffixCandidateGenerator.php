@@ -14,7 +14,7 @@ final class SuffixCandidateGenerator
     /**
      * Returns the base and bounded `-2` through `-1000` candidates.
      *
-     * @return list<string>
+     * @return non-empty-list<string>
      */
     public static function prepare(string $base): array
     {

@@ -13,6 +13,7 @@ use Maatify\Slug\Lifecycle\Command\AdoptHistoricalCommand;
 use Maatify\Slug\Lifecycle\Command\CommandAssertions;
 use Maatify\Slug\Lifecycle\Contract\ReservedSlugPolicyInterface;
 use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotEncoder;
+use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotStorage;
 use Maatify\Slug\Lifecycle\DTO\AdoptionResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingDTO;
@@ -32,7 +33,6 @@ use Maatify\Slug\Lifecycle\Exception\SlugRevisionConflictException;
 use Maatify\Slug\Lifecycle\Repository\History\HistoryEventDraft;
 use Maatify\Slug\Canonicalization\ValueObject\Slug;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryBindingRecord;
-use Maatify\Slug\Lifecycle\Repository\Registry\RegistryClaimRecord;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
 use Maatify\Slug\Lifecycle\Repository\History\HistoryRepositoryInterface;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationPersistenceInterface;
@@ -157,14 +157,13 @@ final readonly class AdoptionService
             if ($record === null && $currentAdoption) {
                 $record = $this->registry->lockOrCreateBindingRecord($scope, $identity->entity);
             }
-            $before = $record === null || $record->createdInCurrentTransaction ? null : $this->requiredBinding($identity, false);
             if ($record === null) {
                 throw new SlugNotFoundException('Historical or alias adoption requires an existing Binding.');
             }
 
             $reservation = $this->reserve($operation, $fingerprint, $record->id, $audit);
             if ($reservation !== null && ! $reservation->created) {
-                $replayed = $this->operations->decodeCommitted($reservation->operation->id, $this->profiles);
+                $replayed = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
                 if (! $replayed instanceof AdoptionResultDTO) {
                     throw new SlugPersistenceInvariantException('Adoption operation contains a non-adoption snapshot.');
                 }
@@ -172,14 +171,13 @@ final readonly class AdoptionService
                 return $replayed->withReplayed(true);
             }
 
-            $this->assertState($record, $before, $expectedRevision, $currentAdoption);
-            $claims = $before === null ? [] : $this->registry->findClaimsForBinding($record->id);
-            $registryKeys = array_map(
-                static fn(RegistryClaimRecord $claim): array => ['scope_id' => $claim->scopeId, 'slug' => $claim->slugValue],
-                $claims,
+            $occupiedKeys = $this->registry->lockClaimKeysForMutation(
+                $scope->id,
+                $record->createdInCurrentTransaction ? [] : [$record->id],
+                [$slug->value],
             );
-            $registryKeys[] = ['scope_id' => $scope->id, 'slug' => $slug->value];
-            $occupiedKeys = $this->registry->lockOccupiedClaimKeys($registryKeys);
+            $before = $record->createdInCurrentTransaction ? null : $this->requiredBinding($identity);
+            $this->assertState($record, $before, $expectedRevision, $currentAdoption);
             if (in_array($slug->value, array_column($occupiedKeys, 'slug'), true)) {
                 throw new SlugAlreadyClaimedException('The adopted slug is already claimed in the requested Scope.');
             }
@@ -223,7 +221,7 @@ final readonly class AdoptionService
                 $currentAdoption ? $claim->id : $record->currentRegistryId,
                 ($before?->state->historySequence ?? 0) + 1,
             );
-            $after = $this->requiredBinding($identity, true);
+            $after = $this->requiredBinding($identity);
 
             $result = new AdoptionResultDTO(
                 $operation,
@@ -284,9 +282,9 @@ final readonly class AdoptionService
     }
 
     /** Loads the binding required to complete and verify an adoption mutation. */
-    private function requiredBinding(BindingIdentityDTO $identity, bool $forUpdate): BindingDTO
+    private function requiredBinding(BindingIdentityDTO $identity): BindingDTO
     {
-        $binding = $this->registry->binding($identity, false);
+        $binding = $this->registry->binding($identity, true);
         if ($binding === null) {
             throw new SlugPersistenceInvariantException('Adoption Binding disappeared during mutation.');
         }
