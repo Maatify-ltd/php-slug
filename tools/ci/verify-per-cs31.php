@@ -1126,7 +1126,7 @@ final class PerCs31Verifier
             (?:\A|[.!?؟:;—\n]\s*)['"“‘`]?\s*
             REGEX;
         $clauseEnd = <<<'REGEX'
-            (?=\s*['"”’`]?(?:[.!?؟]|\z))
+            (?=\s*['"”’`]?(?:[.!?؟;]|\z))
             REGEX;
         $termination = '(?:break(?:\s+out)?|return|stop|terminate|exit)';
         $position = '(?:(?:right\s+)?(?:here(?:\s+instead)?|now)|instead)';

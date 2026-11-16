@@ -592,6 +592,8 @@ $commentCases = [
     ["Deliberate fall-through.\n        // We now must stop here before the next case.", null, 3, false],
     ["Deliberate fall-through.\n        // We must stop here immediately.", null, 3, false],
     ["Deliberate fall-through.\n        // We must return immediately.", null, 3, false],
+    ["Deliberate fall-through.\n        // We must return immediately; the branch has completed its work.", null, 3, false],
+    ["Deliberate fall-through.\n        // We should stop the download now; the next case processes its data.", null, 3, true],
     ["Deliberate fall-through.\n        // We, of course, must stop here before the next case.", null, 3, false],
     ["Deliberate fall-through.\n        // Return immediately.", null, 3, false],
     ["Deliberate fall-through.\n        // Break.", null, 3, false],
