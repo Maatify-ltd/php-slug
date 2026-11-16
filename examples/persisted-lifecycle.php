@@ -57,8 +57,10 @@ $failure = null;
 try {
     $configuration = databaseConfiguration();
     $schemaDirectory = dirname(__DIR__) . '/schema/mysql';
-    if (! is_file($schemaDirectory . '/001_slug_rc1.sql') || ! is_file($schemaDirectory . '/002_operational_reporting_indexes.sql')) {
-        throw new RuntimeException('The ordered package schema assets are incomplete.');
+    foreach (['001_slug_rc1.sql', '002_operational_reporting_indexes.sql', '003_registry_lock_projection.sql'] as $requiredAsset) {
+        if (! is_file($schemaDirectory . '/' . $requiredAsset)) {
+            throw new RuntimeException('The ordered package schema assets are incomplete.');
+        }
     }
 
     $pdo = connectToDatabase($configuration);
@@ -212,20 +214,38 @@ function installPackageSchema(PDO $pdo, string $schemaDirectory, array &$created
             if ($statement === '') {
                 continue;
             }
-            if ($statement === null || preg_match('/\A(CREATE|ALTER)\s+TABLE\s+(maa_slug_[a-z0-9_]+)(?=\s|\()/', $statement, $matches) !== 1) {
-                throw new RuntimeException('The example schema asset contains an unsupported statement.');
+            if ($statement === null) {
+                throw new RuntimeException('The example schema asset could not be read.');
             }
-            [, $operation, $table] = $matches;
-            if ($operation === 'ALTER' && ! in_array($table, $createdTables, true)) {
-                throw new RuntimeException('The example can alter only tables created by this invocation.');
-            }
-            if ($pdo->exec($statement) === false) {
-                throw new RuntimeException('An example schema statement did not execute.');
-            }
-            if ($operation === 'CREATE') {
-                $createdTables[] = $table;
-            }
+            executeExampleSchemaStatement($pdo, $statement, $createdTables);
         }
+    }
+}
+
+/** @param list<string> $createdTables */
+function executeExampleSchemaStatement(PDO $pdo, string $statement, array &$createdTables): void
+{
+    $projection = 'maa_slug_registry_lock_keys';
+    $retryableCreate = 'CREATE TABLE IF NOT EXISTS ' . $projection . ' (';
+    if (str_starts_with($statement, $retryableCreate)) {
+        // An existing table must error so the example never adopts cleanup ownership.
+        $statement = 'CREATE TABLE ' . $projection . ' (' . substr($statement, strlen($retryableCreate));
+    }
+    if (preg_match('/\A(CREATE TABLE|ALTER TABLE|INSERT INTO)\s+(maa_slug_[a-z0-9_]+)(?=\s|\()/', $statement, $matches) !== 1) {
+        throw new RuntimeException('The example schema asset contains an unsupported statement.');
+    }
+    [, $operation, $table] = $matches;
+    if ($operation !== 'CREATE TABLE' && ! in_array($table, $createdTables, true)) {
+        throw new RuntimeException('The example can modify only tables created by this invocation.');
+    }
+    if ($operation === 'INSERT INTO' && $table !== $projection) {
+        throw new RuntimeException('The example permits seed rows only in the Registry lock projection.');
+    }
+    if ($pdo->exec($statement) === false) {
+        throw new RuntimeException('An example schema statement did not execute.');
+    }
+    if ($operation === 'CREATE TABLE') {
+        $createdTables[] = $table;
     }
 }
 

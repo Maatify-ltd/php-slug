@@ -9,6 +9,7 @@ use PDOException;
 use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Lifecycle\Exception\SlugUnsupportedDriverException;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
 use Throwable;
 
@@ -48,6 +49,11 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
 
         $this->assertSupported();
         $this->assertPackageTables();
+        try {
+            (new PdoSchemaVerifier($this->pdo))->assertRegistryLockProjection();
+        } catch (Throwable $throwable) {
+            throw new SlugRuntimeCompatibilityException('The Registry lock projection is unavailable or incompatible.', 0, $throwable);
+        }
         $this->probeInstalledSchemaCapabilities();
         $this->installedSchemaVerified = true;
     }
@@ -196,6 +202,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             'maa_slug_operations',
             'maa_slug_operation_bindings',
             'maa_slug_registry',
+            'maa_slug_registry_lock_keys',
             'maa_slug_history',
         ];
         $statement = $this->pdo->query(

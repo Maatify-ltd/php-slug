@@ -18,6 +18,7 @@ use Maatify\Slug\Lifecycle\Command\AtomicTransferCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeGeneratedCommand;
 use Maatify\Slug\Lifecycle\Command\DeactivateBindingCommand;
+use Maatify\Slug\Lifecycle\Command\PurgeBindingCommand;
 use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
 use Maatify\Slug\Lifecycle\Command\RestoreHistoricalCommand;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
@@ -186,7 +187,8 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
         return ['exact assignment' => ['exact'], 'generated assignment' => ['generated'], 'current adoption' => ['adopt']];
     }
 
-    public function testMutationDoesNotBlockAssignmentInAdjacentScope(): void
+    #[DataProvider('adjacentScopeSlugs')]
+    public function testMutationDoesNotBlockAssignmentInAdjacentScope(string $candidate): void
     {
         $otherPdo = $this->newTestConnection();
         $host = $this->engine($this->pdo);
@@ -203,12 +205,14 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
         $host->assignExact(new AssignExactCommand($recipient, 'seed', null, $audit));
         $host->releaseAllOwnership(new ReleaseAllOwnershipCommand($recipient, 1, $audit));
 
+        // Prime the observer's schema probes before measuring Registry locks.
+        $other->ensureScope($recipient->scopeProfile);
         $otherPdo->exec('SET SESSION innodb_lock_wait_timeout = 1');
         $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         $this->pdo->beginTransaction();
         try {
-            $moved = $host->changeExact(new ChangeExactCommand($source, 'mine', 1, $audit));
-            self::assertSame('mine', $moved->after->currentClaim?->slug->value);
+            $moved = $host->changeExact(new ChangeExactCommand($source, $candidate, 1, $audit));
+            self::assertSame($candidate, $moved->after->currentClaim?->slug->value);
             self::assertTrue($this->pdo->inTransaction());
 
             $assigned = $other->assignExact(new AssignExactCommand($recipient, 'aaa', 2, $audit));
@@ -218,8 +222,75 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
         } finally {
             $this->rollBackHost();
         }
-        self::assertSame(0, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'mine'"));
+        $rolledBackClaim = $this->pdo->prepare('SELECT COUNT(*) FROM maa_slug_registry WHERE slug = ?');
+        self::assertNotFalse($rolledBackClaim);
+        $rolledBackClaim->execute([$candidate]);
+        self::assertSame(0, (int) $rolledBackClaim->fetchColumn());
+        $rolledBackKey = $this->pdo->prepare('SELECT COUNT(*) FROM maa_slug_registry_lock_keys WHERE slug = ?');
+        self::assertNotFalse($rolledBackKey);
+        $rolledBackKey->execute([$candidate]);
+        self::assertSame(0, (int) $rolledBackKey->fetchColumn());
         self::assertSame(1, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'aaa'"));
+    }
+
+    /** @return array<string, array{string}> */
+    public static function adjacentScopeSlugs(): array
+    {
+        return ['interior candidate' => ['mine'], 'candidate beyond partition tail' => ['zzzzzz']];
+    }
+
+    public function testFirstAssignmentInEmptyScopeDoesNotBlockAdjacentScope(): void
+    {
+        $otherPdo = $this->newTestConnection();
+        $host = $this->engine($this->pdo);
+        $other = $this->engine($otherPdo);
+        $source = $this->identity('first-binding', 'a-lock-scope');
+        $recipient = $this->identity('recipient', 'b-lock-scope');
+        $audit = new AuditContextDTO();
+        $host->ensureScope($source->scopeProfile);
+        $host->assignExact(new AssignExactCommand($this->identity('sentinel', 'b-lock-scope'), 'zzz', null, $audit));
+        $host->assignExact(new AssignExactCommand($recipient, 'seed', null, $audit));
+        $host->releaseAllOwnership(new ReleaseAllOwnershipCommand($recipient, 1, $audit));
+
+        // Prime the observer's schema probes before measuring Registry locks.
+        $other->ensureScope($recipient->scopeProfile);
+        $otherPdo->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->beginTransaction();
+        try {
+            $assignedFirst = $host->assignExact(new AssignExactCommand($source, 'zzzzzz', null, $audit));
+            self::assertSame('zzzzzz', $assignedFirst->after->currentClaim?->slug->value);
+            $assignedOther = $other->assignExact(new AssignExactCommand($recipient, 'aaa', 2, $audit));
+            self::assertSame('aaa', $assignedOther->after->currentClaim?->slug->value);
+            self::assertTrue($this->pdo->inTransaction());
+        } finally {
+            $this->rollBackHost();
+        }
+        self::assertSame(0, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry_lock_keys WHERE slug = 'zzzzzz'"));
+        self::assertSame(2, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry_lock_keys WHERE slug = 'aaa'"));
+    }
+
+    public function testPurgingLastBindingPartitionPreservesScopeBoundariesAndHostRollback(): void
+    {
+        $host = $this->engine($this->pdo);
+        $purged = $this->identity('last-binding', 'a-lock-scope');
+        $audit = new AuditContextDTO();
+        $host->assignExact(new AssignExactCommand($purged, 'seed-a', null, $audit));
+        $released = $host->releaseAllOwnership(new ReleaseAllOwnershipCommand($purged, 1, $audit));
+        $partitionCount = 'SELECT COUNT(*) FROM maa_slug_registry_lock_keys WHERE binding_partition = ' . $released->after->id;
+        $scopeEnds = 'SELECT COUNT(*) FROM maa_slug_registry_lock_keys WHERE scope_end = 1';
+
+        $this->startSnapshot();
+        try {
+            $host->purgeBinding(new PurgeBindingCommand($purged, 2));
+            self::assertSame(0, $this->countRows($partitionCount));
+            self::assertSame(1, $this->countRows($scopeEnds));
+            self::assertTrue($this->pdo->inTransaction());
+        } finally {
+            $this->rollBackHost();
+        }
+        self::assertSame(2, $this->countRows($partitionCount));
+        self::assertSame(1, $this->countRows($scopeEnds));
     }
 
     private function startSnapshot(): void

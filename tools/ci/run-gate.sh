@@ -108,11 +108,13 @@ audit() {
 }
 
 schema_contract() {
-    local schema_assets=(schema/mysql/[0-9][0-9][0-9]_*.sql)
-    if ((${#schema_assets[@]} < 2)); then
-        echo 'The ordered package schema assets are incomplete.' >&2
-        exit 1
-    fi
+    local asset
+    for asset in 001_slug_rc1.sql 002_operational_reporting_indexes.sql 003_registry_lock_projection.sql; do
+        if [[ ! -f "schema/mysql/$asset" ]]; then
+            echo "The ordered package schema asset is missing: $asset" >&2
+            exit 1
+        fi
+    done
 }
 
 workflow_lint() {

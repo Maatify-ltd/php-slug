@@ -23,6 +23,7 @@ final readonly class PdoSchemaVerifier
             'maa_slug_operations',
             'maa_slug_operation_bindings',
             'maa_slug_registry',
+            'maa_slug_registry_lock_keys',
             'maa_slug_history',
         ];
         $statement = $this->pdo->query(
@@ -49,8 +50,44 @@ final readonly class PdoSchemaVerifier
         }
 
         $this->assertRequiredIndexes();
+        $this->assertRegistryLockProjection();
         $this->assertRequiredForeignKeys();
         $this->assertColumnContract();
+    }
+
+    /** Verifies the physical lock order and the completed projection backfill. */
+    public function assertRegistryLockProjection(): void
+    {
+        $statement = $this->pdo->query(
+            "SELECT COLUMN_NAME, SEQ_IN_INDEX, SUB_PART, COLLATION FROM information_schema.STATISTICS "
+            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND INDEX_NAME = 'PRIMARY' "
+            . 'ORDER BY SEQ_IN_INDEX',
+        );
+        if ($statement === false) {
+            throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection primary key.');
+        }
+        $columns = ['scope_id', 'scope_end', 'binding_partition', 'key_kind', 'slug'];
+        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        if (count($rows) !== count($columns)) {
+            throw new SlugPersistenceInvariantException('Registry lock projection requires the full ordered ascending primary key.');
+        }
+        foreach ($columns as $index => $name) {
+            $row = $rows[$index];
+            if (PdoRowHydrator::string($row, 'COLUMN_NAME') !== $name
+                || PdoRowHydrator::nonNegativeInt($row, 'SEQ_IN_INDEX') !== $index + 1
+                || $row['SUB_PART'] !== null
+                || $row['COLLATION'] !== 'A') {
+                throw new SlugPersistenceInvariantException('Registry lock projection requires the full ordered ascending primary key.');
+            }
+        }
+
+        $marker = $this->pdo->query(
+            "SELECT 1 FROM maa_slug_registry_lock_keys WHERE scope_id = 0 AND scope_end = 0 AND binding_partition = 0 AND key_kind = 2 AND slug = '' "
+            . 'AND registry_id IS NULL AND owner_binding_id IS NULL',
+        );
+        if ($marker === false || (int) $marker->fetchColumn() !== 1) {
+            throw new SlugPersistenceInvariantException('Registry lock projection backfill has not been completed.');
+        }
     }
 
     /** Verifies the unique and lookup indexes required by lifecycle invariants. */

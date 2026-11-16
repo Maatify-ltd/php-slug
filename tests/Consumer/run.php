@@ -127,7 +127,7 @@ function connectToDatabase(array $configuration): PDO
 /** Removes package-owned tables after the external consumer run. */
 function dropPackageSchema(PDO $pdo): void
 {
-    foreach (['maa_slug_history', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
+    foreach (['maa_slug_history', 'maa_slug_registry_lock_keys', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
         $pdo->exec('DROP TABLE IF EXISTS `' . $table . '`');
     }
 }
@@ -373,8 +373,10 @@ function installedPackageSchema(): string
         throw new RuntimeException('Composer did not report the maatify/php-slug installation path.');
     }
     $schemaDirectory = $packagePath . '/schema/mysql';
-    if (! is_file($schemaDirectory . '/001_slug_rc1.sql') || ! is_file($schemaDirectory . '/002_operational_reporting_indexes.sql')) {
-        throw new RuntimeException('The installed maatify/php-slug dependency does not contain the ordered MySQL schema assets.');
+    foreach (['001_slug_rc1.sql', '002_operational_reporting_indexes.sql', '003_registry_lock_projection.sql'] as $requiredAsset) {
+        if (! is_file($schemaDirectory . '/' . $requiredAsset)) {
+            throw new RuntimeException('The installed maatify/php-slug dependency does not contain the ordered MySQL schema assets.');
+        }
     }
     return $schemaDirectory;
 }
@@ -694,7 +696,7 @@ function removeRaceBarrier(string $barrier, array $workers): void
 
 function dropPackageSchema(PDO $pdo): void
 {
-    foreach (['maa_slug_history', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
+    foreach (['maa_slug_history', 'maa_slug_registry_lock_keys', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
         $pdo->exec('DROP TABLE IF EXISTS `' . $table . '`');
     }
 }

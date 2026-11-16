@@ -4,8 +4,26 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Tests\Integration\Schema;
 
+use PDO;
+use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
+use Maatify\Slug\Canonicalization\Service\SlugProfileRegistry;
+use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
+use Maatify\Slug\Factory\SlugEngineFactory;
+use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
+use Maatify\Slug\Lifecycle\Consumer\Criteria\ResolutionCriteria;
+use Maatify\Slug\Lifecycle\Consumer\Enum\MatchKindEnum;
+use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
+use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaInstaller;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
+use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
+use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
+use Maatify\Slug\Tests\Unit\Allocation\TestReservedSlugPolicy;
+use Maatify\Slug\Tests\Unit\Allocation\TestSlugProfile;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
 {
@@ -30,7 +48,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
             $this->reinstallPackageSchema();
             (new PdoSchemaVerifier($this->pdo))->assertInstalled();
 
-            $this->pdo->exec('DROP TABLE maa_slug_history, maa_slug_registry, maa_slug_operation_bindings, maa_slug_operations, maa_slug_bindings, maa_slug_scopes');
+            $this->dropSchemaForUpgradeProof();
             $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%'");
             self::assertNotFalse($statement);
             self::assertSame('0', (string) $statement->fetchColumn(), 'cleanup iteration ' . $iteration);
@@ -39,18 +57,90 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         $this->reinstallPackageSchema();
     }
 
-    public function testPublishedRc1ThenAdditiveOperationalAssetPassesVerification(): void
+    public function testRegistryLockProjectionBackfillsPublishedSchemaAndCanBeRetried(): void
     {
         $this->dropSchemaForUpgradeProof();
-        $base = file_get_contents(dirname(__DIR__, 3) . '/schema/mysql/001_slug_rc1.sql');
-        $additive = file_get_contents(dirname(__DIR__, 3) . '/schema/mysql/002_operational_reporting_indexes.sql');
-        self::assertIsString($base);
-        self::assertIsString($additive);
-
         $installer = new PdoSchemaInstaller($this->pdo);
-        $installer->installSql($base);
-        $installer->installSql($additive);
+        $installer->installSql($this->readSchemaAsset('001_slug_rc1.sql'));
+        $installer->installSql($this->readSchemaAsset('002_operational_reporting_indexes.sql'));
+        $this->seedPublishedRegistry();
+        $before = $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id');
+        self::assertCount(3, $before);
+
+        $projection = $this->readSchemaAsset('003_registry_lock_projection.sql');
+        $installer->installSql($projection);
+        $keys = $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug');
+        self::assertSame([
+            [0, 0, 0, 2, '', null, null],
+            [11, 0, 0, 0, '', null, null],
+            [11, 0, 0, 1, 'current-origin', 1001, 101],
+            [11, 0, 0, 1, 'other-current', 1003, 102],
+            [11, 0, 0, 1, 'retained-alias', 1002, 101],
+            [11, 0, 0, 2, '', null, null],
+            [11, 0, 101, 0, '', null, null],
+            [11, 0, 101, 1, 'current-origin', 1001, 101],
+            [11, 0, 101, 1, 'retained-alias', 1002, 101],
+            [11, 0, 101, 2, '', null, null],
+            [11, 0, 102, 0, '', null, null],
+            [11, 0, 102, 1, 'other-current', 1003, 102],
+            [11, 0, 102, 2, '', null, null],
+            [11, 1, 0, 2, '', null, null],
+            [12, 0, 0, 0, '', null, null],
+            [12, 0, 0, 2, '', null, null],
+            [12, 1, 0, 2, '', null, null],
+        ], $keys);
+        self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
+
+        $installer->installSql($projection);
+        self::assertSame($keys, $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug'));
+        self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
         (new PdoSchemaVerifier($this->pdo))->assertInstalled();
+
+        $profiles = new SlugProfileRegistry();
+        $profiles->register(new TestSlugProfile());
+        $engine = SlugEngineFactory::create($this->pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
+        $scope = new ScopeProfileRequestDTO(new SlugScope('upgrade-with-claims', null, null), new SlugProfileKey('ascii-v1'));
+        $binding = new BindingIdentityDTO($scope, new EntityReference('article', 'primary'));
+        $result = $engine->changeExact(new ChangeExactCommand($binding, 'post-upgrade', 1, new AuditContextDTO()));
+        self::assertSame('post-upgrade', $result->after->currentClaim?->slug->value);
+        $resolved = $engine->resolve(new ResolutionCriteria($scope, 'retained-alias'));
+        self::assertSame(MatchKindEnum::ALIAS, $resolved->matchKind);
+        self::assertSame('post-upgrade', $resolved->currentSlug?->value);
+        self::assertSame([[0, 101], [101, 101]], $this->readRows("SELECT binding_partition, owner_binding_id FROM maa_slug_registry_lock_keys WHERE slug = 'post-upgrade' ORDER BY binding_partition"));
+    }
+
+    #[DataProvider('incompleteProjectionSchemas')]
+    public function testIncompleteProjectionIsRejectedByVerifierAndRuntime(string $change, string $reason): void
+    {
+        $this->pdo->exec($change);
+
+        try {
+            (new PdoSchemaVerifier($this->pdo))->assertInstalled();
+            self::fail('Schema verification accepted an incomplete Registry lock projection.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString($reason, $exception->getMessage());
+        }
+
+        $this->expectException(SlugRuntimeCompatibilityException::class);
+        $this->expectExceptionMessage('The Registry lock projection is unavailable or incompatible.');
+        (new PdoCapabilityGuard($this->pdo))->assertInstalledSchemaSupported();
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function incompleteProjectionSchemas(): iterable
+    {
+        yield 'out-of-order columns' => [
+            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, binding_partition, scope_end, key_kind, slug)',
+            'full ordered ascending primary key',
+        ];
+        yield 'prefix instead of full slug' => [
+            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, scope_end, binding_partition, key_kind, slug(30))',
+            'full ordered ascending primary key',
+        ];
+        yield 'table installed but backfill incomplete' => [
+            'DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0',
+            'backfill has not been completed',
+        ];
     }
 
     public function testMissingOperationalIndexFailsVerification(): void
@@ -92,14 +182,14 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
     public function testPersistedExampleDoesNotTouchExistingPackageTableOrRow(): void
     {
         $this->dropSchemaForUpgradeProof();
-        $this->pdo->exec('CREATE TABLE maa_slug_registry (marker VARCHAR(32) NOT NULL)');
-        $this->pdo->exec("INSERT INTO maa_slug_registry (marker) VALUES ('keep-this-row')");
+        $this->pdo->exec('CREATE TABLE maa_slug_registry_lock_keys (marker VARCHAR(32) NOT NULL)');
+        $this->pdo->exec("INSERT INTO maa_slug_registry_lock_keys (marker) VALUES ('keep-this-row')");
 
         [$status, $output] = $this->runPersistedExample(dirname(__DIR__, 3));
 
         self::assertNotSame(0, $status);
         self::assertSame(1, $this->examplePackageTableCount(), 'The existing package table must survive the example refusal.');
-        $sentinel = $this->pdo->query('SELECT marker FROM maa_slug_registry');
+        $sentinel = $this->pdo->query('SELECT marker FROM maa_slug_registry_lock_keys');
         self::assertNotFalse($sentinel);
         self::assertSame('keep-this-row', $sentinel->fetchColumn());
         self::assertStringContainsString('must have no pre-existing Slug tables or views', $output);
@@ -124,12 +214,14 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         $example = '/examples/persisted-lifecycle.php';
         $baseAsset = '/schema/mysql/001_slug_rc1.sql';
         $additiveAsset = '/schema/mysql/002_operational_reporting_indexes.sql';
+        $projectionAsset = '/schema/mysql/003_registry_lock_projection.sql';
         try {
             self::assertTrue(mkdir($fixture . '/examples', 0700));
             self::assertTrue(mkdir($fixture . '/schema/mysql', 0700, true));
             self::assertTrue(symlink($root . '/vendor', $fixture . '/vendor'));
             self::assertTrue(copy($root . $example, $fixture . $example));
             self::assertTrue(copy($root . $additiveAsset, $fixture . $additiveAsset));
+            self::assertTrue(copy($root . $projectionAsset, $fixture . $projectionAsset));
             $incompleteInstall = <<<'SQL'
 CREATE TABLE maa_slug_scopes (id INT NOT NULL PRIMARY KEY);
 ALTER TABLE maa_slug_scopes ADD INDEX ix_example_duplicate (id);
@@ -144,7 +236,7 @@ SQL;
             self::assertStringNotContainsString('PERSISTED_LIFECYCLE_EXAMPLE=hello-world', $output);
             self::assertSame(0, $this->examplePackageTableCount());
         } finally {
-            foreach ([$example, $baseAsset, $additiveAsset, '/vendor'] as $path) {
+            foreach ([$example, $baseAsset, $additiveAsset, $projectionAsset, '/vendor'] as $path) {
                 if (is_file($fixture . $path) || is_link($fixture . $path)) {
                     unlink($fixture . $path);
                 }
@@ -200,9 +292,56 @@ SQL;
 
     private function dropSchemaForUpgradeProof(): void
     {
-        foreach (['maa_slug_history', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
+        foreach (['maa_slug_history', 'maa_slug_registry_lock_keys', 'maa_slug_registry', 'maa_slug_operation_bindings', 'maa_slug_operations', 'maa_slug_bindings', 'maa_slug_scopes'] as $table) {
             $this->pdo->exec('DROP TABLE IF EXISTS `' . $table . '`');
         }
+    }
+
+    private function readSchemaAsset(string $asset): string
+    {
+        $sql = file_get_contents(dirname(__DIR__, 3) . '/schema/mysql/' . $asset);
+        self::assertIsString($sql);
+
+        return $sql;
+    }
+
+    /** @return list<list<mixed>> */
+    private function readRows(string $sql): array
+    {
+        $statement = $this->pdo->query($sql);
+        self::assertNotFalse($statement);
+
+        return array_map(static function (mixed $row): array {
+            self::assertIsArray($row);
+
+            return array_values($row);
+        }, array_values($statement->fetchAll(PDO::FETCH_NUM)));
+    }
+
+    private function seedPublishedRegistry(): void
+    {
+        $this->pdo->exec(
+            <<<'SQL'
+INSERT INTO maa_slug_scopes (id, namespace, locale_key, context_key, profile_key, created_at, updated_at)
+VALUES (11, 'upgrade-with-claims', '', '', 'ascii-v1', '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456'),
+       (12, 'upgrade-empty-scope', '', '', 'ascii-v1', '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456')
+SQL,
+        );
+        $this->pdo->exec(
+            <<<'SQL'
+INSERT INTO maa_slug_bindings (id, scope_id, entity_type, entity_key, current_registry_id, status, revision, created_at, updated_at)
+VALUES (101, 11, 'article', 'primary', 1001, 'ACTIVE', 1, '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456'),
+       (102, 11, 'article', 'other', 1003, 'ACTIVE', 1, '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456')
+SQL,
+        );
+        $this->pdo->exec(
+            <<<'SQL'
+INSERT INTO maa_slug_registry (id, scope_id, binding_id, slug, claim_role, claimed_at, updated_at)
+VALUES (1001, 11, 101, 'current-origin', 'CURRENT_CANONICAL', '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456'),
+       (1002, 11, 101, 'retained-alias', 'ACTIVE_ALIAS', '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456'),
+       (1003, 11, 102, 'other-current', 'CURRENT_CANONICAL', '2026-01-01 00:00:00.123456', '2026-01-01 00:00:00.123456')
+SQL,
+        );
     }
 
 }
