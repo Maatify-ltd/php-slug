@@ -257,13 +257,13 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
 
     /**
      * Lock the existing Registry rows for an exact, deterministic set of
-     * (scope_id, slug) keys. Missing candidates are intentionally not gap
-     * locked; the unique Registry key remains the race authority at insert.
+     * (scope_id, slug) keys. The unique Registry key resolves insert races
+     * when a requested key is absent.
      *
      * @param list<array{scope_id: int, slug: string}> $keys
-     * @return list<RegistryClaimRecord>
+     * @return list<array{scope_id: int, slug: string}>
      */
-    public function findClaimsForKeys(array $keys, bool $forUpdate = false): array
+    public function lockOccupiedClaimKeys(array $keys): array
     {
         if ($keys === []) {
             return [];
@@ -289,11 +289,11 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             $parameters[$slugParameter] = $key['slug'];
         }
 
-        $suffix = $forUpdate ? ' FOR UPDATE' : '';
+        // This phase locks Registry rows only. A join to the owner Binding
+        // could introduce a Binding lock after the Binding lock phase.
         $statement = $this->pdo->prepare(
-            'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at '
-            . 'FROM maa_slug_registry r WHERE ' . implode(' OR ', $predicates)
-            . ' ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC' . $suffix,
+            'SELECT r.scope_id, r.slug FROM maa_slug_registry r WHERE ' . implode(' OR ', $predicates)
+            . ' ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC FOR UPDATE',
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan lookup.');
@@ -302,36 +302,11 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         /** @var list<array<string, mixed>> $rawRows */
         $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
         $rows = PdoRowHydrator::many($rawRows);
-        if ($rows === []) {
-            return [];
-        }
 
-        $ids = array_map(static fn(array $row): int => PdoRowHydrator::nonNegativeInt($row, 'id'), $rows);
-        $placeholders = [];
-        $hydrationParameters = [];
-        foreach ($ids as $index => $id) {
-            $parameter = 'registry_id_' . $index;
-            $placeholders[] = ':' . $parameter;
-            $hydrationParameters[$parameter] = $id;
-        }
-        $hydration = $this->pdo->prepare(
-            'SELECT r.id, r.scope_id, r.binding_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '
-            . 's.namespace, s.locale_key, s.context_key, s.profile_key, b.entity_type, b.entity_key '
-            . 'FROM maa_slug_registry r '
-            . 'INNER JOIN maa_slug_scopes s ON s.id = r.scope_id '
-            . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id '
-            . 'WHERE r.id IN (' . implode(', ', $placeholders) . ') '
-            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
-        );
-        if ($hydration === false) {
-            throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan hydration.');
-        }
-        $hydration->execute($hydrationParameters);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $hydration->fetchAll(PDO::FETCH_ASSOC);
-        $hydratedRows = PdoRowHydrator::many($rawRows);
-
-        return array_map(fn(array $row): RegistryClaimRecord => $this->claimFromRow($row), $hydratedRows);
+        return array_map(static fn(array $row): array => [
+            'scope_id' => PdoRowHydrator::nonNegativeInt($row, 'scope_id'),
+            'slug' => PdoRowHydrator::string($row, 'slug'),
+        ], $rows);
     }
 
     /**

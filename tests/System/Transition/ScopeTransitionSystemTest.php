@@ -7,6 +7,8 @@ namespace Maatify\Slug\Tests\System\Transition;
 use Maatify\Slug\Exception\SlugNotFoundException;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
+use Maatify\Slug\Lifecycle\Contract\ReservedSlugPolicyInterface;
+use Maatify\Slug\Canonicalization\ValueObject\Slug;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
@@ -137,6 +139,68 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_bindings'));
         self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_registry'));
         self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
+    }
+
+    public function testGeneratedTransitionSkipsClaimCommittedAfterHostSnapshotBeforeCallingPolicy(): void
+    {
+        $writerPdo = $this->newTestConnection();
+        $writer = $this->engine($writerPdo);
+        $source = $this->identityInScope('generated-snapshot-source', 'generated-snapshot-entity');
+        $target = $this->scope('generated-snapshot-target');
+        $occupant = new BindingIdentityDTO($target, new EntityReference('product', 'other-entity'));
+        $writer->assignExact(new AssignExactCommand($source, 'generated-snapshot-source-slug', null, new AuditContextDTO()));
+        $writer->ensureScope($target);
+
+        $policy = new class implements ReservedSlugPolicyInterface {
+            /** @var list<string> */
+            public array $candidates = [];
+
+            public function isReserved(SlugScope $scope, Slug $slug): bool
+            {
+                $this->candidates[] = $slug->value;
+
+                return false;
+            }
+        };
+        $engine = $this->engine(policy: $policy);
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $this->pdo->beginTransaction();
+
+        try {
+            self::assertGreaterThan(0, $this->scopeId('generated-snapshot-source'));
+            $occupiedBinding = $writer->assignExact(new AssignExactCommand($occupant, 'occupied', null, new AuditContextDTO()))->after;
+            $writerPdo->beginTransaction();
+            $bindingLock = $writerPdo->prepare('SELECT id FROM maa_slug_bindings WHERE id = :id FOR UPDATE');
+            self::assertNotFalse($bindingLock);
+            $bindingLock->execute(['id' => $occupiedBinding->id]);
+            self::assertSame($occupiedBinding->id, (int) $bindingLock->fetchColumn());
+            self::assertSame(0, $this->scalarInt("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'occupied'"));
+
+            $result = $engine->transitionScope(new TransitionScopeCommand(
+                $source,
+                $target,
+                ScopeTransitionModeEnum::PARALLEL,
+                new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::GENERATED, 'Occupied'),
+                1,
+                new AuditContextDTO(),
+            ));
+
+            self::assertSame('occupied-2', $result->targetAfter->currentClaim?->slug->value);
+            self::assertSame(['occupied-2'], $policy->candidates);
+            self::assertTrue($this->pdo->inTransaction());
+        } finally {
+            if ($writerPdo->inTransaction()) {
+                $writerPdo->rollBack();
+            }
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+
+        self::assertSame(2, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_bindings'));
+        self::assertSame(2, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_registry'));
+        self::assertSame(1, $this->scalarInt("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'occupied'"));
     }
 
     /** @return array<string, array{string}> */
@@ -381,11 +445,11 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         }
     }
 
-    private function engine(?PDO $pdo = null): SlugEngine
+    private function engine(?PDO $pdo = null, ?ReservedSlugPolicyInterface $policy = null): SlugEngine
     {
         $profiles = new SlugProfileRegistry();
         $profiles->register(new TestSlugProfile());
-        return SlugEngineFactory::create($pdo ?? $this->pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
+        return SlugEngineFactory::create($pdo ?? $this->pdo, $profiles, $policy ?? new TestReservedSlugPolicy(), $this->clock());
     }
 
     private function identity(string $entityKey): BindingIdentityDTO

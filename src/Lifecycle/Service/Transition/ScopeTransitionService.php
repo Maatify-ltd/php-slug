@@ -178,15 +178,21 @@ final readonly class ScopeTransitionService
             // two groups by Scope id after both Binding rows are locked.
             if ($sourceScope->id < $targetScope->id) {
                 $sourceBefore = $this->requiredBinding($command->source);
-                $targetClaims = $this->registry->findClaimsForKeys($targetKeys, true);
+                $occupiedTargetKeys = $this->registry->lockOccupiedClaimKeys($targetKeys);
             } else {
-                $targetClaims = $this->registry->findClaimsForKeys($targetKeys, true);
+                $occupiedTargetKeys = $this->registry->lockOccupiedClaimKeys($targetKeys);
                 $sourceBefore = $this->requiredBinding($command->source);
             }
             if ($sourceBefore->currentClaim === null) {
                 throw new SlugPersistenceInvariantException('The locked transition source has no current claim.');
             }
-            $targetClaim = $this->selectTargetClaim($targetScope->id, $targetRecord, $targetClaims, $targetCandidates, $command);
+            $targetClaim = $this->selectTargetClaim(
+                $targetScope->id,
+                $targetRecord,
+                array_column($occupiedTargetKeys, 'slug'),
+                $targetCandidates,
+                $command,
+            );
 
             $sourceEvents = [];
             if ($command->mode->value === 'MOVE') {
@@ -278,19 +284,18 @@ final readonly class ScopeTransitionService
     }
 
     /**
-     * @param list<RegistryClaimRecord> $claims
+     * @param list<string> $occupiedSlugs
      * @param list<Slug> $candidates
      */
     private function selectTargetClaim(
         int $scopeId,
         RegistryBindingRecord $target,
-        array $claims,
+        array $occupiedSlugs,
         array $candidates,
         TransitionScopeCommand $command,
     ): RegistryClaimRecord {
         foreach ($candidates as $candidate) {
-            $existing = $this->claimForSlug($claims, $candidate);
-            if ($existing !== null) {
+            if (in_array($candidate->value, $occupiedSlugs, true)) {
                 if ($command->targetClaimIntent->mode === ClaimIntentModeEnum::EXACT) {
                     if ($this->reservations->isReserved($command->targetScope->scope, $candidate)) {
                         throw new SlugReservedException('The exact transition target claim is reserved.');
@@ -317,17 +322,6 @@ final readonly class ScopeTransitionService
         }
 
         throw new SlugAllocationExhaustedException('All transition target candidates are unavailable.');
-    }
-
-    /** @param list<RegistryClaimRecord> $claims */
-    private function claimForSlug(array $claims, Slug $slug): ?RegistryClaimRecord
-    {
-        foreach ($claims as $claim) {
-            if ($claim->slugValue === $slug->value) {
-                return $claim;
-            }
-        }
-        return null;
     }
 
     /** Loads the binding required to complete a scope transition. */
