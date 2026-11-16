@@ -9,6 +9,7 @@ use Maatify\Slug\Lifecycle\Service\Allocation\GeneratedCandidateSequence;
 use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
 use Maatify\Slug\Lifecycle\Contract\ReservedSlugPolicyInterface;
 use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotEncoder;
+use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotStorage;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
@@ -94,76 +95,53 @@ final readonly class ScopeTransitionService
         $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $targetCandidates, $fingerprint): ScopeTransitionResultDTO {
-            $sourceScope = $this->registry->findScope(
-                $command->source->scopeProfile->scope,
-                $command->source->scopeProfile->expectedProfileKey,
-            );
-            if ($sourceScope === null) {
-                throw new SlugNotFoundException('The transition source Scope was not found.');
-            }
+            $sourceKey = $this->scopeKey($command->source->scopeProfile);
+            $targetKey = $this->scopeKey($command->targetScope);
             $scopeRequests = [$command->source->scopeProfile, $command->targetScope];
             usort($scopeRequests, fn(ScopeProfileRequestDTO $left, ScopeProfileRequestDTO $right): int => strcmp($this->scopeKey($left), $this->scopeKey($right)));
             $lockedScopes = [];
             foreach ($scopeRequests as $scopeRequest) {
                 $key = $this->scopeKey($scopeRequest);
-                if ($key === $this->scopeKey($command->targetScope)) {
+                if ($key === $targetKey) {
                     $this->registry->ensureScope($scopeRequest->scope, $scopeRequest->expectedProfileKey);
+                    $lockedScopes[$key] = $this->registry->lockScope($scopeRequest->scope, $scopeRequest->expectedProfileKey);
+                    continue;
                 }
-                $lockedScopes[$key] = $this->registry->lockScope($scopeRequest->scope, $scopeRequest->expectedProfileKey);
-            }
-            $sourceScope = $lockedScopes[$this->scopeKey($command->source->scopeProfile)];
-            $targetScope = $lockedScopes[$this->scopeKey($command->targetScope)];
 
-            /** @var list<array{is_source: bool, scope: \Maatify\Slug\Lifecycle\DTO\ScopeDTO, entity: \Maatify\Slug\Lifecycle\ValueObject\EntityReference, existing: ?RegistryBindingRecord}> $bindingPlan */
-            $bindingPlan = [
-                ['is_source' => true, 'scope' => $sourceScope, 'entity' => $command->source->entity, 'existing' => null],
-                ['is_source' => false, 'scope' => $targetScope, 'entity' => $command->source->entity, 'existing' => null],
-            ];
-            foreach ($bindingPlan as $index => $participant) {
-                $bindingPlan[$index]['existing'] = $this->registry->findBindingRecord($participant['scope'], $participant['entity']);
+                $scope = $this->registry->findScope($scopeRequest->scope, $scopeRequest->expectedProfileKey, true);
+                if ($scope === null) {
+                    throw new SlugNotFoundException('The transition source Scope was not found.');
+                }
+                $lockedScopes[$key] = $scope;
             }
-            usort($bindingPlan, static function (array $left, array $right): int {
-                $leftId = $left['existing'] === null ? PHP_INT_MAX : $left['existing']->id;
-                $rightId = $right['existing'] === null ? PHP_INT_MAX : $right['existing']->id;
+            $sourceScope = $lockedScopes[$sourceKey];
+            $targetScope = $lockedScopes[$targetKey];
 
-                return $left['scope']->id <=> $right['scope']->id
-                    ?: strcmp($left['entity']->entityType, $right['entity']->entityType)
-                    ?: strcmp($left['entity']->entityKey, $right['entity']->entityKey)
-                    ?: ($leftId <=> $rightId);
-            });
+            $bindingScopes = [$sourceScope, $targetScope];
+            usort($bindingScopes, static fn($left, $right): int => $left->id <=> $right->id);
 
             $sourceRecord = null;
             $targetRecord = null;
             $targetWasPresent = false;
             $targetCreated = false;
-            foreach ($bindingPlan as $participant) {
-                if ($participant['is_source']) {
-                    if ($participant['existing'] === null) {
+            foreach ($bindingScopes as $scope) {
+                $record = $this->registry->findBindingRecord($scope, $command->source->entity, true);
+                if ($scope->id === $sourceScope->id) {
+                    if ($record === null) {
                         throw new SlugNotFoundException('The transition source Binding was not found.');
                     }
-                    $sourceRecord = $this->registry->findBindingRecord($participant['scope'], $participant['entity'], true);
-                    if ($sourceRecord === null) {
-                        throw new SlugPersistenceInvariantException('Transition source Binding disappeared before lock.');
-                    }
+                    $sourceRecord = $record;
                     continue;
                 }
 
-                $targetWasPresent = $participant['existing'] !== null;
-                if ($participant['existing'] === null) {
-                    $targetRecord = $this->registry->lockOrCreateBindingRecord($participant['scope'], $participant['entity']);
-                    $targetCreated = $targetRecord->createdInCurrentTransaction;
-                } else {
-                    $targetRecord = $this->registry->findBindingRecord($participant['scope'], $participant['entity'], true);
-                    if ($targetRecord === null) {
-                        throw new SlugPersistenceInvariantException('Transition target Binding disappeared before lock.');
-                    }
-                }
+                $targetWasPresent = $record !== null;
+                $targetRecord = $record ?? $this->registry->lockOrCreateBindingRecord($scope, $command->source->entity);
+                $targetCreated = $targetRecord->createdInCurrentTransaction;
             }
             if ($sourceRecord === null || $targetRecord === null) {
                 throw new SlugPersistenceInvariantException('Transition Binding lock plan did not produce both participants.');
             }
             $targetIdentity = new BindingIdentityDTO($command->targetScope, $command->source->entity);
-            $sourceBefore = $this->requiredBinding($command->source, false);
 
             $existing = $this->existingOperation([$sourceRecord->id, $targetRecord->id], $command->audit);
             if ($targetWasPresent && $existing === null) {
@@ -180,34 +158,34 @@ final readonly class ScopeTransitionService
                 $existing,
             );
             if ($reservation !== null && ! $reservation->created) {
-                $replayed = $this->operations->decodeCommitted($reservation->operation->id, $this->profiles);
-                if (! $replayed instanceof ScopeTransitionResultDTO) {
-                    throw new SlugPersistenceInvariantException('Transition operation contains a non-transition snapshot.');
-                }
-                return $replayed->withReplayed(true);
+                return $this->decodeReplay($reservation->operation);
             }
 
-            $this->assertRevision($sourceBefore, $command->sourceExpectedRevision);
-            if (! in_array($sourceBefore->state->status, [BindingStatusEnum::ACTIVE, BindingStatusEnum::INACTIVE], true) || $sourceBefore->currentClaim === null) {
+            $this->assertRevision($sourceRecord, $command->sourceExpectedRevision);
+            if (! in_array($sourceRecord->status, [BindingStatusEnum::ACTIVE, BindingStatusEnum::INACTIVE], true) || $sourceRecord->currentRegistryId === null) {
                 throw new SlugAssignmentNotPermittedException('Transition source must be ACTIVE or INACTIVE and have a current claim.');
             }
             if (! $targetCreated) {
                 throw new SlugRevisionConflictException('The transition target Binding must be absent at first execution.');
             }
 
-            $sourceClaims = $this->registry->findClaimsForBinding($sourceRecord->id);
-            $registryKeys = array_map(
-                static fn(RegistryClaimRecord $claim): array => ['scope_id' => $claim->scopeId, 'slug' => $claim->slugValue],
-                $sourceClaims,
+            $targetKeys = array_map(
+                static fn(Slug $slug): array => ['scope_id' => $targetScope->id, 'slug' => $slug->value],
+                $targetCandidates,
             );
-            foreach ($targetCandidates as $candidate) {
-                $registryKeys[] = ['scope_id' => $targetScope->id, 'slug' => $candidate->value];
+            // Current source hydration locks its Registry claims in stored order.
+            // The other claim group belongs to a different Scope, so order the
+            // two groups by Scope id after both Binding rows are locked.
+            if ($sourceScope->id < $targetScope->id) {
+                $sourceBefore = $this->requiredBinding($command->source);
+                $targetClaims = $this->registry->findClaimsForKeys($targetKeys, true);
+            } else {
+                $targetClaims = $this->registry->findClaimsForKeys($targetKeys, true);
+                $sourceBefore = $this->requiredBinding($command->source);
             }
-            $lockedClaims = $this->registry->findClaimsForKeys($registryKeys, true);
-            $targetClaims = array_values(array_filter(
-                $lockedClaims,
-                static fn(RegistryClaimRecord $claim): bool => $claim->scopeId === $targetScope->id,
-            ));
+            if ($sourceBefore->currentClaim === null) {
+                throw new SlugPersistenceInvariantException('The locked transition source has no current claim.');
+            }
             $targetClaim = $this->selectTargetClaim($targetScope->id, $targetRecord, $targetClaims, $targetCandidates, $command);
 
             $sourceEvents = [];
@@ -248,8 +226,8 @@ final readonly class ScopeTransitionService
                 );
             }
 
-            $sourceAfter = $this->requiredBinding($command->source, false);
-            $targetAfter = $this->requiredBinding($targetIdentity, false);
+            $sourceAfter = $command->mode->value === 'MOVE' ? $this->requiredBinding($command->source) : $sourceBefore;
+            $targetAfter = $this->requiredBinding($targetIdentity);
             $sourceParticipant = new BindingStateResultDTO(
                 $sourceBefore,
                 $sourceAfter,
@@ -353,9 +331,9 @@ final readonly class ScopeTransitionService
     }
 
     /** Loads the binding required to complete a scope transition. */
-    private function requiredBinding(BindingIdentityDTO $identity, bool $forUpdate): BindingDTO
+    private function requiredBinding(BindingIdentityDTO $identity): BindingDTO
     {
-        $binding = $this->registry->binding($identity, $forUpdate);
+        $binding = $this->registry->binding($identity, true);
         if ($binding === null) {
             throw new SlugPersistenceInvariantException('Transition Binding disappeared during mutation.');
         }
@@ -363,9 +341,9 @@ final readonly class ScopeTransitionService
     }
 
     /** Enforces optimistic-concurrency revision matching for the source binding. */
-    private function assertRevision(BindingDTO $binding, int $expectedRevision): void
+    private function assertRevision(RegistryBindingRecord $binding, int $expectedRevision): void
     {
-        if ($binding->state->revision !== $expectedRevision) {
+        if ($binding->revision !== $expectedRevision) {
             throw new SlugRevisionConflictException('The transition source revision does not match.');
         }
     }
@@ -466,6 +444,27 @@ final readonly class ScopeTransitionService
             new OperationParticipant($bindingIds[1], $audit->idempotencyKey, 'TARGET'),
         ];
         return $this->operations->reserve($key, OperationTypeEnum::TRANSITION_SCOPE, $fingerprint, 'transition', 1, $participants);
+    }
+
+    /** Decodes the current, locked reservation without reading the Host's snapshot. */
+    private function decodeReplay(OperationRecord $operation): ScopeTransitionResultDTO
+    {
+        if ($operation->status !== 'COMMITTED' || $operation->resultSnapshot === null || $operation->completedAt === null) {
+            throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
+        }
+
+        $result = ResultSnapshotStorage::decodeCommitted(new ResultSnapshotMetadata(
+            $operation->resultType,
+            $operation->resultSchemaVersion,
+            $operation->operationType,
+            $operation->operationKey,
+            $operation->resultSnapshot,
+        ), $this->profiles);
+        if (! $result instanceof ScopeTransitionResultDTO) {
+            throw new SlugPersistenceInvariantException('Transition operation contains a non-transition snapshot.');
+        }
+
+        return $result;
     }
 
     /** Builds the canonical request fingerprint for a scope transition. */

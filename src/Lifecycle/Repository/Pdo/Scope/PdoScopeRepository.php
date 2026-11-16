@@ -26,13 +26,14 @@ use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoDuplicateClassifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Transaction\PdoTransactionCoordinator;
+use Maatify\Slug\Lifecycle\Repository\Registry\RegistryResolutionReaderInterface;
 use Maatify\Slug\Lifecycle\Repository\Scope\ScopePersistenceInterface;
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
 use Throwable;
 
 /** PDO scope persistence adapter for scope and binding read models. */
-final readonly class PdoScopeRepository implements ScopePersistenceInterface
+final readonly class PdoScopeRepository implements ScopePersistenceInterface, RegistryResolutionReaderInterface
 {
     private PdoCapabilityGuard $capabilities;
 
@@ -111,6 +112,15 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
     public function findBinding(ScopeProfileRequestDTO $request, EntityReference $entity, bool $forUpdate = false): ?BindingDTO
     {
         $this->profiles->get($request->expectedProfileKey);
+        if (! $forUpdate) {
+            $rows = $this->observe($request, $entity);
+            if ($rows === [] || $rows[0]['id'] === null) {
+                return null;
+            }
+
+            return $this->hydrateBinding($rows[0], $request->expectedProfileKey, false, $this->observedClaimRows($rows));
+        }
+
         $scope = $this->findScopeRow($request, $forUpdate);
         if ($scope === null) {
             return null;
@@ -118,6 +128,124 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
 
         $row = $this->findBindingRow(PdoRowHydrator::nonNegativeInt($scope, 'id'), $entity, $forUpdate);
         return $row === null ? null : $this->hydrateBinding($row, $request->expectedProfileKey, $forUpdate);
+    }
+
+    /** @return array{claim: RegistryClaimDTO, owner: BindingDTO}|null */
+    public function findResolution(ScopeProfileRequestDTO $request, Slug $slug): ?array
+    {
+        $rows = $this->observe($request, $slug);
+        if ($rows === []) {
+            return null;
+        }
+        $row = $rows[0];
+        $this->scopeRecordFromRow([
+            'id' => $row['observed_scope_id'],
+            'namespace' => $row['namespace'],
+            'locale_key' => $row['locale_key'],
+            'context_key' => $row['context_key'],
+            'profile_key' => $row['profile_key'],
+            'created_at' => $row['scope_created_at'],
+            'updated_at' => $row['scope_updated_at'],
+        ]);
+        if ($row['matched_claim_id'] === null) {
+            return null;
+        }
+
+        $claimRows = $this->observedClaimRows($rows);
+        $matchId = PdoRowHydrator::nonNegativeInt($row, 'matched_claim_id');
+        foreach ($claimRows as $claimRow) {
+            if (PdoRowHydrator::nonNegativeInt($claimRow, 'id') === $matchId) {
+                $claim = $this->claimFromRow($claimRow);
+                $owner = $this->hydrateBinding($row, $request->expectedProfileKey, false, $claimRows);
+
+                return ['claim' => $claim, 'owner' => $owner];
+            }
+        }
+
+        throw new SlugPersistenceInvariantException('Resolution claim owner Binding cannot be read.');
+    }
+
+    /**
+     * Reads the Scope, optional Binding and all its claims in one statement.
+     * The caller keeps ownership of transactions and isolation.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function observe(ScopeProfileRequestDTO $request, EntityReference|Slug $subject): array
+    {
+        $parameters = [
+            'namespace' => $request->scope->namespace,
+            'locale_key' => $request->scope->localeKey ?? '',
+            'context_key' => $request->scope->contextKey ?? '',
+        ];
+        if ($subject instanceof Slug) {
+            $matchedId = 'm.id';
+            $bindingJoin = 'LEFT JOIN (maa_slug_registry m INNER JOIN maa_slug_bindings b ON b.id = m.binding_id) '
+                . 'ON m.scope_id = s.id AND m.slug = :slug ';
+            $parameters['slug'] = $subject->value;
+        } else {
+            $matchedId = 'NULL';
+            $bindingJoin = 'LEFT JOIN maa_slug_bindings b ON b.scope_id = s.id AND b.entity_type = :entity_type AND b.entity_key = :entity_key ';
+            $parameters['entity_type'] = $subject->entityType;
+            $parameters['entity_key'] = $subject->entityKey;
+        }
+
+        $statement = $this->pdo->prepare(
+            'SELECT s.id AS observed_scope_id, s.namespace, s.locale_key, s.context_key, s.profile_key, '
+            . 's.created_at AS scope_created_at, s.updated_at AS scope_updated_at, '
+            . 'b.id, b.scope_id, b.entity_type, b.entity_key, b.current_registry_id, b.status, '
+            . 'b.revision, b.history_sequence, b.created_at, b.updated_at, ' . $matchedId . ' AS matched_claim_id, '
+            . 'r.id AS claim_id, r.scope_id AS claim_scope_id, r.binding_id AS claim_binding_id, r.slug, r.claim_role, r.claimed_at, '
+            . 'r.updated_at AS claim_updated_at, rs.namespace AS claim_namespace, rs.locale_key AS claim_locale_key, '
+            . 'rs.context_key AS claim_context_key, rs.profile_key AS claim_profile_key '
+            . 'FROM maa_slug_scopes s ' . $bindingJoin
+            . 'LEFT JOIN (maa_slug_registry r INNER JOIN maa_slug_scopes rs ON rs.id = r.scope_id) ON r.binding_id = b.id '
+            . 'WHERE s.namespace = :namespace AND s.locale_key = :locale_key AND s.context_key = :context_key '
+            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC',
+        );
+        if ($statement === false) {
+            throw new SlugPersistenceInvariantException('Unable to prepare the Scope and Binding observation.');
+        }
+        $statement->execute($parameters);
+        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        if ($rows !== [] && PdoRowHydrator::string($rows[0], 'profile_key') !== $request->expectedProfileKey->value) {
+            throw new SlugScopeProfileMismatchException('The existing Scope uses a different slug profile.');
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Extracts the claims of the observed owner for the shared invariant checks.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function observedClaimRows(array $rows): array
+    {
+        $claims = [];
+        foreach ($rows as $row) {
+            if ($row['claim_id'] === null) {
+                continue;
+            }
+            $claims[] = [
+                'id' => $row['claim_id'],
+                'scope_id' => $row['claim_scope_id'],
+                'binding_id' => $row['claim_binding_id'],
+                'slug' => $row['slug'],
+                'claim_role' => $row['claim_role'],
+                'claimed_at' => $row['claimed_at'],
+                'updated_at' => $row['claim_updated_at'],
+                'namespace' => $row['claim_namespace'],
+                'locale_key' => $row['claim_locale_key'],
+                'context_key' => $row['claim_context_key'],
+                'profile_key' => $row['claim_profile_key'],
+                'entity_type' => $row['entity_type'],
+                'entity_key' => $row['entity_key'],
+            ];
+        }
+
+        return $claims;
     }
 
     /** Finds a binding by identifier, optionally under lock. */
@@ -262,8 +390,11 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
         return PdoRowHydrator::one($rawRow);
     }
 
-    /** @param array<string, mixed> $row */
-    private function hydrateBinding(array $row, ?SlugProfileKey $expectedProfileKey, bool $forUpdate): BindingDTO
+    /**
+     * @param array<string, mixed> $row
+     * @param list<array<string, mixed>>|null $observedClaims
+     */
+    private function hydrateBinding(array $row, ?SlugProfileKey $expectedProfileKey, bool $forUpdate, ?array $observedClaims = null): BindingDTO
     {
         try {
             $profileKey = new SlugProfileKey(PdoRowHydrator::string($row, 'profile_key'));
@@ -285,12 +416,14 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
             $revision = $this->nonNegativeInt($row['revision'], 'binding.revision');
             $historySequence = $this->nonNegativeInt($row['history_sequence'], 'binding.history_sequence');
             $currentRegistryId = $row['current_registry_id'] === null ? null : $this->nonNegativeInt($row['current_registry_id'], 'binding.current_registry_id');
-            $claims = $this->registryClaims(
-                $this->nonNegativeInt($row['id'], 'binding.id'),
-                $this->nonNegativeInt($row['scope_id'], 'binding.scope_id'),
-                PdoRowHydrator::string($row, 'entity_type'),
-                PdoRowHydrator::string($row, 'entity_key'),
-                $forUpdate,
+            $bindingId = $this->nonNegativeInt($row['id'], 'binding.id');
+            $scopeId = $this->nonNegativeInt($row['scope_id'], 'binding.scope_id');
+            $claims = $this->hydrateRegistryClaims(
+                $observedClaims ?? $this->registryClaimRows($bindingId, $forUpdate),
+                $bindingId,
+                $scopeId,
+                $entity->entityType,
+                $entity->entityKey,
             );
 
             if ($status === BindingStatusEnum::RELEASED) {
@@ -315,7 +448,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
             }
 
             return new BindingDTO(
-                $this->nonNegativeInt($row['id'], 'binding.id'),
+                $bindingId,
                 $identity,
                 new BindingStateDTO($status, $currentSlug, $revision, $historySequence),
                 $currentClaim,
@@ -331,8 +464,8 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
         }
     }
 
-    /** @return list<RegistryClaimDTO> */
-    private function registryClaims(int $bindingId, int $scopeId, string $entityType, string $entityKey, bool $forUpdate): array
+    /** @return list<array<string, mixed>> */
+    private function registryClaimRows(int $bindingId, bool $forUpdate): array
     {
         $suffix = $forUpdate ? ' FOR UPDATE' : '';
         $statement = $this->pdo->prepare(
@@ -350,10 +483,15 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
         $statement->execute([
             'binding_id' => $bindingId,
         ]);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        $rows = PdoRowHydrator::many($rawRows);
+        return PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+    }
 
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<RegistryClaimDTO>
+     */
+    private function hydrateRegistryClaims(array $rows, int $bindingId, int $scopeId, string $entityType, string $entityKey): array
+    {
         $claims = [];
         foreach ($rows as $row) {
             if ($this->nonNegativeInt($row['binding_id'], 'registry.binding_id') !== $bindingId
@@ -362,51 +500,61 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface
                 || PdoRowHydrator::string($row, 'entity_key') !== $entityKey) {
                 throw new SlugPersistenceInvariantException('Registry claim does not match its Binding identity.');
             }
-            $profileKey = new SlugProfileKey(PdoRowHydrator::string($row, 'profile_key'));
-            $profile = $this->profiles->get($profileKey);
-            $scope = new SlugScope(
-                PdoRowHydrator::string($row, 'namespace'),
-                PdoRowHydrator::string($row, 'locale_key') === '' ? null : PdoRowHydrator::string($row, 'locale_key'),
-                PdoRowHydrator::string($row, 'context_key') === '' ? null : PdoRowHydrator::string($row, 'context_key'),
-            );
-            $entity = new EntityReference(PdoRowHydrator::string($row, 'entity_type'), PdoRowHydrator::string($row, 'entity_key'));
-            $role = RegistryRoleEnum::tryFrom(PdoRowHydrator::string($row, 'claim_role'));
-            if ($role === null) {
-                throw new SlugPersistenceInvariantException('Registry contains an unknown claim role.');
-            }
-            $claims[] = new RegistryClaimDTO(
-                $this->nonNegativeInt($row['id'], 'registry.id'),
-                new BindingIdentityDTO(new ScopeProfileRequestDTO($scope, $profileKey), $entity),
-                Slug::fromProfile($profile, PdoRowHydrator::string($row, 'slug')),
-                $role,
-                $this->date(PdoRowHydrator::string($row, 'claimed_at'), 'registry.claimed_at'),
-                $this->date(PdoRowHydrator::string($row, 'updated_at'), 'registry.updated_at'),
-            );
+            $claims[] = $this->claimFromRow($row);
         }
 
         return $claims;
     }
 
     /** @param array<string, mixed> $row */
+    private function claimFromRow(array $row): RegistryClaimDTO
+    {
+        $profileKey = new SlugProfileKey(PdoRowHydrator::string($row, 'profile_key'));
+        $profile = $this->profiles->get($profileKey);
+        $scope = new SlugScope(
+            PdoRowHydrator::string($row, 'namespace'),
+            PdoRowHydrator::string($row, 'locale_key') === '' ? null : PdoRowHydrator::string($row, 'locale_key'),
+            PdoRowHydrator::string($row, 'context_key') === '' ? null : PdoRowHydrator::string($row, 'context_key'),
+        );
+        $entity = new EntityReference(PdoRowHydrator::string($row, 'entity_type'), PdoRowHydrator::string($row, 'entity_key'));
+        $role = RegistryRoleEnum::tryFrom(PdoRowHydrator::string($row, 'claim_role'));
+        if ($role === null) {
+            throw new SlugPersistenceInvariantException('Registry contains an unknown claim role.');
+        }
+        return new RegistryClaimDTO(
+            $this->nonNegativeInt($row['id'], 'registry.id'),
+            new BindingIdentityDTO(new ScopeProfileRequestDTO($scope, $profileKey), $entity),
+            Slug::fromProfile($profile, PdoRowHydrator::string($row, 'slug')),
+            $role,
+            $this->date(PdoRowHydrator::string($row, 'claimed_at'), 'registry.claimed_at'),
+            $this->date(PdoRowHydrator::string($row, 'updated_at'), 'registry.updated_at'),
+        );
+    }
+
+    /** @param array<string, mixed> $row */
     private function scopeFromRow(array $row): ScopeDTO
     {
         try {
-            $profileKey = new SlugProfileKey(PdoRowHydrator::string($row, 'profile_key'));
-
-            return new ScopeDTO(
-                $this->nonNegativeInt($row['id'], 'scope.id'),
-                new SlugScope(
-                    PdoRowHydrator::string($row, 'namespace'),
-                    PdoRowHydrator::string($row, 'locale_key') === '' ? null : PdoRowHydrator::string($row, 'locale_key'),
-                    PdoRowHydrator::string($row, 'context_key') === '' ? null : PdoRowHydrator::string($row, 'context_key'),
-                ),
-                $profileKey,
-                $this->date(PdoRowHydrator::string($row, 'created_at'), 'scope.created_at'),
-                $this->date(PdoRowHydrator::string($row, 'updated_at'), 'scope.updated_at'),
-            );
+            return $this->scopeRecordFromRow($row);
         } catch (Throwable $throwable) {
             throw new SlugPersistenceInvariantException('Scope row violates the persistence invariant.', 0, $throwable);
         }
+    }
+
+    /** @param array<string, mixed> $row */
+    private function scopeRecordFromRow(array $row): ScopeDTO
+    {
+        return new ScopeDTO(
+            $this->nonNegativeInt($row['id'], 'scope.id'),
+            new SlugScope(
+                PdoRowHydrator::string($row, 'namespace'),
+                PdoRowHydrator::string($row, 'locale_key') === '' ? null : PdoRowHydrator::string($row, 'locale_key'),
+                PdoRowHydrator::string($row, 'context_key') === '' ? null : PdoRowHydrator::string($row, 'context_key'),
+            ),
+            new SlugProfileKey(PdoRowHydrator::string($row, 'profile_key')),
+            $this->date(PdoRowHydrator::string($row, 'created_at'), 'scope.created_at'),
+            $this->date(PdoRowHydrator::string($row, 'updated_at'), 'scope.updated_at'),
+        );
     }
 
     /** Formats the injected clock value for scope persistence. */

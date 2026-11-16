@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Tests\System\Transition;
 
+use Maatify\Slug\Exception\SlugNotFoundException;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
@@ -23,6 +24,8 @@ use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
 use Maatify\Slug\Tests\Integration\Schema\MySqlIntegrationTestCase;
 use Maatify\Slug\Tests\Unit\Allocation\TestReservedSlugPolicy;
 use Maatify\Slug\Tests\Unit\Allocation\TestSlugProfile;
+use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
 {
@@ -51,6 +54,122 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         $statement = $this->pdo->query("SELECT revision FROM maa_slug_bindings WHERE entity_key = 'parallel-source' AND scope_id = (SELECT id FROM maa_slug_scopes WHERE namespace = 'catalog')");
         self::assertNotFalse($statement);
         self::assertSame(1, (int) $statement->fetchColumn());
+    }
+
+    #[DataProvider('targetScopeOrder')]
+    public function testTransitionUsesSourceCommittedAfterHostSnapshotAndLeavesRollbackToHost(string $targetNamespace): void
+    {
+        $engine = $this->engine();
+        $observer = $this->newTestConnection();
+        $source = $this->identityInScope('snapshot-source', 'snapshot-entity');
+        $target = $this->scope($targetNamespace);
+        $engine->ensureScope($this->scope('snapshot-anchor'));
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->beginTransaction();
+
+        try {
+            self::assertGreaterThan(0, $this->scopeId('snapshot-anchor'));
+            $this->engine($observer)->assignExact(new AssignExactCommand($source, 'snapshot-source-slug', null, new AuditContextDTO()));
+            self::assertSame(0, $this->scopeId('snapshot-source'));
+
+            $result = $engine->transitionScope(new TransitionScopeCommand(
+                $source,
+                $target,
+                ScopeTransitionModeEnum::MOVE,
+                new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'snapshot-target-slug'),
+                1,
+                new AuditContextDTO(idempotencyKey: 'snapshot-transition'),
+            ));
+            self::assertTrue($this->pdo->inTransaction());
+            self::assertSame('INACTIVE', $result->sourceAfter->state->status->value);
+            self::assertSame('snapshot-target-slug', $result->targetAfter->state->currentSlug?->value);
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+
+        self::assertSame(2, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_scopes'));
+        self::assertSame(1, $this->scalarInt("SELECT COUNT(*) FROM maa_slug_bindings WHERE status = 'ACTIVE' AND revision = 1"));
+        self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_registry'));
+        self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
+    }
+
+    /** @return array<string, array{string}> */
+    public static function targetScopeOrder(): array
+    {
+        return [
+            'target sorts earlier' => ['a-snapshot-target'],
+            'target sorts later' => ['z-snapshot-target'],
+        ];
+    }
+
+    public function testMissingSourceStillFailsAndRollsBackAnEarlierTargetScope(): void
+    {
+        $engine = $this->engine();
+        $source = $this->identityInScope('z-missing-source', 'missing-entity');
+        $target = $this->scope('a-missing-target');
+        $this->pdo->beginTransaction();
+
+        try {
+            try {
+                $engine->transitionScope(new TransitionScopeCommand(
+                    $source,
+                    $target,
+                    ScopeTransitionModeEnum::MOVE,
+                    new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'missing-target-slug'),
+                    1,
+                    new AuditContextDTO(),
+                ));
+                self::fail('A missing source Scope was accepted.');
+            } catch (SlugNotFoundException $exception) {
+                self::assertSame('The transition source Scope was not found.', $exception->getMessage());
+                self::assertTrue($this->pdo->inTransaction());
+                self::assertSame(0, $this->scopeId('a-missing-target'));
+            }
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+    }
+
+    public function testReplaysACompletedTransitionInvisibleToHostSnapshot(): void
+    {
+        $engine = $this->engine();
+        $writer = $this->engine($this->newTestConnection());
+        $source = $this->identityInScope('replay-source', 'replay-entity');
+        $target = $this->scope('replay-target');
+        $command = new TransitionScopeCommand(
+            $source,
+            $target,
+            ScopeTransitionModeEnum::PARALLEL,
+            new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'replay-target-slug'),
+            1,
+            new AuditContextDTO(idempotencyKey: 'snapshot-replay-transition'),
+        );
+        $engine->ensureScope($this->scope('replay-anchor'));
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->beginTransaction();
+
+        try {
+            self::assertGreaterThan(0, $this->scopeId('replay-anchor'));
+            $writer->assignExact(new AssignExactCommand($source, 'replay-source-slug', null, new AuditContextDTO()));
+            $first = $writer->transitionScope($command);
+            self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
+
+            $replay = $engine->transitionScope($command);
+
+            self::assertTrue($this->pdo->inTransaction());
+            self::assertTrue($replay->replayed);
+            self::assertEquals($first->withReplayed(true), $replay);
+            self::assertSame(0, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+        }
+        self::assertSame(1, $this->scalarInt('SELECT COUNT(*) FROM maa_slug_operations'));
     }
 
     public function testMoveTransitionUpdatesBothParticipantsAtomicallyAndReplaysSnapshot(): void
@@ -218,11 +337,11 @@ final class ScopeTransitionSystemTest extends MySqlIntegrationTestCase
         }
     }
 
-    private function engine(): SlugEngine
+    private function engine(?PDO $pdo = null): SlugEngine
     {
         $profiles = new SlugProfileRegistry();
         $profiles->register(new TestSlugProfile());
-        return SlugEngineFactory::create($this->pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
+        return SlugEngineFactory::create($pdo ?? $this->pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
     }
 
     private function identity(string $entityKey): BindingIdentityDTO
