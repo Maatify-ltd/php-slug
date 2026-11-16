@@ -730,7 +730,9 @@ SlugPurgeNotPermittedException, SlugTransactionParticipationException,
 SlugUnsupportedDriverException, SlugPersistenceInvariantException
 ```
 
-The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions propagate unchanged.
+The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
+
+If the Schema 003 Registry lock projection table or its backfill completion marker is missing, a lifecycle mutation throws `SlugRuntimeCompatibilityException` before acquiring the Scope lock.
 
 ## 13. Release State
 
