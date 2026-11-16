@@ -1130,7 +1130,7 @@ final class PerCs31Verifier
             REGEX;
         $termination = '(?:break(?:\s+out)?|return|stop|terminate|exit)';
         $position = '(?:(?:right\s+)?(?:here(?:\s+instead)?|now)|instead)';
-        $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+case)';
+        $subject = '(?:we|execution|control|(?:this|the(?:\s+current)?)\s+(?:case|branch))';
         $modal = '(?:must|should|will|shall|can|could|would|may|might|(?:need|needs|have|has)\s+to)';
         $adverb = '(?:(?!(?:barely|hardly|rarely|scarcely)\b)\p{L}+(?:-\p{L}+)*ly'
             . '|please|just|still|first|then|now|at\s+once|right\s+away|without\s+(?:delay|exception)|as\s+soon\s+as\s+possible'
@@ -1148,17 +1148,67 @@ final class PerCs31Verifier
         $afterAction = '(?:' . $separator . '(?:' . $adjunct . '|\(\h*' . $adjunct . '\h*\)))*+';
         $timing = '\s+before\s+(?:(?:entering|reaching|running|executing|(?:continuing|proceeding|moving|going)\s+(?:into|to))\s+)?' . $target;
 
-        return preg_match(
+        $fromCallable = '\s+from\s+(?:(?:the|this|our)(?:\s+current)?\s+|current\s+)?(?:function|method)';
+
+        return self::hasExplicitReturnValue($comment, $directive, $afterAction) || preg_match(
             '~\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:intentionally|deliberately|purposely)\s+)?falls?[- ]?through\b'
             . '|\b' . $target . '\s+(?:(?:' . $negative . '|' . $hedge . ')\s+' . $execution . '|(?:is|will\s+be)\s+skipped)\b'
             . '|\b(?:skip|bypass|avoid)\s+' . $target . '\b'
             . '|\b(?:' . $negative . '|' . $hedge . ')\s+(?:(?:enter|run|execute|reach|use)\s+|(?:continue|proceed)\s+(?:into|to)\s+)' . $target . '\b'
             . '|\b(?:prevent|keep|stop)\s+' . $target . '\s+from\s+(?:running|executing|being\s+(?:entered|reached))\b'
             . '|' . $directive . $termination . $afterAction . '(?:,?' . $timing . '\b|' . $clauseEnd . ')'
+            . '|' . $directive . 'return' . $afterAction . $fromCallable . $afterAction . $clauseEnd
             . '|' . $directive . '(?:add|insert)\s+(?:(?:a|the)\s+)?break(?:\s+statement)?' . $clauseEnd
             . '~iu',
             $comment,
         ) === 1;
+    }
+
+    /** Checks PHP-shaped return values for syntax without executing any part of the comment. */
+    private static function hasExplicitReturnValue(string $comment, string $directive, string $afterAction): bool
+    {
+        if (preg_match_all('~' . $directive . 'return\b(?=\s|\()~iu', $comment, $returns, PREG_OFFSET_CAPTURE) < 1) {
+            return false;
+        }
+
+        $clauseBoundary = <<<'REGEX'
+            ~;|(?<!\s)[.!؟](?=\s|['"”’`]|\z)|\?(?=\h*['"”’`]?\h*(?:\n|\z))|\z~u
+            REGEX;
+        $closingQuote = <<<'REGEX'
+            ~['"”’`]\s*\z~u
+            REGEX;
+        // Distinguish PHP values from ordinary bare nouns, which PHP can parse as constant names.
+        $valueStart = <<<'REGEX'
+            #\A(?:[$'"`0-9(\[!~+\-@]|(?i:true|false|null|clone|throw|yield|fn|function)\b|(?i:new)\s+(?:\\|[A-Z_]|class\b)|\\?[\p{L}_][\p{L}\p{N}_\\]*\s*(?:::|\()|[A-Z_][A-Z0-9_]*\z|[\p{L}][\p{L}\p{N}]*_[\p{L}\p{N}_]+\z)#u
+            REGEX;
+
+        foreach ($returns[0] as [$prefix, $offset]) {
+            $tail = substr($comment, $offset + strlen($prefix));
+            preg_match_all($clauseBoundary, $tail, $endings, PREG_OFFSET_CAPTURE);
+            foreach ($endings[0] as [, $end]) {
+                $value = trim(substr($tail, 0, $end));
+                $withoutClosingQuote = preg_replace($closingQuote, '', $value) ?? $value;
+                foreach ([$value, trim($withoutClosingQuote)] as $candidate) {
+                    $candidate = preg_replace('~' . $afterAction . '\z~iu', '', $candidate) ?? $candidate;
+                    if (strlen($candidate) > 1 && str_starts_with($candidate, '`') && str_ends_with($candidate, '`')) {
+                        $candidate = trim(substr($candidate, 1, -1));
+                    }
+                    if (preg_match($valueStart, $candidate) !== 1) {
+                        continue;
+                    }
+
+                    try {
+                        token_get_all('<?php return (' . $candidate . ');', TOKEN_PARSE);
+
+                        return true;
+                    } catch (ParseError) {
+                        // A prose object or a partial expression is not evidence of a PHP return.
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private static function isUncertainFallthrough(string $comment): bool

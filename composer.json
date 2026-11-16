@@ -81,6 +81,11 @@
       }
     }
   },
+  "archive": {
+    "exclude": [
+      "/.php-cs-fixer.cache"
+    ]
+  },
   "minimum-stability": "stable",
   "prefer-stable": true
 }
