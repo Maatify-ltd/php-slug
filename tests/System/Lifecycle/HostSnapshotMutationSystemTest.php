@@ -186,6 +186,42 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
         return ['exact assignment' => ['exact'], 'generated assignment' => ['generated'], 'current adoption' => ['adopt']];
     }
 
+    public function testMutationDoesNotBlockAssignmentInAdjacentScope(): void
+    {
+        $otherPdo = $this->newTestConnection();
+        $host = $this->engine($this->pdo);
+        $other = $this->engine($otherPdo);
+        $source = $this->identity('source', 'a-lock-scope');
+        $recipient = $this->identity('recipient', 'b-lock-scope');
+        $audit = new AuditContextDTO();
+        $host->assignExact(new AssignExactCommand($source, 'base', null, $audit));
+        for ($index = 1; $index <= 10; $index++) {
+            $sentinel = $this->identity('sentinel-' . $index, 'a-lock-scope');
+            $host->assignExact(new AssignExactCommand($sentinel, 'z-sentinel-' . $index, null, $audit));
+        }
+        $host->assignExact(new AssignExactCommand($this->identity('sentinel', 'b-lock-scope'), 'zzz', null, $audit));
+        $host->assignExact(new AssignExactCommand($recipient, 'seed', null, $audit));
+        $host->releaseAllOwnership(new ReleaseAllOwnershipCommand($recipient, 1, $audit));
+
+        $otherPdo->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $this->pdo->beginTransaction();
+        try {
+            $moved = $host->changeExact(new ChangeExactCommand($source, 'mine', 1, $audit));
+            self::assertSame('mine', $moved->after->currentClaim?->slug->value);
+            self::assertTrue($this->pdo->inTransaction());
+
+            $assigned = $other->assignExact(new AssignExactCommand($recipient, 'aaa', 2, $audit));
+
+            self::assertSame('aaa', $assigned->after->currentClaim?->slug->value);
+            self::assertTrue($this->pdo->inTransaction());
+        } finally {
+            $this->rollBackHost();
+        }
+        self::assertSame(0, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'mine'"));
+        self::assertSame(1, $this->countRows("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'aaa'"));
+    }
+
     private function startSnapshot(): void
     {
         $this->pdo->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -216,10 +252,10 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
         return SlugEngineFactory::create($pdo, $profiles, new TestReservedSlugPolicy(), $this->clock());
     }
 
-    private function identity(string $key): BindingIdentityDTO
+    private function identity(string $key, string $namespace = 'host-snapshot'): BindingIdentityDTO
     {
         return new BindingIdentityDTO(
-            new ScopeProfileRequestDTO(new SlugScope('host-snapshot', null, null), new SlugProfileKey('ascii-v1')),
+            new ScopeProfileRequestDTO(new SlugScope($namespace, null, null), new SlugProfileKey('ascii-v1')),
             new EntityReference('product', $key),
         );
     }

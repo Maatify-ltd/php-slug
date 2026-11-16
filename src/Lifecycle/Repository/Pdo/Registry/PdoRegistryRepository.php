@@ -265,6 +265,18 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
      */
     public function lockOccupiedClaimKeys(array $keys): array
     {
+        return array_map(static fn(array $row): array => [
+            'scope_id' => $row['scope_id'],
+            'slug' => $row['slug'],
+        ], $this->lockRegistryKeyRows($keys));
+    }
+
+    /**
+     * @param list<array{scope_id: int, slug: string}> $keys
+     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string}>
+     */
+    private function lockRegistryKeyRows(array $keys): array
+    {
         if ($keys === []) {
             return [];
         }
@@ -292,27 +304,20 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
         // This phase locks Registry rows only. A join to the owner Binding
         // could introduce a Binding lock after the Binding lock phase.
         $statement = $this->pdo->prepare(
-            'SELECT r.scope_id, r.slug FROM maa_slug_registry r WHERE ' . implode(' OR ', $predicates)
+            'SELECT r.id, r.scope_id, r.binding_id, r.slug FROM maa_slug_registry r FORCE INDEX (uk_registry_scope_slug) WHERE ' . implode(' OR ', $predicates)
             . ' ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC FOR UPDATE',
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the exact Registry lock plan lookup.');
         }
         $statement->execute($parameters);
-        /** @var list<array<string, mixed>> $rawRows */
-        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        $rows = PdoRowHydrator::many($rawRows);
-
-        return array_map(static fn(array $row): array => [
-            'scope_id' => PdoRowHydrator::nonNegativeInt($row, 'scope_id'),
-            'slug' => PdoRowHydrator::string($row, 'slug'),
-        ], $rows);
+        return $this->registryKeyRows($statement);
     }
 
     /**
-     * Locks a single Scope's Registry keys in stored slug order after Scope and
-     * participant Binding locks. Participant claims can lie outside the
-     * candidate range, including claims absent from the Host snapshot.
+     * Locks current participant claims by Binding index, then exact candidate
+     * keys by Scope/slug. The preceding Scope lock serializes writers within
+     * this Scope before either Registry phase.
      *
      * @param list<int> $bindingIds
      * @param non-empty-list<string> $candidateSlugs
@@ -320,43 +325,55 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
      */
     public function lockClaimKeysForMutation(int $scopeId, array $bindingIds, array $candidateSlugs): array
     {
-        usort($candidateSlugs, 'strcmp');
-        $parameters = [
-            'scope_id' => $scopeId,
-            'minimum_slug' => $candidateSlugs[0],
-            'maximum_slug' => $candidateSlugs[count($candidateSlugs) - 1],
-        ];
-        $predicate = '(r.slug >= :minimum_slug AND r.slug <= :maximum_slug)';
+        $rows = [];
         if ($bindingIds !== []) {
-            $placeholders = [];
-            foreach ($bindingIds as $index => $bindingId) {
-                $parameter = 'binding_id_' . $index;
-                $placeholders[] = ':' . $parameter;
-                $parameters[$parameter] = $bindingId;
+            $bindingIds = array_values(array_unique($bindingIds));
+            sort($bindingIds, SORT_NUMERIC);
+            $statement = $this->pdo->prepare(
+                'SELECT r.id, r.scope_id, r.binding_id, r.slug FROM maa_slug_registry r FORCE INDEX (uk_registry_binding_slug) '
+                . 'WHERE r.binding_id = :binding_id AND r.scope_id = :scope_id '
+                . 'ORDER BY r.slug ASC, r.id ASC FOR UPDATE',
+            );
+            if ($statement === false) {
+                throw new SlugPersistenceInvariantException('Unable to prepare the participant Registry lock plan.');
             }
-            $predicate .= ' OR r.binding_id IN (' . implode(', ', $placeholders) . ')';
+            foreach ($bindingIds as $bindingId) {
+                $statement->execute(['binding_id' => $bindingId, 'scope_id' => $scopeId]);
+                foreach ($this->registryKeyRows($statement) as $row) {
+                    $rows[$row['id']] = $row;
+                }
+                $statement->closeCursor();
+            }
         }
 
-        // Foreign claims are needed only as keys. Joining their Binding rows
-        // here could lock them after the Binding lock phase.
-        $statement = $this->pdo->prepare(
-            'SELECT r.id, r.binding_id, r.slug FROM maa_slug_registry r FORCE INDEX (uk_registry_scope_slug) '
-            . 'WHERE r.scope_id = :scope_id AND (' . $predicate . ') '
-            . 'ORDER BY r.scope_id ASC, r.slug ASC, r.id ASC FOR UPDATE',
+        $keys = array_map(
+            static fn(string $slug): array => ['scope_id' => $scopeId, 'slug' => $slug],
+            $candidateSlugs,
         );
-        if ($statement === false) {
-            throw new SlugPersistenceInvariantException('Unable to prepare the Registry mutation lock plan.');
+        foreach ($this->lockRegistryKeyRows($keys) as $row) {
+            $rows[$row['id']] = $row;
         }
-        $statement->execute($parameters);
+        uasort($rows, static fn(array $left, array $right): int => strcmp($left['slug'], $right['slug']) ?: $left['id'] <=> $right['id']);
+
+        return array_values(array_map(static fn(array $row): array => [
+            'id' => $row['id'],
+            'binding_id' => $row['binding_id'],
+            'slug' => $row['slug'],
+        ], $rows));
+    }
+
+    /** @return list<array{id: int, scope_id: int, binding_id: int, slug: string}> */
+    private function registryKeyRows(\PDOStatement $statement): array
+    {
         /** @var list<array<string, mixed>> $rawRows */
         $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        $rows = PdoRowHydrator::many($rawRows);
 
         return array_map(static fn(array $row): array => [
             'id' => PdoRowHydrator::nonNegativeInt($row, 'id'),
+            'scope_id' => PdoRowHydrator::nonNegativeInt($row, 'scope_id'),
             'binding_id' => PdoRowHydrator::nonNegativeInt($row, 'binding_id'),
             'slug' => PdoRowHydrator::string($row, 'slug'),
-        ], $rows);
+        ], PdoRowHydrator::many($rawRows));
     }
 
     /** Inserts a claim and returns its raw row, or null when a uniqueness race loses. */

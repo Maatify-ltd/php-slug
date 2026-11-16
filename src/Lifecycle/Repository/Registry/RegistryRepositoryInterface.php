@@ -62,7 +62,7 @@ interface RegistryRepositoryInterface
     public function lockOccupiedClaimKeys(array $keys): array;
 
     /**
-     * Locks the candidate range and all claims of the supplied locked Bindings.
+     * Locks current claims of the supplied locked Bindings and exact candidate keys.
      *
      * @param list<int> $bindingIds
      * @param non-empty-list<string> $candidateSlugs
