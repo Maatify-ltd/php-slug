@@ -31,22 +31,33 @@ final readonly class PdoRegistryLockProjection
     /**
      * Locks exact current slug keys within one Scope or Binding partition.
      *
+     * Each point lookup uses the indexed MySQL collation and retains the
+     * candidate ordinal. Distinct candidate bytes can match the same record.
+     *
      * @param non-empty-list<string> $slugs
-     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string}>
+     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string, requested_slug: string}>
      */
     public function lockExactKeys(int $scopeId, array $slugs, int $bindingPartition = 0): array
     {
         $this->ensureBoundaries($scopeId, $bindingPartition);
         $rows = [];
         foreach (array_chunk($slugs, 100) as $chunk) {
-            $slots = implode(', ', array_fill(0, count($chunk), '?'));
-            $statement = $this->prepare(
-                'SELECT registry_id, owner_binding_id, slug FROM maa_slug_registry_lock_keys FORCE INDEX (PRIMARY) '
-                . 'WHERE scope_id = ? AND scope_end = 0 AND binding_partition = ? AND key_kind = 1 AND slug IN (' . $slots . ') '
-                . 'ORDER BY slug FOR UPDATE',
-            );
-            $statement->execute([$scopeId, $bindingPartition, ...$chunk]);
-            array_push($rows, ...$this->readKeys($scopeId, $statement));
+            $pointLookup = '(SELECT ? AS candidate_index, registry_id, owner_binding_id, slug '
+                . 'FROM maa_slug_registry_lock_keys FORCE INDEX (PRIMARY) '
+                . 'WHERE scope_id = ? AND scope_end = 0 AND binding_partition = ? AND key_kind = 1 AND slug = ? FOR UPDATE)';
+            $statement = $this->prepare(implode(' UNION ALL ', array_fill(0, count($chunk), $pointLookup)));
+            $parameters = [];
+            foreach ($chunk as $index => $slug) {
+                array_push($parameters, $index, $scopeId, $bindingPartition, $slug);
+            }
+            $statement->execute($parameters);
+            /** @var list<array<string, mixed>> $rawRows */
+            $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+            foreach (PdoRowHydrator::many($rawRows) as $row) {
+                $index = PdoRowHydrator::nonNegativeInt($row, 'candidate_index');
+                $requested = $chunk[$index] ?? throw new SlugPersistenceInvariantException('Registry lock key has an unknown candidate index.');
+                $rows[] = $this->keyFromRow($scopeId, $row) + ['requested_slug' => $requested];
+            }
         }
         return $rows;
     }
@@ -169,12 +180,21 @@ final readonly class PdoRegistryLockProjection
     {
         /** @var list<array<string, mixed>> $rawRows */
         $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
-        return array_map(static fn(array $row): array => [
+        return array_map(fn(array $row): array => $this->keyFromRow($scopeId, $row), PdoRowHydrator::many($rawRows));
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array{id: int, scope_id: int, binding_id: int, slug: string}
+     */
+    private function keyFromRow(int $scopeId, array $row): array
+    {
+        return [
             'id' => PdoRowHydrator::nonNegativeInt($row, 'registry_id'),
             'scope_id' => $scopeId,
             'binding_id' => PdoRowHydrator::nonNegativeInt($row, 'owner_binding_id'),
             'slug' => PdoRowHydrator::string($row, 'slug'),
-        ], PdoRowHydrator::many($rawRows));
+        ];
     }
 
     /** Prepares an internal projection statement or fails closed. */

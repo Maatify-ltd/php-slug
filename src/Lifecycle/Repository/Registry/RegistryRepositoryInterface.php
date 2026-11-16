@@ -54,7 +54,7 @@ interface RegistryRepositoryInterface
     public function findClaimsForBindings(array $bindingIds, bool $forUpdate = false): array;
 
     /**
-     * Locks exact Registry keys and returns their ordered occupied subset.
+     * Locks exact Registry keys and returns the occupied requested keys in order.
      *
      * @param list<array{scope_id: int, slug: string}> $keys
      * @return list<array{scope_id: int, slug: string}>
@@ -62,7 +62,7 @@ interface RegistryRepositoryInterface
     public function lockOccupiedClaimKeys(array $keys): array;
 
     /**
-     * Locks current claims of the supplied locked Bindings and exact candidate keys.
+     * Locks current claims of the supplied locked Bindings and returns occupied requested candidate keys.
      *
      * @param list<int> $bindingIds
      * @param non-empty-list<string> $candidateSlugs

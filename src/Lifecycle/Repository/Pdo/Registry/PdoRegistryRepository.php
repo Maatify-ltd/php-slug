@@ -298,13 +298,13 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
     {
         return array_map(static fn(array $row): array => [
             'scope_id' => $row['scope_id'],
-            'slug' => $row['slug'],
+            'slug' => $row['requested_slug'],
         ], $this->lockRegistryKeyRows($keys));
     }
 
     /**
      * @param list<array{scope_id: int, slug: string}> $keys
-     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string}>
+     * @return list<array{id: int, scope_id: int, binding_id: int, slug: string, requested_slug: string}>
      */
     private function lockRegistryKeyRows(array $keys): array
     {
@@ -326,6 +326,11 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
             sort($slugs, SORT_STRING);
             array_push($rows, ...$this->lockProjection->lockExactKeys($scopeId, $slugs));
         }
+        usort(
+            $rows,
+            static fn(array $left, array $right): int => $left['scope_id'] <=> $right['scope_id']
+                ?: strcmp($left['requested_slug'], $right['requested_slug']),
+        );
         return $rows;
     }
 
@@ -340,31 +345,21 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
      */
     public function lockClaimKeysForMutation(int $scopeId, array $bindingIds, array $candidateSlugs): array
     {
-        $rows = [];
-        if ($bindingIds !== []) {
-            $bindingIds = array_values(array_unique($bindingIds));
-            sort($bindingIds, SORT_NUMERIC);
-            foreach ($bindingIds as $bindingId) {
-                foreach ($this->lockProjection->lockBinding($scopeId, $bindingId) as $row) {
-                    $rows[$row['id']] = $row;
-                }
-            }
+        $bindingIds = array_values(array_unique($bindingIds));
+        sort($bindingIds, SORT_NUMERIC);
+        foreach ($bindingIds as $bindingId) {
+            $this->lockProjection->lockBinding($scopeId, $bindingId);
         }
 
         $keys = array_map(
             static fn(string $slug): array => ['scope_id' => $scopeId, 'slug' => $slug],
             $candidateSlugs,
         );
-        foreach ($this->lockRegistryKeyRows($keys) as $row) {
-            $rows[$row['id']] = $row;
-        }
-        uasort($rows, static fn(array $left, array $right): int => strcmp($left['slug'], $right['slug']) ?: $left['id'] <=> $right['id']);
-
-        return array_values(array_map(static fn(array $row): array => [
+        return array_map(static fn(array $row): array => [
             'id' => $row['id'],
             'binding_id' => $row['binding_id'],
-            'slug' => $row['slug'],
-        ], $rows));
+            'slug' => $row['requested_slug'],
+        ], $this->lockRegistryKeyRows($keys));
     }
 
     /** Inserts a claim and returns its raw row, or null when a uniqueness race loses. */
