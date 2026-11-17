@@ -35,6 +35,9 @@ The package maintains the projection through its injected PDO as part of the Reg
 The schema assets are deliberately not vendor-specific migrations and must not be
 replaced with a MariaDB or MySQL variant. CI database versions are
 verification targets only; runtime acceptance is capability-based.
+For lifecycle writes on MariaDB servers exposing `innodb_snapshot_isolation`, set it to `OFF`
+before opening a Host write transaction, as described in
+[Package Reference §9](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 
 ## Canonical integration infrastructure
 
@@ -51,12 +54,15 @@ project per run, discovers a dynamic loopback port, passes Integration-scoped
 non-production credentials through the process environment, probes readiness
 with PDO, and tears down the disposable state on success or failure. Developers
 do not start MySQL manually or configure a database endpoint themselves.
+The focused MariaDB check uses the same lifecycle with the pinned MariaDB
+12.3.2 image and explicitly exercises both session settings.
 
 Run these commands from the repository root:
 
 ```bash
 composer test:integration
 bash tools/ci/run-gate.sh test-system
+bash tools/ci/run-gate.sh mariadb-snapshot
 composer test
 bash tools/ci/run-gate.sh consumer
 ```

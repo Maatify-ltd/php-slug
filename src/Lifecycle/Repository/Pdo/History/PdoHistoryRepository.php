@@ -64,7 +64,7 @@ final readonly class PdoHistoryRepository implements HistoryRepositoryInterface
             $this->utc($draft->occurredAt),
             $draft->originalOccurredAt === null ? null : $this->utc($draft->originalOccurredAt),
         );
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         $statement = $this->pdo->prepare(
             'INSERT INTO maa_slug_history '

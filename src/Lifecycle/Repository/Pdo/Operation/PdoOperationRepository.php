@@ -68,7 +68,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $this->assertReservationInput($operationKey, $requestFingerprint, $resultType, $resultSchemaVersion, $participants);
         $this->assertResultOperationCompatibility($resultType, $operationType);
         $this->assertCallerTransaction();
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         /** @var OperationReservation|OperationRecord $result */
         $result = $this->transactions->run(function () use ($operationKey, $operationType, $requestFingerprint, $resultType, $resultSchemaVersion, $participants): OperationReservation|PdoTransactionRollback {
@@ -143,7 +143,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Operation id cannot be negative.');
         }
         $this->assertCallerTransaction();
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         $this->transactions->run(function () use ($operationId, $metadata, $profiles): void {
             $operation = $this->findOperationById($operationId, true);
@@ -383,6 +383,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $statement->execute(['id' => $id]);
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);
@@ -399,6 +400,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $statement->execute(['operation_key' => $operationKey]);
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);

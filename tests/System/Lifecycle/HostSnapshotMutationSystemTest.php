@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Maatify\Slug\Tests\System\Lifecycle;
 
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistry;
+use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
 use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
@@ -21,19 +22,171 @@ use Maatify\Slug\Lifecycle\Command\DeactivateBindingCommand;
 use Maatify\Slug\Lifecycle\Command\PurgeBindingCommand;
 use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
 use Maatify\Slug\Lifecycle\Command\RestoreHistoricalCommand;
+use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
+use Maatify\Slug\Lifecycle\Consumer\Criteria\ResolutionCriteria;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
+use Maatify\Slug\Lifecycle\Management\Criteria\BindingCriteria;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
 use Maatify\Slug\Tests\Integration\Schema\MySqlIntegrationTestCase;
 use Maatify\Slug\Tests\Unit\Allocation\TestReservedSlugPolicy;
 use Maatify\Slug\Tests\Unit\Allocation\TestSlugProfile;
 use PDO;
+use PDOException;
+use Pdo\Mysql;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
 {
+    #[DataProvider('transactionOwnershipModes')]
+    public function testUnbufferedConnectionPreservesTransactionOwnership(bool $hostOwnsTransaction): void
+    {
+        $this->pdo->setAttribute(Mysql::ATTR_USE_BUFFERED_QUERY, false);
+        $host = $this->engine($this->pdo);
+        $identity = $this->identity('unbuffered');
+        if ($hostOwnsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+        try {
+            $host->ensureScope($identity->scopeProfile);
+            $result = $host->assignExact(new AssignExactCommand($identity, 'unbuffered', null, new AuditContextDTO()));
+            self::assertSame('unbuffered', $result->after->currentClaim?->slug->value);
+            $change = new ChangeExactCommand($identity, 'updated', 1, new AuditContextDTO(idempotencyKey: 'unbuffered-change'));
+            $updated = $host->changeExact($change);
+            self::assertSame('updated', $updated->after->currentClaim?->slug->value);
+            self::assertTrue($host->changeExact($change)->replayed);
+            self::assertSame('updated', $host->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+            self::assertSame($hostOwnsTransaction, $this->pdo->inTransaction());
+            self::assertFalse($this->pdo->getAttribute(Mysql::ATTR_USE_BUFFERED_QUERY));
+        } finally {
+            $this->rollBackHost();
+        }
+
+        $observer = $this->engine($this->newTestConnection());
+        self::assertSame($hostOwnsTransaction ? null : 'updated', $observer->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+    }
+
+    /** @return array<string, array{bool}> */
+    public static function transactionOwnershipModes(): array
+    {
+        return ['package transaction' => [false], 'Host transaction' => [true]];
+    }
+
+    public function testSnapshotIsolationAdmissionPreservesHostWork(): void
+    {
+        $setting = $this->pdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
+        self::assertNotFalse($setting);
+        $supportsSetting = $setting->fetchColumn(1) !== false;
+        $setting->closeCursor();
+        if (getenv('SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION') === '1') {
+            self::assertTrue($supportsSetting, 'The MariaDB CI lane must exercise innodb_snapshot_isolation.');
+        }
+        $host = $this->engine($this->pdo);
+        $identity = $this->identity('snapshot-admission');
+        $host->ensureScope($identity->scopeProfile);
+        $writer = $this->engine($this->newTestConnection());
+        $audit = new AuditContextDTO();
+        $this->pdo->exec('CREATE TEMPORARY TABLE slug_test_host_work (id INT PRIMARY KEY) ENGINE=InnoDB');
+
+        if ($supportsSetting) {
+            $this->pdo->exec('SET SESSION innodb_snapshot_isolation=ON');
+        }
+        $this->startSnapshot();
+        try {
+            $this->pdo->exec('INSERT INTO slug_test_host_work (id) VALUES (1)');
+            $writer->assignExact(new AssignExactCommand($identity, 'writer', null, $audit));
+            self::assertSame(0, $this->countRows('SELECT COUNT(*) FROM maa_slug_bindings'));
+            try {
+                $updated = $host->changeExact(new ChangeExactCommand($identity, 'host', 1, $audit));
+                self::assertFalse($supportsSetting, 'Snapshot isolation ON must be rejected before changing a Binding.');
+                self::assertSame('host', $updated->after->currentClaim?->slug->value);
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertTrue($supportsSetting);
+                self::assertStringContainsString('innodb_snapshot_isolation=OFF', $exception->getMessage());
+                self::assertSame(1, $this->countRows('SELECT @@SESSION.innodb_snapshot_isolation'));
+            }
+            self::assertTrue($this->pdo->inTransaction());
+            self::assertSame(1, $this->countRows('SELECT COUNT(*) FROM slug_test_host_work'));
+        } finally {
+            $this->rollBackHost();
+        }
+
+        self::assertSame(0, $this->countRows('SELECT COUNT(*) FROM slug_test_host_work'));
+        self::assertSame('writer', $writer->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+        if ($supportsSetting) {
+            $this->pdo->exec('SET SESSION innodb_snapshot_isolation=OFF');
+            $retried = $host->changeExact(new ChangeExactCommand($identity, 'host', 1, $audit));
+            self::assertSame('host', $retried->after->currentClaim?->slug->value);
+        }
+    }
+
+    public function testPersistedReadsWithHostSnapshotIsolationEnabled(): void
+    {
+        $readerPdo = $this->newTestConnection();
+        $setting = $readerPdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
+        self::assertNotFalse($setting);
+        $supportsSetting = $setting->fetchColumn(1) !== false;
+        $setting->closeCursor();
+        if ($supportsSetting) {
+            $readerPdo->exec('SET SESSION innodb_snapshot_isolation=ON');
+        }
+        $identity = $this->identity('snapshot-read');
+        $writer = $this->engine($this->pdo);
+        $reader = $this->engine($readerPdo);
+        $writer->assignExact(new AssignExactCommand($identity, 'first', null, new AuditContextDTO()));
+
+        $readerPdo->exec('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+        $readerPdo->beginTransaction();
+        try {
+            self::assertSame('first', $reader->resolve(new ResolutionCriteria($identity->scopeProfile, 'first'))->currentSlug?->value);
+            self::assertSame('first', $reader->getBinding(new BindingCriteria($identity))?->currentClaim?->slug->value);
+            self::assertSame('first', $reader->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+            self::assertTrue($readerPdo->inTransaction());
+            if ($supportsSetting) {
+                $value = $readerPdo->query('SELECT @@SESSION.innodb_snapshot_isolation');
+                self::assertNotFalse($value);
+                self::assertSame(1, (int) $value->fetchColumn());
+                $value->closeCursor();
+            }
+        } finally {
+            $readerPdo->rollBack();
+        }
+    }
+
+    #[DataProvider('connectionLossPaths')]
+    public function testConnectionLossPropagatesPdoException(bool $mutate): void
+    {
+        $readerPdo = $this->newTestConnection();
+        $reader = $this->engine($readerPdo);
+        $criteria = new CurrentSlugCriteria($this->identity('connection-loss'));
+        self::assertNull($reader->getCurrent($criteria));
+        $statement = $readerPdo->query('SELECT CONNECTION_ID()');
+        self::assertNotFalse($statement);
+        $connectionId = (int) $statement->fetchColumn();
+        $statement->closeCursor();
+        self::assertGreaterThan(0, $connectionId);
+        $this->pdo->exec('KILL CONNECTION ' . $connectionId);
+
+        try {
+            if ($mutate) {
+                $reader->ensureScope($criteria->binding->scopeProfile);
+            } else {
+                $reader->getCurrent($criteria);
+            }
+            self::fail('Expected a PDO connection error after disconnecting the reader.');
+        } catch (PDOException $exception) {
+            self::assertContains($exception->errorInfo[1] ?? null, [2006, 2013]);
+        }
+    }
+
+    /** @return array<string, array{bool}> */
+    public static function connectionLossPaths(): array
+    {
+        return ['current claim read' => [false], 'mutation admission' => [true]];
+    }
+
     #[DataProvider('newBindingMutationModes')]
     public function testMutationSeesNewBindingAndClaimsInExistingHostSnapshot(string $operation): void
     {

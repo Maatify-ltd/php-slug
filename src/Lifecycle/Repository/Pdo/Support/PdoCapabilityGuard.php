@@ -6,6 +6,7 @@ namespace Maatify\Slug\Lifecycle\Repository\Pdo\Support;
 
 use PDO;
 use PDOException;
+use PDOStatement;
 use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Lifecycle\Exception\SlugUnsupportedDriverException;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
@@ -17,6 +18,7 @@ use Throwable;
 final class PdoCapabilityGuard implements CapabilityGuardInterface
 {
     private bool $installedSchemaVerified = false;
+    private bool $snapshotIsolationAvailable = true;
 
     /** Stores the injected PDO connection without creating hidden connections. */
     public function __construct(private PDO $pdo) {}
@@ -25,7 +27,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
      * Verifies connection capabilities that do not require the package schema.
      *
      * This method performs no DDL and does not mutate package tables. Runtime
-     * callers must use assertInstalledSchemaSupported() before package writes.
+     * callers must use assertMutationSupported() before package writes.
      */
     public function assertSupported(): void
     {
@@ -43,11 +45,27 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
      */
     public function assertInstalledSchemaSupported(): void
     {
+        $this->assertInstalledSchema(forMutation: false);
+    }
+
+    /** Verifies the installed schema and that lifecycle writes can perform current locking reads. */
+    public function assertMutationSupported(): void
+    {
+        $this->assertInstalledSchema(forMutation: true);
+    }
+
+    private function assertInstalledSchema(bool $forMutation): void
+    {
+        if (! $this->installedSchemaVerified) {
+            $this->assertSupported();
+        }
+        if ($forMutation) {
+            $this->assertCurrentLockingReads();
+        }
         if ($this->installedSchemaVerified) {
             return;
         }
 
-        $this->assertSupported();
         $this->assertPackageTables();
         try {
             (new PdoSchemaVerifier($this->pdo))->assertRegistryLockProjection();
@@ -75,7 +93,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
     {
         $driver = $this->driverName();
         if ($driver !== 'mysql') {
-            throw new SlugUnsupportedDriverException(sprintf('RC1 requires the pdo_mysql driver; got %s.', $driver ?? 'unknown'));
+            throw new SlugUnsupportedDriverException(sprintf('Slug requires the pdo_mysql driver; got %s.', $driver ?? 'unknown'));
         }
 
         if (! extension_loaded('pdo_mysql')) {
@@ -130,7 +148,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
                 throw new SlugRuntimeCompatibilityException('The connection ended the transaction during capability probing.');
             }
             $statement = $this->pdo->query('SELECT 1');
-            if ($statement === false || (int) $statement->fetchColumn() !== 1) {
+            if ($statement === false || self::fetchColumnAndClose($statement) !== '1') {
                 throw new SlugRuntimeCompatibilityException('Transactional SELECT is required.');
             }
         } catch (SlugRuntimeCompatibilityException $exception) {
@@ -154,6 +172,30 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
 
         if ($failure !== null) {
             throw $failure;
+        }
+    }
+
+    /** Requires current locking reads when the server exposes a session setting that can disable them. */
+    private function assertCurrentLockingReads(): void
+    {
+        if (! $this->snapshotIsolationAvailable) {
+            return;
+        }
+
+        $statement = $this->pdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
+        if ($statement === false) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect the session snapshot isolation setting.');
+        }
+
+        $setting = self::fetchColumnAndClose($statement, 1);
+        if ($setting === false) {
+            $this->snapshotIsolationAvailable = false;
+            return;
+        }
+        if ($setting !== 'OFF') {
+            throw new SlugRuntimeCompatibilityException(
+                'Slug lifecycle writes require innodb_snapshot_isolation=OFF on the Host PDO session. Configure it before starting the transaction.',
+            );
         }
     }
 
@@ -270,7 +312,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             }
 
             $lock = $this->pdo->prepare('SELECT id FROM maa_slug_scopes WHERE id = :id FOR UPDATE');
-            if ($lock === false || ! $lock->execute(['id' => $scopeId]) || (int) $lock->fetchColumn() !== $scopeId) {
+            if ($lock === false || ! $lock->execute(['id' => $scopeId]) || self::fetchColumnAndClose($lock) !== (string) $scopeId) {
                 throw new SlugRuntimeCompatibilityException('Package row-lock semantics are unavailable.');
             }
 
@@ -305,7 +347,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         } catch (SlugRuntimeCompatibilityException $exception) {
             $failure = $exception;
         } catch (Throwable $throwable) {
-            $failure = new SlugRuntimeCompatibilityException('The installed package schema does not satisfy the RC1 capability contract.', 0, $throwable);
+            $failure = new SlugRuntimeCompatibilityException('The installed package schema does not satisfy the Slug capability contract.', 0, $throwable);
         }
 
         try {
@@ -324,6 +366,25 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         if ($failure !== null) {
             throw $failure;
         }
+    }
+
+    /** Releases a scalar result before another command uses the injected PDO. */
+    private static function fetchColumnAndClose(PDOStatement $statement, int $column = 0): string|false
+    {
+        try {
+            $value = $statement->fetchColumn($column);
+        } finally {
+            $statement->closeCursor();
+        }
+
+        if (is_int($value)) {
+            return (string) $value;
+        }
+        if (is_string($value) || $value === false) {
+            return $value;
+        }
+
+        throw new SlugRuntimeCompatibilityException('Unexpected column value from a PDO capability probe.');
     }
 
     /** Rolls back capability probes while preserving a caller-owned transaction. */

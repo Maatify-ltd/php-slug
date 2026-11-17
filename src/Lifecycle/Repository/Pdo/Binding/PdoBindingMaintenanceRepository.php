@@ -29,7 +29,7 @@ final readonly class PdoBindingMaintenanceRepository implements BindingMaintenan
         if ($bindingId < 0) {
             throw new SlugPersistenceInvariantException('Binding id cannot be negative.');
         }
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
         $statement = $this->pdo->prepare('SELECT operation_id FROM maa_slug_operation_bindings WHERE binding_id = :binding_id FOR UPDATE');
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare purge participant lookup.');

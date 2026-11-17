@@ -23,7 +23,7 @@ final readonly class SlugAvailabilityDTO implements JsonSerializable
         public bool $advisory,
     ) {
         if (! $advisory) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Slug availability is advisory in RC1.');
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Slug availability is advisory.');
         }
     }
 

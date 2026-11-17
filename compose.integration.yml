@@ -16,3 +16,14 @@ services:
       timeout: 3s
       retries: 30
       start_period: 5s
+  mariadb:
+    profiles: [mariadb]
+    image: mariadb:12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc
+    command: ["--innodb-snapshot-isolation=OFF"]
+    environment:
+      MARIADB_DATABASE: maatify_slug_test
+      MARIADB_USER: slug_test
+      MARIADB_PASSWORD: slug_test_password
+      MARIADB_ROOT_PASSWORD: slug_test_root_password
+    ports:
+      - "127.0.0.1::3306"

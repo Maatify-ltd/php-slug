@@ -9,7 +9,7 @@ CREATE TABLE maa_slug_scopes (
     namespace VARCHAR(63) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'Opaque exact Scope namespace identity',
     locale_key VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '' COMMENT 'Nullable Scope locale encoded as empty storage value',
     context_key VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '' COMMENT 'Nullable Scope context encoded as empty storage value',
-    profile_key VARCHAR(63) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'Locked built-in slug profile key for the Scope',
+    profile_key VARCHAR(63) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'Locked registered slug profile key for the Scope',
     created_at DATETIME(6) NOT NULL COMMENT 'UTC creation timestamp with microsecond precision',
     updated_at DATETIME(6) NOT NULL COMMENT 'UTC last-update timestamp with microsecond precision',
     PRIMARY KEY (id),

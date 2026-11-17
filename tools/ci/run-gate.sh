@@ -220,6 +220,7 @@ Gates:
   test-unit        Unit suite only; Docker is not required
   test-integration Integration suite through the canonical Compose lifecycle
   test-system      System suite through the canonical Compose lifecycle
+  mariadb-snapshot PDO and snapshot regressions on MariaDB through Compose
   syntax           PHP syntax for src/, tests/, tools/, examples/, and PHP tool configuration
   phpstan          PHPStan max using phpstan.neon
   php-runtime MINOR Verify the actual Stable PHP interpreter and patch floor for MINOR
@@ -246,6 +247,7 @@ case "$gate" in
     test-unit) test_unit ;;
     test-integration) test_integration ;;
     test-system) test_system ;;
+    mariadb-snapshot) bash tools/ci/run-integration.sh mariadb-snapshot ;;
     syntax) syntax ;;
     phpstan) phpstan ;;
     php-runtime) php_runtime "${2:-}" ;;

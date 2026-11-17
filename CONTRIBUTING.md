@@ -81,6 +81,12 @@ Run focused System evidence through the same lifecycle:
 bash tools/ci/run-gate.sh test-system
 ```
 
+Run the PDO and Host snapshot regression suite against disposable MariaDB:
+
+```bash
+bash tools/ci/run-gate.sh mariadb-snapshot
+```
+
 Run the complete maintained suite (Unit + Integration + System):
 ```bash
 composer test
