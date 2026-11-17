@@ -89,13 +89,21 @@ final readonly class PdoSchemaVerifier
             throw new SlugPersistenceInvariantException('Registry lock projection requires the id primary key and the ordered unique partition index.');
         }
 
-        $identity = $this->pdo->query(
-            "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
-            . "AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND COLUMN_NAME = 'id' "
-            . "AND DATA_TYPE = 'bigint' AND COLUMN_TYPE LIKE '% unsigned' AND EXTRA = 'auto_increment'",
+        $columns = $this->pdo->query(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+            . "AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND ("
+            . "(COLUMN_NAME = 'id' AND DATA_TYPE = 'bigint' AND COLUMN_TYPE LIKE '% unsigned' AND EXTRA = 'auto_increment') "
+            . "OR (COLUMN_NAME = 'slug' AND COLLATION_NAME = 'utf8mb4_bin'))",
         );
-        if ($identity === false || (int) $identity->fetchColumn() !== 1) {
+        if ($columns === false) {
+            throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection columns.');
+        }
+        $matchingColumns = $columns->fetchAll(PDO::FETCH_COLUMN);
+        if (! in_array('id', $matchingColumns, true)) {
             throw new SlugPersistenceInvariantException('Registry lock projection requires an auto-increment unsigned bigint identity.');
+        }
+        if (! in_array('slug', $matchingColumns, true)) {
+            throw new SlugPersistenceInvariantException('Registry lock projection slug column has unexpected collation. Expected utf8mb4_bin.');
         }
 
         $marker = $this->pdo->query(

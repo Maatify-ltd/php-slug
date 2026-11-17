@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+unset CDPATH
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ $# -ne 2 || ! "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ || ! "$2" =~ ^[0-9a-f]{40}$ ]]; then

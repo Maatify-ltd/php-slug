@@ -422,7 +422,7 @@ The persisted path uses direct PDO inside package infrastructure only:
 - First-create races on Binding and Scope are reread under lock in the defined paths. There is no savepoint for an attempted `INSERT` and no automatic deadlock retry.
 - `revision` protects same-Binding CAS, and multi-row lifecycle and History mutations are atomic. Lock ordering in transfer and transition is part of the execution contract.
 
-Gap-sensitive Registry current reads for lifecycle mutations use an internal InnoDB projection with per-Scope and per-Binding lock boundaries. The package initializes new partitions when first needed and maintains the projection in the Registry write transaction on the Host PDO. Registry uniqueness remains authoritative. The lock boundaries cover these targeted reads. Requests for shared keys can still contend. During `purgeBinding()`, InnoDB's `fk_registry_binding_scope` check can take a gap lock on the underlying Registry index and contend with writes in another Scope, even when the Registry is empty.
+Gap-sensitive Registry current reads for lifecycle mutations use an internal InnoDB projection with per-Scope and per-Binding lock boundaries. The package initializes new partitions when first needed and maintains the projection in the Registry write transaction on the Host PDO. Registry uniqueness remains authoritative. The lock boundaries cover these targeted reads. Requests for shared keys can still contend. First assignments in two different Scopes can also contend if neither Scope has lock anchors yet. The second assignment can wait for the Host transaction holding the first assignment to release its locks. During `purgeBinding()`, InnoDB's `fk_registry_binding_scope` check can take a gap lock on the underlying Registry index and contend with writes in another Scope, even when the Registry is empty.
 
 On failure or invariant violation, partial mutation, uncommitted History, and uncommitted operations must be removed by the operation rollback. The original throwable is rethrown unless a documented semantic conversion applies.
 
@@ -732,7 +732,7 @@ SlugUnsupportedDriverException, SlugPersistenceInvariantException
 
 The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
 
-If the Schema 003 Registry lock projection table or its backfill completion marker is missing, a lifecycle mutation throws `SlugRuntimeCompatibilityException` before acquiring the Scope lock.
+Before acquiring the Scope lock, a lifecycle mutation throws `SlugRuntimeCompatibilityException` if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`.
 
 ## 13. Release State
 

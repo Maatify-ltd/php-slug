@@ -16,12 +16,21 @@ commit_fixture() {
 }
 
 mkdir -p "$base"/{tools/ci,src,schema/mysql,docs/guides,examples}
-cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,SLUG_PACKAGE_REFERENCE.md,llms.txt} \
+cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,llms.txt} \
     "$base/"
 cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php,release-artifact-files.php,verify-published-artifact.sh,verify-published-artifact.php} \
     "$base/tools/ci/"
 
 # The fixture has fixed release documents and dependency identity in every repository phase.
+cat > "$base/SLUG_PACKAGE_REFERENCE.md" <<'MARKDOWN'
+# Slug Release Fixture Reference
+
+## 1. Package Identity and Status
+
+| Field | Current value |
+|---|---|
+| Exact release target | `1.0.0-rc.3` |
+MARKDOWN
 php -r '
     $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
     $fixture = [
@@ -183,7 +192,7 @@ assert_published_fixture dist 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly
 
 # A synthetic local tag and a Composer probe exercise the actual shell driver without network access.
 git -C "$stale_repo" -c tag.gpgSign=false tag "v$target" "$published_sha"
-mkdir -p "$scratch/relative-run/bin"
+mkdir -p "$scratch/relative-run/bin" "$scratch/relative-run/runtime-temp" "$scratch/cdpath/runtime-temp"
 cat > "$scratch/relative-run/bin/composer" <<'SHELL'
 #!/usr/bin/env bash
 set -eu
@@ -192,19 +201,30 @@ if [[ "${1:-}" == --version ]]; then
     echo 'Mock Composer version'
     exit 0
 fi
-echo 'Composer reached the isolated project'
+printf 'Composer reached the isolated project: %s\n' "$PWD"
 exit 42
 SHELL
 chmod +x "$scratch/relative-run/bin/composer"
-relative_status=0
-relative_output=$(cd "$scratch/relative-run" && TMPDIR=. PATH="$PWD/bin:$PATH" \
-    bash "$stale_repo/tools/ci/verify-published-artifact.sh" "$target" "$published_sha" 2>&1) || relative_status=$?
-if [[ "$relative_status" != 42 ]] || ! grep -Fq 'Composer reached the isolated project' <<< "$relative_output" \
-    || compgen -G "$scratch/relative-run/slug-published-artifact.*" >/dev/null; then
-    printf 'Published artifact relative TMPDIR fixture failed.\n%s\n' "$relative_output" >&2
-    exit 1
-fi
-printf '%s\n' 'Published artifact regression fixtures passed (5 cases).'
+
+assert_relative_tmpdir() {
+    local tmpdir="$1"
+    local cdpath="$2"
+    local relative_output relative_status=0 expected_root
+    expected_root=$(CDPATH= cd -- "$scratch/relative-run/$tmpdir" && pwd -P)
+    relative_output=$(cd "$scratch/relative-run" && TMPDIR="$tmpdir" CDPATH="$cdpath" PATH="$PWD/bin:$PATH" \
+        bash "$stale_repo/tools/ci/verify-published-artifact.sh" "$target" "$published_sha" 2>&1) || relative_status=$?
+    if [[ "$relative_status" != 42 ]] \
+        || ! grep -Fq "Composer reached the isolated project: $expected_root/slug-published-artifact." <<< "$relative_output" \
+        || compgen -G "$expected_root/slug-published-artifact.*" >/dev/null \
+        || compgen -G "$scratch/cdpath/runtime-temp/slug-published-artifact.*" >/dev/null; then
+        printf 'Published artifact relative TMPDIR fixture failed for %s.\n%s\n' "$tmpdir" "$relative_output" >&2
+        exit 1
+    fi
+}
+
+assert_relative_tmpdir . ''
+assert_relative_tmpdir runtime-temp "$scratch/cdpath"
+printf '%s\n' 'Published artifact regression fixtures passed (6 cases).'
 changelog_fixture bracketed 0 "$pass" "## [$target]"
 changelog_fixture empty-unreleased 0 "$pass" '## [Unreleased]' '' "## $target"
 changelog_fixture empty-unreleased-and-bracketed 0 "$pass" '## [Unreleased]' '' "## [$target]"

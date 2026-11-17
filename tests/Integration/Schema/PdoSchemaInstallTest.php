@@ -124,17 +124,17 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame([[0, 101], [101, 101]], $this->readRows("SELECT binding_partition, owner_binding_id FROM maa_slug_registry_lock_keys WHERE slug = 'post-upgrade' ORDER BY binding_partition"));
     }
 
-    #[DataProvider('missingProjectionRequirements')]
-    public function testFacadeRejectsMissingSchemaMigrationBeforeMutation(bool $projectionTableExists, string $reason): void
+    #[DataProvider('invalidRuntimeProjections')]
+    public function testFacadeRejectsIncompatibleSchemaBeforeMutation(?string $projectionChange, string $reason): void
     {
         $this->dropSchemaForUpgradeProof();
         $installer = new PdoSchemaInstaller($this->pdo);
         $installer->installSql($this->readSchemaAsset('001_slug_rc1.sql'));
         $installer->installSql($this->readSchemaAsset('002_operational_reporting_indexes.sql'));
         $this->seedPublishedRegistry();
-        if ($projectionTableExists) {
+        if ($projectionChange !== null) {
             $installer->installSql($this->readSchemaAsset('003_registry_lock_projection.sql'));
-            $this->pdo->exec('DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0');
+            $this->pdo->exec($projectionChange);
         }
 
         $profiles = new SlugProfileRegistry();
@@ -175,11 +175,18 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
     }
 
-    /** @return iterable<string, array{bool, string}> */
-    public static function missingProjectionRequirements(): iterable
+    /** @return iterable<string, array{?string, string}> */
+    public static function invalidRuntimeProjections(): iterable
     {
-        yield 'RC.2 schema without migration' => [false, 'installed package table set is not exact'];
-        yield '003 table without completion marker' => [true, 'Registry lock projection is unavailable or incompatible'];
+        yield 'RC.2 schema without migration' => [null, 'installed package table set is not exact'];
+        yield '003 table without completion marker' => [
+            'DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0',
+            'Registry lock projection is unavailable or incompatible',
+        ];
+        yield 'projection slug with an incompatible collation' => [
+            'ALTER TABLE maa_slug_registry_lock_keys MODIFY slug VARCHAR(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL',
+            'Registry lock projection is unavailable or incompatible',
+        ];
     }
 
     #[DataProvider('incompleteProjectionSchemas')]
