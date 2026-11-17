@@ -59,9 +59,7 @@ final readonly class PdoSchemaVerifier
     public function assertRegistryLockProjection(): void
     {
         $statement = $this->pdo->query(
-            "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SUB_PART, COLLATION FROM information_schema.STATISTICS "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'maa_slug_registry_lock_keys' "
-            . "AND INDEX_NAME IN ('PRIMARY', 'uk_registry_lock_partition') ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+            "SHOW INDEX FROM maa_slug_registry_lock_keys WHERE Key_name IN ('PRIMARY', 'uk_registry_lock_partition')",
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection indexes.');
@@ -69,30 +67,39 @@ final readonly class PdoSchemaVerifier
 
         $indexes = [];
         foreach (PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)) as $row) {
-            if (PdoRowHydrator::nonNegativeInt($row, 'NON_UNIQUE') !== 0
-                || $row['SUB_PART'] !== null
-                || $row['COLLATION'] !== 'A') {
+            if (($row['Visible'] ?? null) === 'NO' || ($row['Ignored'] ?? null) === 'YES') {
+                throw new SlugPersistenceInvariantException('Registry lock projection requires visible, usable indexes.');
+            }
+            if (PdoRowHydrator::nonNegativeInt($row, 'Non_unique') !== 0
+                || $row['Sub_part'] !== null
+                || $row['Collation'] !== 'A') {
                 throw new SlugPersistenceInvariantException('Registry lock projection requires full ascending unique keys.');
             }
 
-            $indexes[PdoRowHydrator::string($row, 'INDEX_NAME')][] = PdoRowHydrator::string($row, 'COLUMN_NAME');
+            $name = PdoRowHydrator::string($row, 'Key_name');
+            $position = PdoRowHydrator::nonNegativeInt($row, 'Seq_in_index');
+            $indexes[$name][$position] = PdoRowHydrator::string($row, 'Column_name');
         }
-        if (($indexes['PRIMARY'] ?? []) !== ['id']
-            || ($indexes['uk_registry_lock_partition'] ?? []) !== ['scope_id', 'scope_end', 'binding_partition', 'key_kind', 'slug']) {
+        foreach ($indexes as &$columns) {
+            ksort($columns);
+        }
+        unset($columns);
+        if (($indexes['PRIMARY'] ?? []) !== [1 => 'id']
+            || ($indexes['uk_registry_lock_partition'] ?? []) !== [1 => 'scope_id', 2 => 'scope_end', 3 => 'binding_partition', 4 => 'key_kind', 5 => 'slug']) {
             throw new SlugPersistenceInvariantException('Registry lock projection requires the id primary key and the ordered unique partition index.');
         }
 
         $identity = $this->pdo->query(
             "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
             . "AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND COLUMN_NAME = 'id' "
-            . "AND COLUMN_TYPE = 'bigint unsigned' AND EXTRA = 'auto_increment'",
+            . "AND DATA_TYPE = 'bigint' AND COLUMN_TYPE LIKE '% unsigned' AND EXTRA = 'auto_increment'",
         );
         if ($identity === false || (int) $identity->fetchColumn() !== 1) {
             throw new SlugPersistenceInvariantException('Registry lock projection requires an auto-increment unsigned bigint identity.');
         }
 
         $marker = $this->pdo->query(
-            "SELECT 1 FROM maa_slug_registry_lock_keys WHERE scope_id = 0 AND scope_end = 0 AND binding_partition = 0 AND key_kind = 2 AND slug = '' "
+            "SELECT 1 FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) WHERE scope_id = 0 AND scope_end = 0 AND binding_partition = 0 AND key_kind = 2 AND slug = '' "
             . 'AND registry_id IS NULL AND owner_binding_id IS NULL',
         );
         if ($marker === false || (int) $marker->fetchColumn() !== 1) {

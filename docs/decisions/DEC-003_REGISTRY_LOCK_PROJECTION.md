@@ -3,7 +3,8 @@
 | Field | Value |
 |---|---|
 | Decision ID | `DEC-003` |
-| Status | `ACTIVE` |
+| Status | `SUPERSEDED` |
+| Superseded By | [DEC-005](DEC-005_REGISTRY_LOCK_PROJECTION_INDEX.md) |
 | Scope | `/` |
 | Concern | InnoDB lock boundaries for Registry lifecycle current reads |
 | Date | `2026-11-16` |
@@ -15,13 +16,13 @@ Slug lifecycle mutations need current Registry state even when the Host holds an
 
 ## Decision
 
-Introduce an internal InnoDB Registry lock-key projection through the ordered additive migration `003_registry_lock_projection.sql`. Its clustered primary key is `id`. Locking reads use the unique secondary index `uk_registry_lock_partition` over `(scope_id, scope_end, binding_partition, key_kind, slug)` for the physical partition order. Partition zero represents Scope occupancy and positive Binding IDs identify separate participant partitions. Lower and upper boundary rows anchor each partition. An immutable Scope end anchor sits beyond every Binding partition and preserves that physical boundary when the terminal Binding is purged. Gap-sensitive lifecycle reads use the projection for current occupancy and participant claims. A single atomic backfill statement projects existing keys and anchors and records completion for runtime verification. The package initializes new partitions when a Registry lifecycle operation first needs them.
+Introduce an internal InnoDB Registry lock-key projection through the ordered additive migration `003_registry_lock_projection.sql`. Its clustered key is `(scope_id, scope_end, binding_partition, key_kind, slug)`. Partition zero represents Scope occupancy and positive Binding IDs identify separate participant partitions. Lower and upper boundary rows anchor each partition. An immutable Scope end anchor sits beyond every Binding partition and preserves that physical boundary when the terminal Binding is purged. Gap-sensitive lifecycle reads use the projection for current occupancy and participant claims. A single atomic backfill statement projects existing keys and anchors and records completion for runtime verification. The package initializes new partitions when a Registry lifecycle operation first needs them.
 
 Maintain the projection with package-owned writes on the same Host PDO and in the same transaction as the corresponding Registry changes. Registry identity and its existing unique constraints remain the final ownership authority. Public API, lifecycle semantics, Host isolation and transaction ownership, and package savepoint behavior retain their existing contracts.
 
 ## Rationale
 
-Adding a logical filter or using an existing sparse Registry index cannot bound the gap next-key locking reads may take for an absent key. Physical anchors let the affected reads keep current-read semantics while constraining the targeted lock ranges. The unique secondary index preserves that order while conforming to the package schema primary-key contract. The internal projection makes those boundaries expressible without redesigning Registry ownership, and transactional maintenance keeps the projection and authoritative rows consistent through commits and rollbacks.
+Adding a logical filter or using an existing sparse Registry index cannot bound the gap next-key locking reads may take for an absent key. Physical anchors let the affected reads keep current-read semantics while constraining the targeted lock ranges. The internal projection makes those boundaries expressible without redesigning Registry ownership, and transactional maintenance keeps the projection and authoritative rows consistent through commits and rollbacks.
 
 ## Consequences
 

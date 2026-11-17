@@ -43,7 +43,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
 
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
-            . "AND TABLE_NAME LIKE 'maa\\_slug\\_%' AND INDEX_NAME = 'PRIMARY' ORDER BY TABLE_NAME, SEQ_IN_INDEX",
+            . "AND TABLE_NAME LIKE 'maa\\_slug\\_%' AND INDEX_NAME = 'PRIMARY' ORDER BY BINARY TABLE_NAME, SEQ_IN_INDEX",
         );
         self::assertNotFalse($statement);
         self::assertSame([
@@ -193,6 +193,17 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         } catch (SlugPersistenceInvariantException $exception) {
             self::assertStringContainsString($reason, $exception->getMessage());
         }
+
+        $this->expectException(SlugRuntimeCompatibilityException::class);
+        $this->expectExceptionMessage('The Registry lock projection is unavailable or incompatible.');
+        (new PdoCapabilityGuard($this->pdo))->assertInstalledSchemaSupported();
+    }
+
+    public function testUnusableProjectionIndexFailsBeforeCapabilityProbe(): void
+    {
+        $server = $this->pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+        $attribute = is_string($server) && str_contains($server, 'MariaDB') ? 'IGNORED' : 'INVISIBLE';
+        $this->pdo->exec('ALTER TABLE maa_slug_registry_lock_keys ALTER INDEX uk_registry_lock_partition ' . $attribute);
 
         $this->expectException(SlugRuntimeCompatibilityException::class);
         $this->expectExceptionMessage('The Registry lock projection is unavailable or incompatible.');

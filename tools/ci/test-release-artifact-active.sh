@@ -18,7 +18,7 @@ commit_fixture() {
 mkdir -p "$base"/{tools/ci,src,schema/mysql,docs/guides,examples}
 cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,SLUG_PACKAGE_REFERENCE.md,llms.txt} \
     "$base/"
-cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php,release-artifact-files.php} \
+cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php,release-artifact-files.php,verify-published-artifact.sh,verify-published-artifact.php} \
     "$base/tools/ci/"
 
 # The fixture has fixed release documents and dependency identity in every repository phase.
@@ -153,17 +153,58 @@ assert_published_fixture() {
 {"packages":[{"name":"maatify/php-slug","version":"v$target","installation-source":"$mode","install-path":"../maatify/php-slug","dist":{"type":"zip","url":"https://example.invalid/archive.zip","reference":"$published_sha"},"source":{"reference":"$published_sha"}}]}
 JSON
     output=$(php "$repo_root/tools/ci/verify-published-artifact.php" verify "$target" "$published_sha" "$scratch/published-tree" "$published_project" 2>&1) || status=$?
-    if [[ "$status" != "$expected_status" ]] || ! grep -Fq -- "$expected" <<< "$output"; then
+    if [[ "$status" != "$expected_status" ]] || ! grep -Fq -- "$expected" <<< "$output" \
+        || grep -Fxq 'PAV=PASS' <<< "$output"; then
         printf 'Published artifact fixture failed (expected exit %s and %s, got %s).\n%s\n' "$expected_status" "$expected" "$status" "$output" >&2
         exit 1
     fi
 }
 
-assert_published_fixture dist 0 'PAV=PASS'
+assert_published_fixture dist 0 'PAV=SEMANTIC_REVIEW_REQUIRED'
 assert_published_fixture source 1 'Installed Zip dist identity or Git reference does not match the qualified release.'
 rm -- "$published_package/src/Fixture.php"
 assert_published_fixture dist 1 'Required regular file missing in dist: src/Fixture.php'
-printf '%s\n' 'Published artifact regression fixtures passed (3 cases).'
+new_fixture published-stale-reference
+stale_repo="$scratch/published-stale-reference"
+php -r '
+    $contents = file_get_contents($argv[1]);
+    $changed = str_replace("| Exact release target | `1.0.0-rc.3` |", "| Exact release target | `1.0.0-rc.2` |", $contents, $count);
+    if ($count !== 1) {
+        exit(1);
+    }
+    file_put_contents($argv[1], $changed);
+' "$stale_repo/SLUG_PACKAGE_REFERENCE.md"
+commit_fixture "$stale_repo"
+assert_gate "$stale_repo" 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly one matching release target'
+published_sha="$(git -C "$stale_repo" rev-parse HEAD)"
+git -C "$stale_repo" archive "$published_sha" | tar -x -C "$published_package"
+git -C "$stale_repo" ls-tree -rz "$published_sha" > "$scratch/published-tree"
+assert_published_fixture dist 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly one matching release target'
+
+# A synthetic local tag and a Composer probe exercise the actual shell driver without network access.
+git -C "$stale_repo" -c tag.gpgSign=false tag "v$target" "$published_sha"
+mkdir -p "$scratch/relative-run/bin"
+cat > "$scratch/relative-run/bin/composer" <<'SHELL'
+#!/usr/bin/env bash
+set -eu
+[[ "$HOME" = /* && -d "$HOME" && -d "$COMPOSER_CACHE_DIR" && -d "$TMPDIR" ]]
+if [[ "${1:-}" == --version ]]; then
+    echo 'Mock Composer version'
+    exit 0
+fi
+echo 'Composer reached the isolated project'
+exit 42
+SHELL
+chmod +x "$scratch/relative-run/bin/composer"
+relative_status=0
+relative_output=$(cd "$scratch/relative-run" && TMPDIR=. PATH="$PWD/bin:$PATH" \
+    bash "$stale_repo/tools/ci/verify-published-artifact.sh" "$target" "$published_sha" 2>&1) || relative_status=$?
+if [[ "$relative_status" != 42 ]] || ! grep -Fq 'Composer reached the isolated project' <<< "$relative_output" \
+    || compgen -G "$scratch/relative-run/slug-published-artifact.*" >/dev/null; then
+    printf 'Published artifact relative TMPDIR fixture failed.\n%s\n' "$relative_output" >&2
+    exit 1
+fi
+printf '%s\n' 'Published artifact regression fixtures passed (5 cases).'
 changelog_fixture bracketed 0 "$pass" "## [$target]"
 changelog_fixture empty-unreleased 0 "$pass" '## [Unreleased]' '' "## $target"
 changelog_fixture empty-unreleased-and-bracketed 0 "$pass" '## [Unreleased]' '' "## [$target]"

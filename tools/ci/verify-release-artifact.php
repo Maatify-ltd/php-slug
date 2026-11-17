@@ -97,6 +97,7 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     if (count(array_filter($headings, static fn(array $heading): bool => preg_match($targetHeading, $heading['title']) === 1)) !== 1) {
         throw new RuntimeException('CHANGELOG.md contains more than one section for the exact release target.');
     }
+    assertPackageReferenceReleaseTarget(artifactDocument($artifact, 'SLUG_PACKAGE_REFERENCE.md'), $target);
     $security = parseReleaseMarkdown(artifactDocument($artifact, 'SECURITY.md'), 'SECURITY.md');
     if (! markdownHasUnsupportedRelease($security, $target)) {
         throw new RuntimeException('SECURITY.md must identify the release target and mark it unsupported without conflicting rows.');

@@ -40,6 +40,8 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
 
     private PdoTransactionCoordinator $transactions;
 
+    private PdoRegistryLockProjection $lockProjection;
+
     /** Injects PDO and the profile, clock, capability, and transaction boundaries. */
     public function __construct(
         private PDO $pdo,
@@ -50,6 +52,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
     ) {
         $this->capabilities = $capabilities ?? new PdoCapabilityGuard($pdo);
         $this->transactions = $transactions ?? new PdoTransactionCoordinator($pdo);
+        $this->lockProjection = new PdoRegistryLockProjection($pdo);
     }
 
     /** Ensures and returns a scope/profile association. */
@@ -469,8 +472,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
     private function registryClaimRows(int $scopeId, int $bindingId, bool $forUpdate): array
     {
         if ($forUpdate) {
-            $projection = new PdoRegistryLockProjection($this->pdo);
-            return $projection->readCurrentClaims($projection->lockBinding($scopeId, $bindingId));
+            return $this->lockProjection->readCurrentClaims($this->lockProjection->lockBinding($scopeId, $bindingId));
         }
         $statement = $this->pdo->prepare(
             'SELECT r.id, r.binding_id, r.scope_id, r.slug, r.claim_role, r.claimed_at, r.updated_at, '

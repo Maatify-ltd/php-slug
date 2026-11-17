@@ -74,6 +74,8 @@ function assertPublishedPresentation(string $packagePath, string $target, array 
         throw new RuntimeException('CHANGELOG.md does not identify the exact installed release.');
     }
 
+    assertPackageReferenceReleaseTarget(readArtifactInput($packagePath . '/SLUG_PACKAGE_REFERENCE.md'), $target);
+
     $security = parseReleaseMarkdown(readArtifactInput($packagePath . '/SECURITY.md'), 'SECURITY.md');
     if (! markdownHasUnsupportedRelease($security, $target)) {
         throw new RuntimeException('SECURITY.md does not identify the exact installed RC support state.');
@@ -143,7 +145,7 @@ function verifyPublishedArtifact(string $target, string $reference, string $tree
             throw new RuntimeException('Unexpected installed entry: ' . $relative);
         }
     }
-    echo "PAV_PRESENTATION=PASS\nPAV=PASS\n";
+    echo "PAV_PRESENTATION_STRUCTURE=PASS\nPAV=SEMANTIC_REVIEW_REQUIRED\n";
 }
 
 try {

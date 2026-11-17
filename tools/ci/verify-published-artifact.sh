@@ -15,7 +15,8 @@ if [[ "$(git -C "$repo_root" rev-parse --verify "refs/tags/v$target^{commit}")" 
     exit 1
 fi
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/slug-published-artifact.XXXXXXXX")"
+temp_root="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
+scratch="$(mktemp -d "$temp_root/slug-published-artifact.XXXXXXXX")"
 trap 'status=$?; rm -rf -- "$scratch"; if [[ $status -ne 0 ]]; then echo "PAV=NOT PASS" >&2; fi' EXIT
 mkdir -p "$scratch"/{home,cache,tmp,project}
 cd "$scratch/project"
