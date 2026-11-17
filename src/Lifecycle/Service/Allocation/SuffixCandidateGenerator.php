@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Maatify\Slug\Lifecycle\Service\Allocation;
 
 use Maatify\Slug\Canonicalization\Service\CanonicalSlugRules;
-use Maatify\Slug\Lifecycle\Exception\SlugAllocationExhaustedException;
+use Maatify\Slug\Exception\SlugInvalidArgumentException;
 use Maatify\Slug\Canonicalization\Service\SlugInputValidator;
 
 /** Generates bounded numeric suffix candidates for generated slug allocation. */
@@ -18,7 +18,11 @@ final class SuffixCandidateGenerator
      */
     public static function prepare(string $base): array
     {
-        CanonicalSlugRules::assertUnicode($base, 'base');
+        SlugInputValidator::assertSafe($base, 'base');
+        SlugInputValidator::assertCodePointLength($base, CanonicalSlugRules::MAX_CODE_POINTS, 'base');
+        if ($base === '') {
+            throw new SlugInvalidArgumentException('The generated base must be non-empty.');
+        }
 
         $candidates = [$base];
         for ($suffix = 2; $suffix <= 1000; $suffix++) {
@@ -26,7 +30,7 @@ final class SuffixCandidateGenerator
             $baseLimit = CanonicalSlugRules::MAX_CODE_POINTS - SlugInputValidator::codePointLength($suffixText);
             $prefix = rtrim(mb_substr($base, 0, $baseLimit, 'UTF-8'), '-');
             if ($prefix === '') {
-                throw new SlugAllocationExhaustedException('No valid bounded suffix candidate remains.');
+                continue;
             }
             $candidates[] = $prefix . $suffixText;
         }
