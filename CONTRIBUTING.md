@@ -129,4 +129,18 @@ bash tools/ci/run-gate.sh whitespace BASE...HEAD
 ```
 Replace `BASE...HEAD` with your specific base and head branches (e.g., `main...HEAD`).
 
+### 6. Release Artifact Verification
+
+For an active release target, run the same archive check as CI from a clean repository checkout of the exact commit. Use Bash, Git, Composer, and PHP with Phar support. Composer also needs the PHP zip extension or the `zip` command. CI runs the check with Stable PHP 8.5 and Composer 2.10.
+
+```bash
+bash tools/ci/run-gate.sh release-artifact "$(git rev-parse HEAD)" 1.0.0-rc.3
+```
+
+Pass the full 40-character checkout SHA and an exact RC target of the form `x.y.z-rc.N` without a leading `v`. The command inspects the Git and Composer archives and prints the SHA, target, archive and payload digests, file counts, and result. In the [CI workflow](https://github.com/Maatify-ltd/php-slug/blob/main/.github/workflows/ci.yml), set `RELEASE_ARTIFACT_TARGET` to the exact RC target while preparing that release. Set it to `''` when no release target is active. CI then reports the check as not applicable. Local invocations require both arguments.
+
+For release qualification, run full applicable CI and archive verification on the same candidate commit on `main`. Record the run and review the archived README installation and publication claims, CHANGELOG allocation, SECURITY support wording, and distributed file contents in context, as required by [CI Workflow Standard §2.5](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#25-release-artifact-verification). Repeat verification if the candidate content changes.
+
+After publication, perform Published Artifact Verification in a clean external Composer project against the exact version served by Packagist. Record the observed installation mode and reference, and inspect the files installed from dist.
+
 Thank you for contributing to the stability and reliability of the Maatify Ecosystem!
