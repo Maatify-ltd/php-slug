@@ -1,4 +1,4 @@
-# Maatify/php-slug — تعليمات الوكيل
+# Maatify-ltd/php-slug — تعليمات الوكيل
 
 ## مرجع المعايير
 

@@ -8,8 +8,8 @@ cd "$repo_root"
 compose_file="$repo_root/compose.integration.yml"
 mode="${1:-}"
 
-if [[ $# -ne 1 || ! "$mode" =~ ^(integration|system|full|consumer|examples)$ ]]; then
-    echo 'Usage: tools/ci/run-integration.sh {integration|system|full|consumer|examples}' >&2
+if [[ $# -ne 1 || ! "$mode" =~ ^(integration|system|full|consumer|examples|mariadb-snapshot)$ ]]; then
+    echo 'Usage: tools/ci/run-integration.sh {integration|system|full|consumer|examples|mariadb-snapshot}' >&2
     exit 2
 fi
 
@@ -23,6 +23,11 @@ if [[ -z "$project_name" ]]; then
 fi
 
 compose=(docker compose --project-name "$project_name" --file "$compose_file")
+service=mysql
+if [[ "$mode" == mariadb-snapshot ]]; then
+    service=mariadb
+    compose+=(--profile mariadb)
+fi
 started=0
 teardown_status=0
 
@@ -38,9 +43,9 @@ diagnostics() {
     if ! "${compose[@]}" ps; then
         echo 'Unable to read Compose status.' >&2
     fi
-    echo 'MySQL container logs before teardown:' >&2
-    if ! "${compose[@]}" logs --no-color mysql; then
-        echo 'Unable to read MySQL container logs.' >&2
+    echo "$service container logs before teardown:" >&2
+    if ! "${compose[@]}" logs --no-color "$service"; then
+        echo "Unable to read $service container logs." >&2
     fi
 }
 
@@ -90,7 +95,7 @@ if ! php -r 'exit(extension_loaded("pdo_mysql") ? 0 : 1);'; then
     echo 'The pdo_mysql extension is required for Integration infrastructure.' >&2
     exit 1
 fi
-if [[ "$mode" =~ ^(integration|system|full)$ && ! -x vendor/bin/phpunit ]]; then
+if [[ "$mode" =~ ^(integration|system|full|mariadb-snapshot)$ && ! -x vendor/bin/phpunit ]]; then
     echo 'PHPUnit is unavailable; run a dependency gate first.' >&2
     exit 1
 fi
@@ -108,12 +113,12 @@ export SLUG_TEST_DB_PASSWORD=slug_test_password
 
 umask 077
 started=1
-"${compose[@]}" up --detach --force-recreate --renew-anon-volumes mysql
+"${compose[@]}" up --detach --force-recreate --renew-anon-volumes "$service"
 
 database_port=''
 for attempt in $(seq 1 60); do
     endpoint=''
-    if endpoint=$("${compose[@]}" port mysql 3306 2>/dev/null); then
+    if endpoint=$("${compose[@]}" port "$service" 3306 2>/dev/null); then
         endpoint="${endpoint##*$'\n'}"
         candidate_port="${endpoint##*:}"
         if [[ "$candidate_port" =~ ^[0-9]+$ ]]; then
@@ -127,7 +132,7 @@ for attempt in $(seq 1 60); do
     fi
 done
 if [[ -z "$database_port" ]]; then
-    echo 'Unable to discover the dynamic MySQL loopback port.' >&2
+    echo "Unable to discover the dynamic $service loopback port." >&2
     exit 1
 fi
 
@@ -146,7 +151,7 @@ probe_database() {
 database_ready=0
 for attempt in $(seq 1 60); do
     if probe_database; then
-        echo "MySQL integration target is ready after attempt $attempt."
+        echo "$service integration target is ready after attempt $attempt."
         database_ready=1
         break
     fi
@@ -155,7 +160,7 @@ for attempt in $(seq 1 60); do
     fi
 done
 if ((database_ready == 0)); then
-    echo 'MySQL integration target did not become ready within 120 seconds.' >&2
+    echo "$service integration target did not become ready within 120 seconds." >&2
     exit 1
 fi
 
@@ -192,6 +197,10 @@ run_workflow() {
         full)
             run_phpunit_suite integration || return $?
             run_phpunit_suite system
+            ;;
+        mariadb-snapshot)
+            SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION=1 vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
+                tests/System/Lifecycle/HostSnapshotMutationSystemTest.php
             ;;
         consumer)
             php tests/Consumer/run.php

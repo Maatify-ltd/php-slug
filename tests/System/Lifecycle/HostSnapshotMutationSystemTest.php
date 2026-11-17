@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Maatify\Slug\Tests\System\Lifecycle;
 
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistry;
+use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
 use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
@@ -21,6 +22,7 @@ use Maatify\Slug\Lifecycle\Command\DeactivateBindingCommand;
 use Maatify\Slug\Lifecycle\Command\PurgeBindingCommand;
 use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
 use Maatify\Slug\Lifecycle\Command\RestoreHistoricalCommand;
+use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
@@ -30,10 +32,91 @@ use Maatify\Slug\Tests\Integration\Schema\MySqlIntegrationTestCase;
 use Maatify\Slug\Tests\Unit\Allocation\TestReservedSlugPolicy;
 use Maatify\Slug\Tests\Unit\Allocation\TestSlugProfile;
 use PDO;
+use Pdo\Mysql;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
 {
+    #[DataProvider('transactionOwnershipModes')]
+    public function testUnbufferedConnectionPreservesTransactionOwnership(bool $hostOwnsTransaction): void
+    {
+        $this->pdo->setAttribute(Mysql::ATTR_USE_BUFFERED_QUERY, false);
+        $host = $this->engine($this->pdo);
+        $identity = $this->identity('unbuffered');
+        if ($hostOwnsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+        try {
+            $host->ensureScope($identity->scopeProfile);
+            $result = $host->assignExact(new AssignExactCommand($identity, 'unbuffered', null, new AuditContextDTO()));
+            self::assertSame('unbuffered', $result->after->currentClaim?->slug->value);
+            $updated = $host->changeExact(new ChangeExactCommand($identity, 'updated', 1, new AuditContextDTO()));
+            self::assertSame('updated', $updated->after->currentClaim?->slug->value);
+            self::assertSame('updated', $host->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+            self::assertSame($hostOwnsTransaction, $this->pdo->inTransaction());
+            self::assertFalse($this->pdo->getAttribute(Mysql::ATTR_USE_BUFFERED_QUERY));
+        } finally {
+            $this->rollBackHost();
+        }
+
+        $observer = $this->engine($this->newTestConnection());
+        self::assertSame($hostOwnsTransaction ? null : 'updated', $observer->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+    }
+
+    /** @return array<string, array{bool}> */
+    public static function transactionOwnershipModes(): array
+    {
+        return ['package transaction' => [false], 'Host transaction' => [true]];
+    }
+
+    public function testSnapshotIsolationAdmissionPreservesHostWork(): void
+    {
+        $setting = $this->pdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
+        self::assertNotFalse($setting);
+        $supportsSetting = $setting->fetchColumn(1) !== false;
+        $setting->closeCursor();
+        if (getenv('SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION') === '1') {
+            self::assertTrue($supportsSetting, 'The MariaDB CI lane must exercise innodb_snapshot_isolation.');
+        }
+        $host = $this->engine($this->pdo);
+        $identity = $this->identity('snapshot-admission');
+        $host->ensureScope($identity->scopeProfile);
+        $writer = $this->engine($this->newTestConnection());
+        $audit = new AuditContextDTO();
+        $this->pdo->exec('CREATE TEMPORARY TABLE slug_test_host_work (id INT PRIMARY KEY) ENGINE=InnoDB');
+
+        if ($supportsSetting) {
+            $this->pdo->exec('SET SESSION innodb_snapshot_isolation=ON');
+        }
+        $this->startSnapshot();
+        try {
+            $this->pdo->exec('INSERT INTO slug_test_host_work (id) VALUES (1)');
+            $writer->assignExact(new AssignExactCommand($identity, 'writer', null, $audit));
+            self::assertSame(0, $this->countRows('SELECT COUNT(*) FROM maa_slug_bindings'));
+            try {
+                $updated = $host->changeExact(new ChangeExactCommand($identity, 'host', 1, $audit));
+                self::assertFalse($supportsSetting, 'Snapshot isolation ON must be rejected before changing a Binding.');
+                self::assertSame('host', $updated->after->currentClaim?->slug->value);
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertTrue($supportsSetting);
+                self::assertStringContainsString('innodb_snapshot_isolation=OFF', $exception->getMessage());
+                self::assertSame(1, $this->countRows('SELECT @@SESSION.innodb_snapshot_isolation'));
+            }
+            self::assertTrue($this->pdo->inTransaction());
+            self::assertSame(1, $this->countRows('SELECT COUNT(*) FROM slug_test_host_work'));
+        } finally {
+            $this->rollBackHost();
+        }
+
+        self::assertSame(0, $this->countRows('SELECT COUNT(*) FROM slug_test_host_work'));
+        self::assertSame('writer', $writer->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+        if ($supportsSetting) {
+            $this->pdo->exec('SET SESSION innodb_snapshot_isolation=OFF');
+            $retried = $host->changeExact(new ChangeExactCommand($identity, 'host', 1, $audit));
+            self::assertSame('host', $retried->after->currentClaim?->slug->value);
+        }
+    }
+
     #[DataProvider('newBindingMutationModes')]
     public function testMutationSeesNewBindingAndClaimsInExistingHostSnapshot(string $operation): void
     {

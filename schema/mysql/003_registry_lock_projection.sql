@@ -1,4 +1,8 @@
 -- Apply after 001 and 002 with package writers quiesced. The backfill is retryable.
+-- The unique key over (scope_id, scope_end, binding_partition, key_kind, slug)
+-- orders the internal lock boundaries and prevents duplicate projected keys.
+-- No foreign keys: the authoritative Registry owns integrity and the package
+-- maintains this projection in its transaction. There is no display order or soft delete.
 CREATE TABLE IF NOT EXISTS maa_slug_registry_lock_keys (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Internal identity of this lock projection row',
     scope_id BIGINT UNSIGNED NOT NULL COMMENT 'Scope owning the physical lock partition',

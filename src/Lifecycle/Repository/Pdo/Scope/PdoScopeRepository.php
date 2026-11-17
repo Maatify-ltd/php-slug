@@ -211,7 +211,9 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
             throw new SlugPersistenceInvariantException('Unable to prepare the Scope and Binding observation.');
         }
         $statement->execute($parameters);
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $rows = PdoRowHydrator::many($rawRows);
         if ($rows !== [] && PdoRowHydrator::string($rows[0], 'profile_key') !== $request->expectedProfileKey->value) {
             throw new SlugScopeProfileMismatchException('The existing Scope uses a different slug profile.');
         }
@@ -273,6 +275,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
         $statement->execute(['binding_id' => $bindingId]);
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->hydrateBinding($row, null, $forUpdate);
@@ -489,7 +492,10 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
         $statement->execute([
             'binding_id' => $bindingId,
         ]);
-        return PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+
+        return PdoRowHydrator::many($rawRows);
     }
 
     /**

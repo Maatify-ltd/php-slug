@@ -63,6 +63,8 @@ $engine = SlugEngineFactory::create(
 
 The Host creates the `PDO` connection and applies the package schema in its environment. [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) demonstrates construction and cleanup through the canonical Integration environment.
 
+On MariaDB, if the server exposes `innodb_snapshot_isolation`, set it to `OFF` on the PDO session before opening a transaction. See the [PDO and transaction contract](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
+
 ## Capability Map
 
 | Capability | Public API | Walkthrough | Example |

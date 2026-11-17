@@ -9,7 +9,7 @@ use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Enum\SameBindingDecisionEnum;
 
 /**
- * Internal RC1 policy for repeating a claim operation on a Binding-owned row.
+ * Policy for repeating a claim operation on a Binding-owned row.
  *
  * This class deliberately has no persistence dependency. The matrix is the
  * single classification point used by claim/allocation code and later

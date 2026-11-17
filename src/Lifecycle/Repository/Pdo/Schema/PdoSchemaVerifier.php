@@ -66,7 +66,9 @@ final readonly class PdoSchemaVerifier
         }
 
         $indexes = [];
-        foreach (PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)) as $row) {
+        /** @var list<array<string, mixed>> $rawRows */
+        $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        foreach (PdoRowHydrator::many($rawRows) as $row) {
             if (($row['Visible'] ?? null) === 'NO' || ($row['Ignored'] ?? null) === 'YES') {
                 throw new SlugPersistenceInvariantException('Registry lock projection requires visible, usable indexes.');
             }

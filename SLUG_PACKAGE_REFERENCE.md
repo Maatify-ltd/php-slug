@@ -117,6 +117,7 @@ The following requirements are implemented in the repository:
 | Runtime compatibility | `ext-intl` capability and observable-behavior probes; no exact ICU or Unicode-data version pin |
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
+| MariaDB | Server `12.3.2` for focused PDO and snapshot verification, with the session requirement in [§9](#9-persistence-transactions-and-concurrency) |
 | Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
 | Evidence tools | `phpstan/phpstan ^2.1`, `phpunit/phpunit ^11.5`, `friendsofphp/php-cs-fixer ^3.94` in `require-dev` |
 
@@ -414,8 +415,10 @@ Only a current `atomicTransfer` result may contain nested `sourceReplacementResu
 The persisted path uses direct PDO inside package infrastructure only:
 
 - `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION` and `PDO::ATTR_EMULATE_PREPARES = false`.
+- PDO queries can be buffered or unbuffered. The package releases its own results before reusing the connection. The Host closes any unbuffered result it owns before calling Slug.
 - Connection charset is `utf8mb4`; timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
-- There is no ORM, external query builder, or SQLite, MariaDB, or PostgreSQL fallback.
+- MySQL and compatible MariaDB sessions use the same PDO adapter and schema. The supported MariaDB session has `innodb_snapshot_isolation=OFF` when the server exposes that setting. Set it on the injected PDO before beginning a Host transaction. The package leaves session settings under Host control.
+- There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
 - The package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
@@ -733,6 +736,8 @@ SlugUnsupportedDriverException, SlugPersistenceInvariantException
 The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
 
 Before acquiring the Scope lock, a lifecycle mutation throws `SlugRuntimeCompatibilityException` if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`.
+
+On a server that exposes `innodb_snapshot_isolation`, the same exception reports an unsupported session setting before package mutation. This check also applies after the installed schema has already been verified for the engine.
 
 ## 13. Release State
 

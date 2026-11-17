@@ -589,6 +589,7 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
 
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         return PdoRowHydrator::one($rawRow);
     }
 
