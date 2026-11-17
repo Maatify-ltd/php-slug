@@ -18,12 +18,16 @@ build_fixture() {
     local fixture="$scratch/$1"
     local readme="$2"
     local changelog="$3"
+    local readme_ar="${4-$arabic_readme}"
 
     mkdir -p "$fixture/tools/ci"
     cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php} \
         "$fixture/tools/ci/"
     if [[ "$readme" != MISSING ]]; then
         printf '%s' "$readme" > "$fixture/README.md"
+    fi
+    if [[ "$readme_ar" != MISSING ]]; then
+        printf '%s' "$readme_ar" > "$fixture/README_AR.md"
     fi
     if [[ "$changelog" != MISSING ]]; then
         printf '%s' "$changelog" > "$fixture/CHANGELOG.md"
@@ -54,13 +58,17 @@ assert_inactive_fixture() {
     local status="$2"
     local expected="$3"
 
-    build_fixture "$name" "$4" "$5"
+    shift 3
+    build_fixture "$name" "$@"
     assert_gate "$name" "$status" "$expected" "$(git -C "$scratch/$name" rev-parse HEAD)" ''
 }
 
 readme=$'# Slug\n\nA consumer-facing package.\n'
+arabic_readme=$'# Slug\n\nمكتبة قابلة لإعادة الاستخدام.\n'
 dated=$'# Changelog\n\n## [1.0.0-rc.2] - 2026-09-25\n\n## 1.0.0-rc.1 - 2026-09-24\n'
 readme_guard=$'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.\nActive release metadata found in:\nREADME.md'
+arabic_guard=$'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.\nActive release metadata found in:\nREADME_AR.md'
+active_arabic_readme=$'# Slug\n\n## حالة النشر\n\n**الإصدار المستهدف:** `1.0.0-rc.3`\n'
 changelog_guard=$'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.\nActive release metadata found in:\nCHANGELOG.md'
 inactive='Release Artifact Verification is not applicable. No release target is active.'
 
@@ -86,7 +94,22 @@ assert_inactive_fixture readme-inline-alert-example 0 "$inactive" \
 assert_inactive_fixture readme-publication-quote 1 "$readme_guard" \
     $'# Slug\n\n## Publication State\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture readme-publication-quote-example 0 "$inactive" \
-    $'# Slug\n\n## Publication State\n\nNo target is in preparation.\n\n### Example\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+    $'# Slug\n\n## Publication State\n\nNo target is in preparation.\n\n## Historical release examples\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-publication-quote-under-h3 1 "$readme_guard" \
+    $'# Slug\n\n## Publication State\n\n### Example\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture arabic-only-active 1 "$arabic_guard" "$readme" "$dated" "$active_arabic_readme"
+assert_inactive_fixture arabic-uppercase-version-active 1 "$arabic_guard" "$readme" "$dated" \
+    "${active_arabic_readme/1.0.0-rc.3/1.0.0-RC.3}"
+assert_inactive_fixture arabic-publication-quote 1 "$arabic_guard" "$readme" "$dated" \
+    $'# Slug\n\n## حالة النشر\n\n> **الإصدار المستهدف:** `1.0.0-rc.3`\n'
+assert_inactive_fixture arabic-historical-quote 0 "$inactive" "$readme" "$dated" \
+    "$arabic_readme"$'\n## أمثلة الإصدارات السابقة\n\n> **الإصدار المستهدف:** `1.0.0-rc.2`\n'
+assert_inactive_fixture arabic-fenced-example 0 "$inactive" "$readme" "$dated" \
+    "$arabic_readme"$'\n## حالة النشر\n\n```markdown\n**الإصدار المستهدف:** `1.0.0-rc.3`\n```\n'
+assert_inactive_fixture arabic-missing-readme 1 'Cannot determine release preparation state from README_AR.md.' "$readme" "$dated" MISSING
+assert_inactive_fixture readme-publication-raw-html 1 \
+    'README.md publication-state section must use Markdown. Raw HTML blocks are not allowed.' \
+    $'# Slug\n\n## Publication State\n\n<p><strong>Release target:</strong> <code>1.0.0-rc.3</code></p>\n' "$dated"
 assert_inactive_fixture readme-publication-quote-hidden 0 "$inactive" \
     $'# Slug\n\n## Publication State\n\nNo target is in preparation.\n\n<!--\n> **Release target:** `1.0.0-rc.3`\n-->\n' "$dated"
 assert_inactive_fixture readme-list-examples 0 "$inactive" \
@@ -125,11 +148,16 @@ assert_assume_unchanged_readme() {
     local name="$1"
     local status="$2"
     local expected="$3"
+    local file="$4"
     local fixture="$scratch/$name"
 
-    build_fixture "$name" "$4" "$dated"
-    git -C "$fixture" update-index --assume-unchanged README.md
-    printf '%s' "$5" > "$fixture/README.md"
+    if [[ "$file" == README_AR.md ]]; then
+        build_fixture "$name" "$readme" "$dated" "$5"
+    else
+        build_fixture "$name" "$5" "$dated"
+    fi
+    git -C "$fixture" update-index --assume-unchanged "$file"
+    printf '%s' "$6" > "$fixture/$file"
     if [[ -n "$(git --no-optional-locks -C "$fixture" status --porcelain)" ]]; then
         echo 'The inactive fixture must hide its modified README from git status.' >&2
         exit 1
@@ -138,8 +166,10 @@ assert_assume_unchanged_readme() {
 }
 
 active_readme=$'# Slug\n\n**Release target:** `1.0.0-rc.3`\n'
-assert_assume_unchanged_readme committed-active 1 "$readme_guard" "$active_readme" "$readme"
-assert_assume_unchanged_readme committed-inactive 0 "$inactive" "$readme" "$active_readme"
+assert_assume_unchanged_readme committed-active 1 "$readme_guard" README.md "$active_readme" "$readme"
+assert_assume_unchanged_readme committed-inactive 0 "$inactive" README.md "$readme" "$active_readme"
+assert_assume_unchanged_readme committed-arabic-active 1 "$arabic_guard" README_AR.md "$active_arabic_readme" "$arabic_readme"
+assert_assume_unchanged_readme committed-arabic-inactive 0 "$inactive" README_AR.md "$arabic_readme" "$active_arabic_readme"
 
 (
     unset GIT_NO_REPLACE_OBJECTS
@@ -178,4 +208,4 @@ assert_assume_unchanged_readme committed-inactive 0 "$inactive" "$readme" "$acti
         "$replaced_blob_head" ''
 )
 
-echo 'Release Artifact Verification inactive regression passed (41 cases).'
+echo 'Release Artifact Verification inactive regression passed (51 cases).'

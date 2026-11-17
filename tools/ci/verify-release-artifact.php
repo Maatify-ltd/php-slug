@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/release-artifact-markdown.php';
 
+const RELEASE_READMES = [
+    'README.md' => ['Publication State', 'Installation', 'release\h+target'],
+    'README_AR.md' => ['حالة النشر', 'التثبيت', 'الإصدار\h+المستهدف'],
+];
+
 /** Reads a verification input or fails with its origin. */
 function readArtifactInput(string $path): string
 {
@@ -119,32 +124,30 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
         throw new RuntimeException('The archived Persistence trial constraint must pin exactly one RC.');
     }
 
-    $pins = ['maatify/php-slug' => $target . '@RC', 'maatify/php-persistence' => $match[1] . '@RC'];
-    $install = 'composer require maatify/php-slug:' . $pins['maatify/php-slug'] . ' maatify/php-persistence:' . $pins['maatify/php-persistence'];
-    $readme = parseReleaseMarkdown(artifactDocument($artifact, 'README.md'), 'README.md');
-    $readmeArabic = parseReleaseMarkdown(artifactDocument($artifact, 'README_AR.md'), 'README_AR.md');
-    foreach (['README.md' => [$readme, 'Installation'], 'README_AR.md' => [$readmeArabic, 'التثبيت']] as $name => [$document, $section]) {
-        $blocks = markdownInstallationBlocks($document, $section);
-        if (array_any($blocks, static fn(string $block): bool => bashHasContradictoryComposerPin($block, $pins))) {
-            throw new RuntimeException($name . ' contains a contradictory package-scoped installation command.');
+    $install = 'composer require maatify/php-slug:' . $target . '@RC maatify/php-persistence:' . $match[1] . '@RC';
+    foreach (RELEASE_READMES as $name => [$publicationTitle, $installationTitle, $label]) {
+        $document = parseReleaseMarkdown(artifactDocument($artifact, $name), $name);
+        $publication = markdownSections($document, $publicationTitle);
+        if (array_any($publication, markdownHasRawHtmlBlocks(...))) {
+            throw new RuntimeException($name . ' publication-state section must use Markdown. Raw HTML blocks are not allowed.');
         }
-        if (! array_any($blocks, static fn(string $block): bool => in_array($install, explode("\n", $block), true))) {
-            throw new RuntimeException($name . ' lacks the exact package-scoped installation command for the target and its Persistence dependency.');
+        $paragraphs = array_filter($publication[0] ?? [], static fn(DOMElement $node): bool => $node->localName === 'paragraph');
+        if (count($publication) !== 1 || markdownReleaseDeclarations($paragraphs, $label, atStart: true) !== [$target]
+            || markdownReadmeReleaseDeclarations($document, $publication) !== [$target]) {
+            throw new RuntimeException($name . ' must have exactly one level-2 publication-state section and one matching release target declaration in a direct paragraph.');
         }
-    }
-    $paragraphs = markdownParagraphs($readme);
-    $declarations = markdownReleaseDeclarations($readme);
-    $images = markdownImageDestinations($readme);
-    $quotedTarget = preg_quote($target, '/');
-    $badgeTarget = str_replace('-', '--', $target);
-    if (! in_array($target, $declarations, true)
-        || ! array_any($paragraphs, static fn(string $text): bool => preg_match('/(?<![A-Za-z0-9.-])' . $quotedTarget . ' is unpublished\b/', $text) === 1)
-        || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Version-' . $badgeTarget . '-'))
-        || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-'))) {
-        throw new RuntimeException('README.md lacks the exact unpublished release target and badges.');
-    }
-    if (array_any($declarations, static fn(?string $declared): bool => $declared !== $target)) {
-        throw new RuntimeException('README.md contains an invalid or conflicting release target declaration.');
+        $installation = markdownSections($document, $installationTitle);
+        if (count($installation) !== 1 || ! markdownHasCanonicalInstallation($installation[0], $install)) {
+            throw new RuntimeException($name . ' must have exactly one level-2 installation section with one direct Bash fence containing only the canonical installation command.');
+        }
+        if ($name === 'README.md') {
+            $images = markdownImageDestinations($document);
+            $badgeTarget = str_replace('-', '--', $target);
+            if (! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Version-' . $badgeTarget . '-'))
+                || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-'))) {
+                throw new RuntimeException('README.md must show the exact release target in its Version and Install after publication badges.');
+            }
+        }
     }
 
     $changelog = parseReleaseMarkdown(artifactDocument($artifact, 'CHANGELOG.md'), 'CHANGELOG.md');
@@ -155,14 +158,13 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     if ($release === null || $release['linked'] || ! in_array($release['title'], [$target, '[' . $target . ']'], true)) {
         throw new RuntimeException('CHANGELOG.md must put the exact undated target in its first release section.');
     }
+    $quotedTarget = preg_quote($target, '/');
     $targetHeading = '/\A(?:' . $quotedTarget . '|\[' . $quotedTarget . '\])(?=\z|\h)/u';
     if (count(array_filter($headings, static fn(array $heading): bool => preg_match($targetHeading, $heading['title']) === 1)) !== 1) {
         throw new RuntimeException('CHANGELOG.md contains more than one section for the exact release target.');
     }
     $security = parseReleaseMarkdown(artifactDocument($artifact, 'SECURITY.md'), 'SECURITY.md');
-    $supportClaim = 'This artifact targets ' . $target . ' as a Pre-Stable Release Candidate.';
-    if (! array_any(markdownParagraphs($security), static fn(string $text): bool => str_contains($text, $supportClaim))
-        || ! markdownHasUnsupportedRelease($security, $target)) {
+    if (! markdownHasUnsupportedRelease($security, $target)) {
         throw new RuntimeException('SECURITY.md must identify the release target and mark it unsupported without conflicting rows.');
     }
 }
@@ -187,7 +189,7 @@ function inactiveMetadataDocument(string $checkout, string $sha, string $name): 
 function verifyInactiveRelease(string $checkout, string $sha): int
 {
     $documents = [];
-    foreach (['README.md', 'CHANGELOG.md'] as $name) {
+    foreach ([...array_keys(RELEASE_READMES), 'CHANGELOG.md'] as $name) {
         $document = inactiveMetadataDocument($checkout, $sha, $name);
         if ($document === null) {
             fwrite(STDERR, 'Cannot determine release preparation state from ' . $name . '.' . PHP_EOL);
@@ -198,8 +200,17 @@ function verifyInactiveRelease(string $checkout, string $sha): int
     }
 
     $active = [];
-    if (markdownReleaseDeclarations($documents['README.md']) !== []) {
-        $active[] = 'README.md';
+    foreach (RELEASE_READMES as $name => [$title]) {
+        $document = $documents[$name];
+        $publication = markdownSections($document, $title);
+        if (array_any($publication, markdownHasRawHtmlBlocks(...))) {
+            fwrite(STDERR, $name . ' publication-state section must use Markdown. Raw HTML blocks are not allowed.' . PHP_EOL);
+
+            return 1;
+        }
+        if (markdownReadmeReleaseDeclarations($document, $publication) !== []) {
+            $active[] = $name;
+        }
     }
     $version = '[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+';
     $pattern = '/\A(?:' . $version . '|\[' . $version . '\])\z/';

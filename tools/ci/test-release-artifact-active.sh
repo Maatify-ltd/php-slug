@@ -55,6 +55,12 @@ MARKDOWN
 cat > "$base/README_AR.md" <<'MARKDOWN'
 # Slug
 
+## حالة النشر
+
+**الإصدار المستهدف:** `1.0.0-rc.3`، نسخة Release Candidate قبل الإصدار المستقر.
+
+حالة النشر عند التأهيل: `1.0.0-rc.3` غير منشورة.
+
 ## التثبيت
 
 ~~~bash
@@ -172,44 +178,95 @@ replace_document_marker() {
 }
 
 hide_markup=$'<!--\n$0\n-->'
+publication_failure='must have exactly one level-2 publication-state section and one matching release target declaration in a direct paragraph.'
+installation_failure='must have exactly one level-2 installation section with one direct Bash fence containing only the canonical installation command.'
 readme_target_pattern='~^\*\*Release target:\*\*[^\r\n]+$~m'
-readme_target_failure='README.md lacks the exact unpublished release target and badges.'
-readme_conflict='README.md contains an invalid or conflicting release target declaration.'
-replace_document_marker conflicting-release-identity README.md "$readme_target_pattern" \
-    $'$0\n\n**Release target:** `1.0.0-rc.4`, a Pre-Stable Release Candidate.' 1 "$readme_conflict"
-replace_document_marker conflicting-list-release-identity README.md "$readme_target_pattern" \
-    $'$0\n\n1. Package metadata\n   - **Release target:** `1.0.0-rc.4`' 1 "$readme_conflict"
-replace_document_marker valid-list-release-identity README.md "$readme_target_pattern" '- $0' 0 "$pass"
-replace_document_marker conflicting-table-release-identity README.md "$readme_target_pattern" \
-    $'$0\n\n| Package metadata |\n| --- |\n| **Release target:** `1.0.0-rc.4` |' 1 "$readme_conflict"
-replace_document_marker valid-alert-release-identity README.md "$readme_target_pattern" \
-    $'> [!NOTE]\n> $0' 0 "$pass"
-replace_document_marker ignored-list-release-examples README.md "$readme_target_pattern" \
-    $'$0\n\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.4`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.4`' 0 "$pass"
-replace_document_marker conflicting-publication-quote README.md "$readme_target_pattern" \
-    $'$0\n\n> **Release target:** `1.0.0-rc.4`' 1 "$readme_conflict"
-replace_document_marker valid-publication-quote README.md "$readme_target_pattern" '> $0' 0 "$pass"
-replace_document_marker ignored-publication-quote-example README.md "$readme_target_pattern" \
-    $'$0\n\n### Example\n\n> **Release target:** `1.0.0-rc.4`' 0 "$pass"
 readme_install_pattern='#^(```|~~~)bash[^\S\r\n]*\Rcomposer require maatify/php-slug:[^\r\n]+\R\1[^\S\r\n]*$#m'
-install_failure='lacks the exact package-scoped installation command for the target and its Persistence dependency.'
-replace_document_marker hidden-release-identity README.md "$readme_target_pattern" "$hide_markup" 1 "$readme_target_failure"
-replace_document_marker hidden-install-command README.md "$readme_install_pattern" "$hide_markup" 1 "README.md $install_failure"
-replace_document_marker hidden-arabic-install-command README_AR.md "$readme_install_pattern" "$hide_markup" 1 "README_AR.md $install_failure"
-
 install_line_pattern='~^composer require maatify/php-slug:[^\r\n]+$~m'
+canonical_install="composer require maatify/php-slug:$target@RC maatify/php-persistence:1.0.0-rc.1@RC"
 stale_install='composer require maatify/php-slug:1.0.0-rc.2@RC maatify/php-persistence:1.0.0-rc.1@RC'
 install_before="$stale_install"$'\n$0'
 install_after=$'$0\n'"$stale_install"
-install_conflict='contains a contradictory package-scoped installation command.'
-replace_document_marker stale-install-before README.md "$install_line_pattern" "$install_before" 1 "README.md $install_conflict"
-replace_document_marker stale-install-after README.md "$install_line_pattern" "$install_after" 1 "README.md $install_conflict"
-replace_document_marker stale-arabic-install-before README_AR.md "$install_line_pattern" "$install_before" 1 "README_AR.md $install_conflict"
-replace_document_marker stale-arabic-install-after README_AR.md "$install_line_pattern" "$install_after" 1 "README_AR.md $install_conflict"
+
+replace_document_marker conflicting-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n**Release target:** `1.0.0-rc.4`, a Pre-Stable Release Candidate.' 1 "README.md $publication_failure"
+replace_document_marker conflicting-list-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n1. Package metadata\n   - **Release target:** `1.0.0-rc.4`' 1 "README.md $publication_failure"
+replace_document_marker list-only-release-identity README.md "$readme_target_pattern" '- $0' 1 "README.md $publication_failure"
+replace_document_marker conflicting-table-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n| Package metadata |\n| --- |\n| **Release target:** `1.0.0-rc.4` |' 1 "README.md $publication_failure"
+replace_document_marker alert-only-release-identity README.md "$readme_target_pattern" \
+    $'> [!NOTE]\n> $0' 1 "README.md $publication_failure"
+replace_document_marker conflicting-publication-quote README.md "$readme_target_pattern" \
+    $'$0\n\n> **Release target:** `1.0.0-rc.4`' 1 "README.md $publication_failure"
+replace_document_marker quote-only-release-identity README.md "$readme_target_pattern" '> $0' 1 "README.md $publication_failure"
+replace_document_marker conflicting-publication-raw-html README.md "$readme_target_pattern" \
+    $'$0\n\n<p><strong>Release target:</strong> <code>1.0.0-rc.4</code></p>' 1 \
+    'README.md publication-state section must use Markdown. Raw HTML blocks are not allowed.'
+replace_document_marker ignored-publication-comment-example README.md "$readme_target_pattern" \
+    $'$0\n\n<!--\n<p><strong>Release target:</strong> <code>1.0.0-rc.4</code></p>\n-->' 0 "$pass"
+replace_document_marker ignored-publication-fenced-example README.md "$readme_target_pattern" \
+    $'$0\n\n```markdown\n**Release target:** `1.0.0-rc.4`\n```' 0 "$pass"
+replace_document_marker ignored-history-quote-example README.md "$readme_install_pattern" \
+    $'$0\n\n## Earlier release examples\n\n> **Release target:** `1.0.0-rc.2`' 0 "$pass"
+replace_document_marker ignored-history-list-examples README.md "$readme_install_pattern" \
+    $'$0\n\n## Earlier release examples\n\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.2`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.2`' 0 "$pass"
+replace_document_marker missing-version-badge README.md '~^\[!\[Version\][^\r\n]+$~m' '' 1 \
+    'README.md must show the exact release target in its Version and Install after publication badges.'
+
+assert_readme_structure() {
+    local language="$1"
+    local file="$2"
+    local publication="$3"
+    local label="$4"
+    local installation="$5"
+    local publication_pattern="~^## $publication\$~m"
+    local target_pattern="~^\*\*$label:\*\*[^\r\n]+\$~m"
+    local installation_pattern="~^## $installation\$~m"
+
+    replace_document_marker "$language-missing-publication-heading" "$file" "$publication_pattern" '' 1 "$file $publication_failure"
+    replace_document_marker "$language-wrong-publication-heading-level" "$file" "$publication_pattern" '#$0' 1 "$file $publication_failure"
+    replace_document_marker "$language-duplicate-publication-heading" "$file" "$publication_pattern" $'$0\n\n$0' 1 "$file $publication_failure"
+    replace_document_marker "$language-hidden-release-identity" "$file" "$target_pattern" "$hide_markup" 1 "$file $publication_failure"
+    replace_document_marker "$language-malformed-release-label" "$file" "$target_pattern" "**$label** \`$target\`" 1 "$file $publication_failure"
+    replace_document_marker "$language-stale-release-label" "$file" "$target_pattern" "**$label:** \`1.0.0-rc.2\`" 1 "$file $publication_failure"
+    replace_document_marker "$language-duplicate-release-label" "$file" "$target_pattern" $'$0\n\n$0' 1 "$file $publication_failure"
+    replace_document_marker "$language-missing-installation-heading" "$file" "$installation_pattern" '' 1 "$file $installation_failure"
+    replace_document_marker "$language-wrong-installation-heading-level" "$file" "$installation_pattern" '#$0' 1 "$file $installation_failure"
+    replace_document_marker "$language-duplicate-installation-heading" "$file" "$installation_pattern" $'$0\n\n$0' 1 "$file $installation_failure"
+    replace_document_marker "$language-hidden-install-command" "$file" "$readme_install_pattern" "$hide_markup" 1 "$file $installation_failure"
+    replace_document_marker "$language-wrong-fence-language" "$file" "$readme_install_pattern" $'```sh\n'"$canonical_install"$'\n```' 1 "$file $installation_failure"
+    replace_document_marker "$language-duplicate-install-fence" "$file" "$readme_install_pattern" $'$0\n\n$0' 1 "$file $installation_failure"
+    replace_document_marker "$language-stale-install-before" "$file" "$install_line_pattern" "$install_before" 1 "$file $installation_failure"
+    replace_document_marker "$language-stale-install-after" "$file" "$install_line_pattern" "$install_after" 1 "$file $installation_failure"
+}
+
+assert_readme_structure en README.md 'Publication State' 'Release target' Installation
+assert_readme_structure ar README_AR.md 'حالة النشر' 'الإصدار المستهدف' 'التثبيت'
+replace_document_marker ar-uppercase-release-version README_AR.md '~^\*\*الإصدار المستهدف:\*\*[^\r\n]+$~m' \
+    '**الإصدار المستهدف:** `1.0.0-RC.3`' 1 "README_AR.md $publication_failure"
+
 replace_document_marker stale-install-separate-block README.md "$readme_install_pattern" \
-    $'$0\n\n```bash\n'"$stale_install"$'\n```' 1 "README.md $install_conflict"
+    $'$0\n\n```bash\n'"$stale_install"$'\n```' 1 "README.md $installation_failure"
+replace_document_marker stale-sh-install-separate-block README.md "$readme_install_pattern" \
+    $'$0\n\n```sh\n'"$stale_install"$'\n```' 1 "README.md $installation_failure"
+replace_document_marker environment-prefixed-stale-install README.md "$install_line_pattern" \
+    $'$0\nenv COMPOSER_NO_INTERACTION=1 '"$stale_install" 1 "README.md $installation_failure"
+replace_document_marker unexplained-extra-command README.md "$install_line_pattern" \
+    $'$0\nphp -v' 1 "README.md $installation_failure"
+replace_document_marker install-block-comment README.md "$install_line_pattern" \
+    $'# Example comment\n$0' 1 "README.md $installation_failure"
+replace_document_marker nested-only-install-fence README.md "$readme_install_pattern" \
+    $'- Example:\n\n  ```bash\n  '"$canonical_install"$'\n  ```' 1 "README.md $installation_failure"
+replace_document_marker nested-extra-fence README.md "$readme_install_pattern" \
+    $'$0\n\n- Example:\n\n  ```sh\n  '"$stale_install"$'\n  ```' 1 "README.md $installation_failure"
+replace_document_marker extra-html-install-block README.md "$readme_install_pattern" \
+    $'$0\n\n<pre><code>'"$stale_install"$'</code></pre>' 1 "README.md $installation_failure"
+replace_document_marker blank-install-lines README.md "$install_line_pattern" $'\n$0\n' 0 "$pass"
 replace_document_marker historical-install-outside-section README.md "$readme_install_pattern" \
     $'$0\n\n## Earlier release examples\n\n```bash\n'"$stale_install"$'\n```' 0 "$pass"
+replace_document_marker historical-arabic-install-outside-section README_AR.md "$readme_install_pattern" \
+    $'$0\n\n## أمثلة الإصدارات السابقة\n\n~~~bash\n'"$stale_install"$'\n~~~' 0 "$pass"
 
 security_row_pattern='~^(\| `1\.0\.0-rc\.3` pre-release \(artifact target\) \| )No( \|[^\r\n]*)$~m'
 security_failure='SECURITY.md must identify the release target and mark it unsupported without conflicting rows.'
