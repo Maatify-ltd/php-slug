@@ -272,27 +272,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_ARTIFACT_SHA }}
           fetch-depth: 0
-      - name: Verify that release preparation is inactive
-        if: ${{ env.RELEASE_ARTIFACT_TARGET == '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for file in README.md CHANGELOG.md; do
-            if [[ ! -f "$file" || ! -r "$file" || ! -s "$file" ]]; then
-              echo "Cannot determine release preparation state from $file." >&2
-              exit 1
-            fi
-          done
-          active_metadata=$(awk '
-            FILENAME == "README.md" && tolower($0) ~ /^[[:blank:]]*(\*\*)?release target:/ { print FILENAME }
-            FILENAME == "CHANGELOG.md" && /^##[[:blank:]]+(\[[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)[[:space:]]*$/ { print FILENAME }
-          ' README.md CHANGELOG.md)
-          if [[ -n "$active_metadata" ]]; then
-            echo 'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.' >&2
-            printf 'Active release metadata found in:\n%s\n' "$active_metadata" >&2
-            exit 1
-          fi
-          echo 'Release Artifact Verification is not applicable. No release target is active.'
+      - name: Run release inactivity regression tests
+        run: bash tools/ci/test-release-artifact-inactive.sh
       - name: Set up PHP 8.5
         if: ${{ env.RELEASE_ARTIFACT_TARGET != '' }}
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
@@ -306,8 +287,7 @@ jobs:
       - name: Verify the installed Stable PHP patch
         if: ${{ env.RELEASE_ARTIFACT_TARGET != '' }}
         run: bash tools/ci/run-gate.sh php-runtime "8.5"
-      - name: Verify the release archives
-        if: ${{ env.RELEASE_ARTIFACT_TARGET != '' }}
+      - name: Verify the release artifact or inactive state
         run: bash tools/ci/run-gate.sh release-artifact "$RELEASE_ARTIFACT_SHA" "$RELEASE_ARTIFACT_TARGET"
 
   stable-gate:

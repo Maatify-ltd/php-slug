@@ -229,7 +229,8 @@ Gates:
   workflow-lint    actionlint for every .github/workflows/*.yml|*.yaml
   whitespace RANGE Git-aware whitespace check for an explicit BASE...HEAD committed range
   consumer         Consumer Verification Harness clean run x2
-  release-artifact SHA TARGET Verify Git and Composer archives for an exact x.y.z-rc.N target
+  release-artifact SHA TARGET Verify archives for an exact x.y.z-rc.N target
+  release-artifact SHA ""     Verify there is no active release target
   examples-smoke   All maintained standalone examples; persisted examples use the canonical Compose lifecycle
   runtime-portability Latest dependencies, runtime diagnostics, focused portability tests, and stateless example
 USAGE
