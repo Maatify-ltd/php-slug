@@ -130,9 +130,23 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     }
 
     $changelog = artifactDocument($artifact, 'CHANGELOG.md');
-    preg_match_all('/^##\h+([^\r\n]*\S)\h*\r?$/m', $changelog, $headings);
-    $firstRelease = ($headings[1][0] ?? null) === '[Unreleased]' ? 1 : 0;
-    $heading = $headings[1][$firstRelease] ?? null;
+    // Mask comments without joining lines or adjacent heading syntax.
+    $masked = preg_replace_callback('/<!--.*?(?:-->|\z)/s', static function (array $comment): string {
+        return preg_replace('/[^\r\n]+/', "\0", $comment[0])
+            ?? throw new RuntimeException('Unable to mask CHANGELOG.md HTML comment text.');
+    }, $changelog);
+    if ($masked === null || preg_match_all('/^##\h+([^\r\n]*\S)\h*\r?$/m', $masked, $headings) === false) {
+        throw new RuntimeException('Unable to read CHANGELOG.md release headings.');
+    }
+    $visibleHeadings = [];
+    foreach ($headings[1] as $rawHeading) {
+        $title = rtrim($rawHeading, " \t\0");
+        if ($title !== '') {
+            $visibleHeadings[] = $title;
+        }
+    }
+    $firstRelease = ($visibleHeadings[0] ?? null) === '[Unreleased]' ? 1 : 0;
+    $heading = $visibleHeadings[$firstRelease] ?? null;
     if ($heading !== $target && $heading !== '[' . $target . ']') {
         throw new RuntimeException('CHANGELOG.md must put the exact undated target in its first release section.');
     }
