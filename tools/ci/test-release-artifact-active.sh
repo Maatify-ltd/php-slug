@@ -186,11 +186,30 @@ replace_document_marker valid-alert-release-identity README.md "$readme_target_p
     $'> [!NOTE]\n> $0' 0 "$pass"
 replace_document_marker ignored-list-release-examples README.md "$readme_target_pattern" \
     $'$0\n\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.4`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.4`' 0 "$pass"
+replace_document_marker conflicting-publication-quote README.md "$readme_target_pattern" \
+    $'$0\n\n> **Release target:** `1.0.0-rc.4`' 1 "$readme_conflict"
+replace_document_marker valid-publication-quote README.md "$readme_target_pattern" '> $0' 0 "$pass"
+replace_document_marker ignored-publication-quote-example README.md "$readme_target_pattern" \
+    $'$0\n\n### Example\n\n> **Release target:** `1.0.0-rc.4`' 0 "$pass"
 readme_install_pattern='#^(```|~~~)bash[^\S\r\n]*\Rcomposer require maatify/php-slug:[^\r\n]+\R\1[^\S\r\n]*$#m'
 install_failure='lacks the exact package-scoped installation command for the target and its Persistence dependency.'
 replace_document_marker hidden-release-identity README.md "$readme_target_pattern" "$hide_markup" 1 "$readme_target_failure"
 replace_document_marker hidden-install-command README.md "$readme_install_pattern" "$hide_markup" 1 "README.md $install_failure"
 replace_document_marker hidden-arabic-install-command README_AR.md "$readme_install_pattern" "$hide_markup" 1 "README_AR.md $install_failure"
+
+install_line_pattern='~^composer require maatify/php-slug:[^\r\n]+$~m'
+stale_install='composer require maatify/php-slug:1.0.0-rc.2@RC maatify/php-persistence:1.0.0-rc.1@RC'
+install_before="$stale_install"$'\n$0'
+install_after=$'$0\n'"$stale_install"
+install_conflict='contains a contradictory package-scoped installation command.'
+replace_document_marker stale-install-before README.md "$install_line_pattern" "$install_before" 1 "README.md $install_conflict"
+replace_document_marker stale-install-after README.md "$install_line_pattern" "$install_after" 1 "README.md $install_conflict"
+replace_document_marker stale-arabic-install-before README_AR.md "$install_line_pattern" "$install_before" 1 "README_AR.md $install_conflict"
+replace_document_marker stale-arabic-install-after README_AR.md "$install_line_pattern" "$install_after" 1 "README_AR.md $install_conflict"
+replace_document_marker stale-install-separate-block README.md "$readme_install_pattern" \
+    $'$0\n\n```bash\n'"$stale_install"$'\n```' 1 "README.md $install_conflict"
+replace_document_marker historical-install-outside-section README.md "$readme_install_pattern" \
+    $'$0\n\n## Earlier release examples\n\n```bash\n'"$stale_install"$'\n```' 0 "$pass"
 
 security_row_pattern='~^(\| `1\.0\.0-rc\.3` pre-release \(artifact target\) \| )No( \|[^\r\n]*)$~m'
 security_failure='SECURITY.md must identify the release target and mark it unsupported without conflicting rows.'
@@ -202,6 +221,24 @@ replace_document_marker supported-before-unsupported SECURITY.md "$security_row_
     $'${1}Yes${2}\n$0' 1 "$security_failure"
 replace_document_marker supported-unrelated-release SECURITY.md "$security_row_pattern" \
     $'$0\n| `1.0.0-rc.30` pre-release (artifact target) | Yes |' 0 "$pass"
+
+composer_version_fixture() {
+    local name="$1"
+    local version_json="$2"
+    local fixture="$scratch/$name"
+
+    new_fixture "$name"
+    php -r '
+        $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
+        $manifest["version"] = json_decode($argv[2], flags: JSON_THROW_ON_ERROR);
+        file_put_contents($argv[1], json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL);
+    ' "$fixture/composer.json" "$version_json"
+    commit_fixture "$fixture"
+    assert_gate "$fixture" 1 'Archived composer.json must not declare a version key.'
+}
+
+composer_version_fixture explicit-composer-version '"1.0.0-rc.2"'
+composer_version_fixture explicit-target-composer-version "\"$target\""
 
 new_fixture missing-runtime
 printf '%s\n' '/src/Fixture.php export-ignore' >> "$scratch/missing-runtime/.gitattributes"

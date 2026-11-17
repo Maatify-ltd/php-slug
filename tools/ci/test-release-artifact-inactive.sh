@@ -83,6 +83,12 @@ assert_inactive_fixture readme-alert-marker 1 "$readme_guard" \
     $'# Slug\n\n> [!NOTE]\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture readme-inline-alert-example 0 "$inactive" \
     "$readme"$'\n> [!NOTE] **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-publication-quote 1 "$readme_guard" \
+    $'# Slug\n\n## Publication State\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-publication-quote-example 0 "$inactive" \
+    $'# Slug\n\n## Publication State\n\nNo target is in preparation.\n\n### Example\n\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-publication-quote-hidden 0 "$inactive" \
+    $'# Slug\n\n## Publication State\n\nNo target is in preparation.\n\n<!--\n> **Release target:** `1.0.0-rc.3`\n-->\n' "$dated"
 assert_inactive_fixture readme-list-examples 0 "$inactive" \
     "$readme"$'\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.3`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture changelog-plain 1 "$changelog_guard" "$readme" $'# Changelog\n\n## 1.0.0-rc.3\n'
@@ -172,4 +178,4 @@ assert_assume_unchanged_readme committed-inactive 0 "$inactive" "$readme" "$acti
         "$replaced_blob_head" ''
 )
 
-echo 'Release Artifact Verification inactive regression passed (38 cases).'
+echo 'Release Artifact Verification inactive regression passed (41 cases).'

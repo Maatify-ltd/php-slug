@@ -95,15 +95,48 @@ function markdownHasVisibleContent(DOMElement $node): bool
 /** @return Generator<int, DOMElement> */
 function markdownDeclarationBlocks(DOMElement $container): Generator
 {
+    $inPublicationState = false;
+    $exampleLevel = null;
+    $precedingExample = false;
     foreach (markdownElements($container) as $node) {
+        if ($container->localName === 'document' && $node->localName === 'heading') {
+            $level = (int) $node->getAttribute('level');
+            $title = trim(markdownVisibleText($node));
+            if ($level <= 2) {
+                $inPublicationState = $level === 2 && strcasecmp($title, 'Publication State') === 0;
+            }
+            if ($exampleLevel !== null && $level <= $exampleLevel) {
+                $exampleLevel = null;
+            }
+            if ($inPublicationState && $exampleLevel === null && preg_match('/\bexamples?\b/i', $title) === 1) {
+                $exampleLevel = $level;
+            }
+        }
         if (in_array($node->localName, ['paragraph', 'heading', 'table_header', 'table_row'], true)) {
             yield $node;
         } elseif (in_array($node->localName, ['list', 'item', 'table'], true)) {
             yield from markdownDeclarationBlocks($node);
-        } elseif ($node->localName === 'block_quote' && markdownIsGitHubAlert($node)) {
+        } elseif ($node->localName === 'block_quote' && (markdownIsGitHubAlert($node)
+            || ($inPublicationState && $exampleLevel === null && ! $precedingExample
+                && ! markdownStartsWithExampleLabel($node)))) {
             yield from markdownDeclarationBlocks($node);
         }
+        if (! in_array($node->localName, ['html_block', 'html_inline'], true)) {
+            $precedingExample = $node->localName === 'paragraph' && markdownIsExampleLabel(markdownVisibleText($node, true));
+        }
     }
+}
+
+function markdownIsExampleLabel(string $text): bool
+{
+    return preg_match('/\A(?:[\w-]+\h+){0,3}examples?\h*:/i', trim($text)) === 1;
+}
+
+function markdownStartsWithExampleLabel(DOMElement $quote): bool
+{
+    $first = markdownElements($quote)[0] ?? null;
+
+    return $first?->localName === 'paragraph' && markdownIsExampleLabel(markdownVisibleText($first, true));
 }
 
 /** A GitHub alert starts with its marker alone on the first quoted line. */
@@ -168,21 +201,86 @@ function markdownReleaseHeadings(DOMElement $document): array
     return $headings;
 }
 
-/** Finds an exact installation line in a Bash block in the named top-level section. */
-function markdownInstallationContains(DOMElement $document, string $section, string $install): bool
+/** @return list<string> Bash blocks inside the named top-level section. */
+function markdownInstallationBlocks(DOMElement $document, string $section): array
 {
     $inInstallation = false;
+    $blocks = [];
     foreach (markdownElements($document) as $node) {
         if ($node->localName === 'heading' && in_array($node->getAttribute('level'), ['1', '2'], true)) {
             $inInstallation = $node->getAttribute('level') === '2' && trim(markdownVisibleText($node)) === $section;
         }
-        if ($inInstallation && $node->localName === 'code_block' && preg_match('/\Abash(?:\s|\z)/', $node->getAttribute('info')) === 1
-            && in_array($install, explode("\n", $node->textContent), true)) {
-            return true;
+        if ($inInstallation) {
+            array_push($blocks, ...markdownBashBlocks($node));
+        }
+    }
+
+    return $blocks;
+}
+
+/** @return Generator<int, string> */
+function markdownBashBlocks(DOMElement $node): Generator
+{
+    if ($node->localName === 'code_block' && preg_match('/\Abash(?:\s|\z)/', $node->getAttribute('info')) === 1) {
+        yield $node->textContent;
+    } elseif (in_array($node->localName, ['list', 'item'], true) || ($node->localName === 'block_quote' && markdownIsGitHubAlert($node))) {
+        foreach (markdownElements($node) as $child) {
+            yield from markdownBashBlocks($child);
+        }
+    }
+}
+
+/** @param array<string, string> $requiredPins Direct package pins required in installation examples. */
+function bashHasContradictoryComposerPin(string $block, array $requiredPins): bool
+{
+    // Recognize direct Composer commands with literal arguments, without interpreting shell code.
+    foreach (bashDirectCommands($block) as $command) {
+        if ($command[0] !== 'composer') {
+            continue;
+        }
+        $commandIndex = array_find_key(array_slice($command, 1, preserve_keys: true), static fn(string $token): bool => ! str_starts_with($token, '-'));
+        if ($commandIndex === null || $command[$commandIndex] !== 'require') {
+            continue;
+        }
+        foreach (array_slice($command, $commandIndex + 1) as $token) {
+            if ($token === '<' || $token === '>') {
+                break;
+            }
+            $argument = str_replace(['"', "'"], '', $token);
+            $name = strstr($argument, ':', true) ?: $argument;
+            if (isset($requiredPins[$name]) && $argument !== $name . ':' . $requiredPins[$name]) {
+                return true;
+            }
         }
     }
 
     return false;
+}
+
+/** @return Generator<int, non-empty-list<string>> */
+function bashDirectCommands(string $block): Generator
+{
+    foreach (explode("\n", str_replace("\\\n", '', $block)) as $line) {
+        $line = preg_replace('/\A\h*\$\h+/', '', $line) ?? $line;
+        preg_match_all('/(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27;|&<>])+|[;|&<>]/', $line, $matches);
+        $command = [];
+        foreach ($matches[0] as $token) {
+            if (str_starts_with($token, '#')) {
+                break;
+            }
+            if (in_array($token, [';', '|', '&'], true)) {
+                if ($command !== []) {
+                    yield $command;
+                    $command = [];
+                }
+            } else {
+                $command[] = $token;
+            }
+        }
+        if ($command !== []) {
+            yield $command;
+        }
+    }
 }
 
 /** @return list<string> */

@@ -109,6 +109,9 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
         || ($composer['prefer-stable'] ?? null) !== true || ! is_string($dependency)) {
         throw new RuntimeException('Archived Composer identity or stable dependency-resolution settings are invalid.');
     }
+    if (array_key_exists('version', $composer)) {
+        throw new RuntimeException('Archived composer.json must not declare a version key.');
+    }
     $number = '(?:0|[1-9][0-9]*)';
     $version = $number . '\\.' . $number . '\\.' . $number . '-rc\\.' . $number;
     if (preg_match('/\A=?(' . $version . ')\z/', $dependency, $match) !== 1
@@ -116,11 +119,16 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
         throw new RuntimeException('The archived Persistence trial constraint must pin exactly one RC.');
     }
 
-    $install = 'composer require maatify/php-slug:' . $target . '@RC maatify/php-persistence:' . $match[1] . '@RC';
+    $pins = ['maatify/php-slug' => $target . '@RC', 'maatify/php-persistence' => $match[1] . '@RC'];
+    $install = 'composer require maatify/php-slug:' . $pins['maatify/php-slug'] . ' maatify/php-persistence:' . $pins['maatify/php-persistence'];
     $readme = parseReleaseMarkdown(artifactDocument($artifact, 'README.md'), 'README.md');
     $readmeArabic = parseReleaseMarkdown(artifactDocument($artifact, 'README_AR.md'), 'README_AR.md');
     foreach (['README.md' => [$readme, 'Installation'], 'README_AR.md' => [$readmeArabic, 'التثبيت']] as $name => [$document, $section]) {
-        if (! markdownInstallationContains($document, $section, $install)) {
+        $blocks = markdownInstallationBlocks($document, $section);
+        if (array_any($blocks, static fn(string $block): bool => bashHasContradictoryComposerPin($block, $pins))) {
+            throw new RuntimeException($name . ' contains a contradictory package-scoped installation command.');
+        }
+        if (! array_any($blocks, static fn(string $block): bool => in_array($install, explode("\n", $block), true))) {
             throw new RuntimeException($name . ' lacks the exact package-scoped installation command for the target and its Persistence dependency.');
         }
     }
