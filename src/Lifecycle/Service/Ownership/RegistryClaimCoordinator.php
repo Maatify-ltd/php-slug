@@ -149,7 +149,7 @@ final readonly class RegistryClaimCoordinator
             return $this->result($identity, $claim, $attempt + 1);
         }
 
-        throw new SlugAllocationExhaustedException('All 1000 generated slug candidates are unavailable.');
+        throw new SlugAllocationExhaustedException('All generated slug candidates are unavailable.');
     }
 
     /** Inserts a claim for a new assignment while preserving existing-role rules. */
