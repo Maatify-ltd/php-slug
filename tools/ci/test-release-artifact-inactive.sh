@@ -67,12 +67,24 @@ inactive='Release Artifact Verification is not applicable. No release target is 
 assert_inactive_fixture readme-bold 1 "$readme_guard" $'# Slug\n\n**Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture readme-bold-title-case 1 "$readme_guard" $'# Slug\n\n**Release Target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture readme-uppercase 1 "$readme_guard" $'# Slug\n\n RELEASE TARGET: `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-later-in-paragraph 1 "$readme_guard" \
+    $'# Slug\n\nA consumer-facing package. **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-after-softbreak 1 "$readme_guard" \
+    $'# Slug\n\nA consumer-facing package.\n**Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture inline-code-readme-label 0 "$inactive" \
+    $'# Slug\n\n`Release target:` is a field in the preparation template.\n' "$dated"
 assert_inactive_fixture changelog-plain 1 "$changelog_guard" "$readme" $'# Changelog\n\n## 1.0.0-rc.3\n'
 assert_inactive_fixture changelog-bracketed 1 "$changelog_guard" "$readme" $'# Changelog\n\n## [1.0.0-rc.3]\n'
 assert_inactive_fixture changelog-linked 1 "$changelog_guard" "$readme" \
     $'# Changelog\n\n## [1.0.0-rc.3]\n\n[1.0.0-rc.3]: https://example.invalid/releases/tag/v1.0.0-rc.3\n'
 assert_inactive_fixture missing-readme 1 'Cannot determine release preparation state from README.md.' MISSING "$dated"
 assert_inactive_fixture empty-changelog 1 'Cannot determine release preparation state from CHANGELOG.md.' "$readme" ''
+assert_inactive_fixture blank-readme 1 'Cannot determine release preparation state from README.md.' $' \t\n\n' "$dated"
+assert_inactive_fixture blank-changelog 1 'Cannot determine release preparation state from CHANGELOG.md.' "$readme" $' \t\n\n'
+assert_inactive_fixture comment-only-readme 1 'Cannot determine release preparation state from README.md.' \
+    $'<!--\nOnly a comment.\n-->\n' "$dated"
+assert_inactive_fixture comment-only-changelog 1 'Cannot determine release preparation state from CHANGELOG.md.' \
+    "$readme" $'<!--\nOnly a comment.\n-->\n'
 assert_inactive_fixture dated-history 0 "$inactive" "$readme" "$dated"
 assert_inactive_fixture hidden-multiline 0 "$inactive" "$readme" "${dated}"$'\n<!--\n## [1.0.0-rc.3]\n-->\n'
 assert_inactive_fixture hidden-unclosed 0 "$inactive" "$readme" "${dated}"$'\n<!--\n## 1.0.0-rc.3\n'
@@ -91,4 +103,24 @@ assert_gate dated-history 2 "Usage: bash tools/ci/verify-release-artifact.sh <fu
 printf '%s\n' 'SYNTHETIC_DIRTY_CHECKOUT' > "$scratch/dated-history/untracked-fixture"
 assert_gate dated-history 1 'Release Artifact Verification requires a clean source worktree and index.' "$dated_head" ''
 
-echo 'Release Artifact Verification inactive regression passed (20 cases).'
+assert_assume_unchanged_readme() {
+    local name="$1"
+    local status="$2"
+    local expected="$3"
+    local fixture="$scratch/$name"
+
+    build_fixture "$name" "$4" "$dated"
+    git -C "$fixture" update-index --assume-unchanged README.md
+    printf '%s' "$5" > "$fixture/README.md"
+    if [[ -n "$(git --no-optional-locks -C "$fixture" status --porcelain)" ]]; then
+        echo 'The inactive fixture must hide its modified README from git status.' >&2
+        exit 1
+    fi
+    assert_gate "$name" "$status" "$expected" "$(git -C "$fixture" rev-parse HEAD)" ''
+}
+
+active_readme=$'# Slug\n\n**Release target:** `1.0.0-rc.3`\n'
+assert_assume_unchanged_readme committed-active 1 "$readme_guard" "$active_readme" "$readme"
+assert_assume_unchanged_readme committed-inactive 0 "$inactive" "$readme" "$active_readme"
+
+echo 'Release Artifact Verification inactive regression passed (29 cases).'

@@ -2,35 +2,49 @@
 
 declare(strict_types=1);
 
-/** Parses a document to the CommonMark AST without evaluating HTML or loading XML resources. */
-function parseReleaseMarkdown(string $contents, string $name): DOMElement
+/**
+ * Runs a read-only verification tool through an argument vector.
+ *
+ * @param list<string> $command
+ */
+function readReleaseToolOutput(array $command, string $contents = ''): ?string
 {
     $streams = [];
     try {
         for ($descriptor = 0; $descriptor < 3; $descriptor++) {
             $stream = tmpfile();
             if ($stream === false) {
-                throw new RuntimeException('Unable to open Markdown parser streams.');
+                throw new RuntimeException('Unable to open release verification streams.');
             }
             $streams[] = $stream;
         }
         [$input, $output] = $streams;
         if (fwrite($input, $contents) !== strlen($contents) || ! rewind($input)) {
-            throw new RuntimeException('Unable to prepare Markdown input for ' . $name . '.');
+            throw new RuntimeException('Unable to prepare release verification input.');
         }
-        $process = proc_open(['cmark-gfm', '--to', 'xml', '--extension', 'table'], $streams, $pipes);
+        $process = proc_open($command, $streams, $pipes);
         if (! is_resource($process) || proc_close($process) !== 0 || ! rewind($output)) {
-            throw new RuntimeException('Markdown parser failed for ' . $name . '.');
+            return null;
         }
-        $xml = stream_get_contents($output);
+        $result = stream_get_contents($output);
+
+        return $result === false ? null : $result;
     } finally {
         foreach ($streams as $stream) {
             fclose($stream);
         }
     }
+}
 
+/** Parses a document to the CommonMark AST without evaluating HTML or loading XML resources. */
+function parseReleaseMarkdown(string $contents, string $name): DOMElement
+{
+    $xml = readReleaseToolOutput(['cmark-gfm', '--to', 'xml', '--extension', 'table'], $contents);
+    if ($xml === null) {
+        throw new RuntimeException('Markdown parser failed for ' . $name . '.');
+    }
     $document = new DOMDocument();
-    if ($xml === false || $xml === '' || ! $document->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING)) {
+    if ($xml === '' || ! $document->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING)) {
         throw new RuntimeException('Markdown parser returned invalid XML for ' . $name . '.');
     }
     $root = $document->documentElement;
@@ -55,14 +69,48 @@ function markdownElements(DOMElement $parent, ?string $type = null): array
 }
 
 /** Returns visible inline text while ignoring HTML, images, and fenced examples. */
-function markdownVisibleText(DOMElement $node): string
+function markdownVisibleText(DOMElement $node, bool $maskInlineCode = false): string
 {
     return match ($node->localName) {
         'html_block', 'html_inline', 'image', 'code_block' => '',
-        'text', 'code' => $node->textContent,
+        'text' => $node->textContent,
+        'code' => $maskInlineCode ? str_repeat("\0", strlen($node->textContent)) : $node->textContent,
         'softbreak', 'linebreak' => ' ',
-        default => implode('', array_map(markdownVisibleText(...), markdownElements($node))),
+        default => implode('', array_map(static fn(DOMElement $child): string => markdownVisibleText($child, $maskInlineCode), markdownElements($node))),
     };
+}
+
+/** Recognizes substantive visible content without treating comments as a document. */
+function markdownHasVisibleContent(DOMElement $node): bool
+{
+    return match ($node->localName) {
+        'html_block', 'html_inline' => false,
+        'image' => $node->getAttribute('destination') !== '',
+        'text', 'code', 'code_block' => preg_match('/[^\s\p{Z}]/u', $node->textContent) === 1,
+        default => array_any(markdownElements($node), markdownHasVisibleContent(...)),
+    };
+}
+
+/** @return list<string|null> Declared release targets, with null for a label lacking a valid RC */
+function markdownReleaseDeclarations(DOMElement $document): array
+{
+    $declarations = [];
+    foreach (markdownElements($document, 'paragraph') as $paragraph) {
+        // Inline code values remain available, but inline code cannot supply the declaration label.
+        $text = markdownVisibleText($paragraph);
+        $labelsOnly = markdownVisibleText($paragraph, true);
+        if (preg_match_all('/(?<![\p{L}\p{N}_])release\h+target:/iu', $labelsOnly, $matches, PREG_OFFSET_CAPTURE) === false) {
+            throw new RuntimeException('Unable to parse README release target declarations.');
+        }
+        foreach ($matches[0] as [$label, $offset]) {
+            $value = substr($text, $offset + strlen($label));
+            $version = preg_match('/\A\s*([0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)(?=\z|[\s,;:)]|\.(?:\s|\z))/i', $value, $match) === 1
+                ? strtolower($match[1]) : null;
+            $declarations[] = $version;
+        }
+    }
+
+    return $declarations;
 }
 
 /** @return list<string> */

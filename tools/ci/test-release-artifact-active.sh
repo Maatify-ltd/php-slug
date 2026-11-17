@@ -16,20 +16,25 @@ commit_fixture() {
 }
 
 mkdir -p "$base"/{tools/ci,src,schema/mysql,docs/guides,examples}
-cp "$repo_root/"{.gitattributes,.gitignore,README.md,README_AR.md,CHANGELOG.md,SECURITY.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,SLUG_PACKAGE_REFERENCE.md,composer.json,llms.txt} \
+cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,SLUG_PACKAGE_REFERENCE.md,llms.txt} \
     "$base/"
 cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php} \
     "$base/tools/ci/"
 
-# Keep testing active archives after the package stops preparing this fixture target.
-if ! grep -Fq '**Release target:** `1.0.0-rc.3`' "$base/README.md" ||
-    ! grep -Fqx '## 1.0.0-rc.3' "$base/CHANGELOG.md"; then
-    php -r '
-        $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
-        $manifest["require"]["maatify/php-persistence"] = "1.0.0-rc.1";
-        file_put_contents($argv[1], json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
-    ' "$base/composer.json"
-    cat > "$base/README.md" <<'MARKDOWN'
+# The fixture has fixed release documents and dependency identity in every repository phase.
+php -r '
+    $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
+    $fixture = [
+        "name" => "maatify/php-slug",
+        "description" => "Synthetic release archive fixture for Slug.",
+        "require" => ["maatify/php-persistence" => "1.0.0-rc.1"],
+        "archive" => $manifest["archive"],
+        "minimum-stability" => "stable",
+        "prefer-stable" => true,
+    ];
+    echo json_encode($fixture, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), PHP_EOL;
+' "$repo_root/composer.json" > "$base/composer.json"
+cat > "$base/README.md" <<'MARKDOWN'
 # Slug
 
 [![Version](https://img.shields.io/badge/Version-1.0.0--rc.3-blue.svg)](#publication-state)
@@ -47,16 +52,16 @@ At qualification, `1.0.0-rc.3` is unpublished.
 composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ```
 MARKDOWN
-    cat > "$base/README_AR.md" <<'MARKDOWN'
+cat > "$base/README_AR.md" <<'MARKDOWN'
 # Slug
 
 ## التثبيت
 
-```bash
+~~~bash
 composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
-```
+~~~
 MARKDOWN
-    cat > "$base/SECURITY.md" <<'MARKDOWN'
+cat > "$base/SECURITY.md" <<'MARKDOWN'
 # Security Policy
 
 This artifact targets `1.0.0-rc.3` as a Pre-Stable Release Candidate.
@@ -65,8 +70,7 @@ This artifact targets `1.0.0-rc.3` as a Pre-Stable Release Candidate.
 | --- | --- |
 | `1.0.0-rc.3` pre-release (artifact target) | No |
 MARKDOWN
-    printf '%s\n' '# Changelog' '' '## 1.0.0-rc.3' > "$base/CHANGELOG.md"
-fi
+printf '%s\n' '# Changelog' '' '## 1.0.0-rc.3' > "$base/CHANGELOG.md"
 printf '<?php\n' > "$base/src/Fixture.php"
 printf 'SELECT 1;\n' > "$base/schema/mysql/fixture.sql"
 printf '# Distribution fixture\n' > "$base/docs/guides/FIXTURE.md"
@@ -131,6 +135,11 @@ changelog_fixture linked-unreleased 0 "$pass" '## [Unreleased]' '' "## [$target]
 changelog_fixture linked-target 1 "$changelog_failure" "## [$target]" '' \
     "[$target]: https://example.invalid/releases/tag/v$target"
 changelog_fixture dated 1 "$changelog_failure" "## $target - 2026-11-17"
+changelog_fixture duplicate-dated-target 1 'CHANGELOG.md contains more than one section for the exact release target.' \
+    "## $target" '' "## [$target] - 2026-11-17"
+changelog_fixture duplicate-parenthetical-date 1 'CHANGELOG.md contains more than one section for the exact release target.' \
+    "## $target" '' "## $target (2026-11-17)"
+changelog_fixture different-dated-target 0 "$pass" "## $target" '' '## [1.0.0-rc.30] - 2026-11-17'
 changelog_fixture wrong 1 "$changelog_failure" '## 9999.9999.9999-rc.9999' '' "## $target"
 changelog_fixture missing 1 "$changelog_failure" 'No release sections.'
 changelog_fixture hidden-html 1 "$changelog_failure" '<!--' "## $target" '-->'
@@ -163,10 +172,14 @@ replace_document_marker() {
 }
 
 hide_markup=$'<!--\n$0\n-->'
+readme_target_pattern='~^\*\*Release target:\*\*[^\r\n]+$~m'
+readme_target_failure='README.md lacks the exact unpublished release target and badges.'
+replace_document_marker conflicting-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n**Release target:** `1.0.0-rc.4`, a Pre-Stable Release Candidate.' 1 \
+    'README.md contains an invalid or conflicting release target declaration.'
 readme_install_pattern='#^(```|~~~)bash[^\S\r\n]*\Rcomposer require maatify/php-slug:[^\r\n]+\R\1[^\S\r\n]*$#m'
 install_failure='lacks the exact package-scoped installation command for the target and its Persistence dependency.'
-replace_document_marker hidden-release-identity README.md '~^\*\*Release target:\*\*[^\r\n]+$~m' "$hide_markup" 1 \
-    'README.md lacks the exact unpublished release target and badges.'
+replace_document_marker hidden-release-identity README.md "$readme_target_pattern" "$hide_markup" 1 "$readme_target_failure"
 replace_document_marker hidden-install-command README.md "$readme_install_pattern" "$hide_markup" 1 "README.md $install_failure"
 replace_document_marker hidden-arabic-install-command README_AR.md "$readme_install_pattern" "$hide_markup" 1 "README_AR.md $install_failure"
 
@@ -179,6 +192,15 @@ new_fixture missing-runtime
 printf '%s\n' '/src/Fixture.php export-ignore' >> "$scratch/missing-runtime/.gitattributes"
 commit_fixture "$scratch/missing-runtime"
 assert_gate "$scratch/missing-runtime" 1 'Missing: [src/Fixture.php].'
+
+new_fixture composer-only-missing-runtime
+php -r '
+    $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
+    $manifest["archive"]["exclude"][] = "/src/Fixture.php";
+    file_put_contents($argv[1], json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL);
+' "$scratch/composer-only-missing-runtime/composer.json"
+commit_fixture "$scratch/composer-only-missing-runtime"
+assert_gate "$scratch/composer-only-missing-runtime" 1 'COMPOSER_ZIP payload differs from the exact candidate tree. Missing: [src/Fixture.php].'
 
 new_fixture forbidden-development-path
 printf '%s\n' '/.env -export-ignore' >> "$scratch/forbidden-development-path/.gitattributes"

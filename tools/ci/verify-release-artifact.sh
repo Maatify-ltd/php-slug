@@ -34,7 +34,7 @@ if ! php -r 'exit(extension_loaded("dom") ? 0 : 1);'; then
     exit 1
 fi
 if [[ -z "$target" ]]; then
-    exec php "$repo_root/tools/ci/verify-release-artifact.php" --inactive "$repo_root"
+    exec php "$repo_root/tools/ci/verify-release-artifact.php" --inactive "$repo_root" "$sha"
 fi
 
 require_command composer

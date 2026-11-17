@@ -125,14 +125,18 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
         }
     }
     $paragraphs = markdownParagraphs($readme);
+    $declarations = markdownReleaseDeclarations($readme);
     $images = markdownImageDestinations($readme);
     $quotedTarget = preg_quote($target, '/');
     $badgeTarget = str_replace('-', '--', $target);
-    if (! array_any($paragraphs, static fn(string $text): bool => preg_match('/\ARelease target:\h+' . $quotedTarget . '(?![A-Za-z0-9.-])/i', $text) === 1)
+    if (! in_array($target, $declarations, true)
         || ! array_any($paragraphs, static fn(string $text): bool => preg_match('/(?<![A-Za-z0-9.-])' . $quotedTarget . ' is unpublished\b/', $text) === 1)
         || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Version-' . $badgeTarget . '-'))
         || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-'))) {
         throw new RuntimeException('README.md lacks the exact unpublished release target and badges.');
+    }
+    if (array_any($declarations, static fn(?string $declared): bool => $declared !== $target)) {
+        throw new RuntimeException('README.md contains an invalid or conflicting release target declaration.');
     }
 
     $changelog = parseReleaseMarkdown(artifactDocument($artifact, 'CHANGELOG.md'), 'CHANGELOG.md');
@@ -143,6 +147,10 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     if ($release === null || $release['linked'] || ! in_array($release['title'], [$target, '[' . $target . ']'], true)) {
         throw new RuntimeException('CHANGELOG.md must put the exact undated target in its first release section.');
     }
+    $targetHeading = '/\A(?:' . $quotedTarget . '|\[' . $quotedTarget . '\])(?=\z|\h)/u';
+    if (count(array_filter($headings, static fn(array $heading): bool => preg_match($targetHeading, $heading['title']) === 1)) !== 1) {
+        throw new RuntimeException('CHANGELOG.md contains more than one section for the exact release target.');
+    }
     $security = parseReleaseMarkdown(artifactDocument($artifact, 'SECURITY.md'), 'SECURITY.md');
     $supportClaim = 'This artifact targets ' . $target . ' as a Pre-Stable Release Candidate.';
     if (! array_any(markdownParagraphs($security), static fn(string $text): bool => str_contains($text, $supportClaim))
@@ -151,29 +159,43 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     }
 }
 
+/** Reads a regular document blob from the candidate commit even when worktree flags hide changes. */
+function inactiveMetadataDocument(string $checkout, string $sha, string $name): ?DOMElement
+{
+    $entry = readReleaseToolOutput(['git', '-C', $checkout, 'ls-tree', $sha, '--', $name]);
+    if ($entry === null || preg_match('/\A100(?:644|755) blob ([0-9a-f]{40})\t' . preg_quote($name, '/') . '\n\z/', $entry, $match) !== 1) {
+        return null;
+    }
+    $contents = readReleaseToolOutput(['git', '-C', $checkout, 'cat-file', 'blob', $match[1]]);
+    if ($contents === null || $contents === '') {
+        return null;
+    }
+    $document = parseReleaseMarkdown($contents, $name);
+
+    return markdownHasVisibleContent($document) ? $document : null;
+}
+
 /** Verifies that the candidate's visible release metadata permits the inactive gate. */
-function verifyInactiveRelease(string $checkout): int
+function verifyInactiveRelease(string $checkout, string $sha): int
 {
     $documents = [];
     foreach (['README.md', 'CHANGELOG.md'] as $name) {
-        $path = $checkout . '/' . $name;
-        if (! is_file($path) || ! is_readable($path) || ! filesize($path)) {
+        $document = inactiveMetadataDocument($checkout, $sha, $name);
+        if ($document === null) {
             fwrite(STDERR, 'Cannot determine release preparation state from ' . $name . '.' . PHP_EOL);
 
             return 1;
         }
-        $documents[$name] = readArtifactInput($path);
+        $documents[$name] = $document;
     }
 
     $active = [];
-    $readme = parseReleaseMarkdown($documents['README.md'], 'README.md');
-    if (array_any(markdownParagraphs($readme), static fn(string $paragraph): bool => preg_match('/\A\h*release target:/i', $paragraph) === 1)) {
+    if (markdownReleaseDeclarations($documents['README.md']) !== []) {
         $active[] = 'README.md';
     }
-    $changelog = parseReleaseMarkdown($documents['CHANGELOG.md'], 'CHANGELOG.md');
     $version = '[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+';
     $pattern = '/\A(?:' . $version . '|\[' . $version . '\])\z/';
-    if (array_any(markdownReleaseHeadings($changelog), static fn(array $heading): bool => preg_match($pattern, $heading['title']) === 1)) {
+    if (array_any(markdownReleaseHeadings($documents['CHANGELOG.md']), static fn(array $heading): bool => preg_match($pattern, $heading['title']) === 1)) {
         $active[] = 'CHANGELOG.md';
     }
     if ($active !== []) {
@@ -187,8 +209,8 @@ function verifyInactiveRelease(string $checkout): int
 }
 
 try {
-    if ($argc === 3 && $argv[1] === '--inactive') {
-        exit(verifyInactiveRelease($argv[2]));
+    if ($argc === 4 && $argv[1] === '--inactive') {
+        exit(verifyInactiveRelease($argv[2], $argv[3]));
     }
     if ($argc !== 7) {
         fwrite(STDERR, "Use the shell driver to run Release Artifact Verification.\n");
