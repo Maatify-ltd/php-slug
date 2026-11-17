@@ -383,6 +383,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $statement->execute(['id' => $id]);
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);
@@ -399,6 +400,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $statement->execute(['operation_key' => $operationKey]);
         /** @var array<string, mixed>|false $rawRow */
         $rawRow = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $row = PdoRowHydrator::one($rawRow);
 
         return $row === null ? null : $this->operationFromRow($row);

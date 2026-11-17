@@ -50,8 +50,10 @@ final class HostSnapshotMutationSystemTest extends MySqlIntegrationTestCase
             $host->ensureScope($identity->scopeProfile);
             $result = $host->assignExact(new AssignExactCommand($identity, 'unbuffered', null, new AuditContextDTO()));
             self::assertSame('unbuffered', $result->after->currentClaim?->slug->value);
-            $updated = $host->changeExact(new ChangeExactCommand($identity, 'updated', 1, new AuditContextDTO()));
+            $change = new ChangeExactCommand($identity, 'updated', 1, new AuditContextDTO(idempotencyKey: 'unbuffered-change'));
+            $updated = $host->changeExact($change);
             self::assertSame('updated', $updated->after->currentClaim?->slug->value);
+            self::assertTrue($host->changeExact($change)->replayed);
             self::assertSame('updated', $host->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
             self::assertSame($hostOwnsTransaction, $this->pdo->inTransaction());
             self::assertFalse($this->pdo->getAttribute(Mysql::ATTR_USE_BUFFERED_QUERY));
