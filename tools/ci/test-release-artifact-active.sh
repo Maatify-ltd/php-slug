@@ -2,9 +2,12 @@
 
 set -euo pipefail
 
+unset CDPATH
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target='1.0.0-rc.3'
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/slug-release-active.XXXXXXXX")"
+temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+scratch="$(mktemp -d "$temporary_root/slug-release-active.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 base="$scratch/base"
 

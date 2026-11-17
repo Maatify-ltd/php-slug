@@ -2,8 +2,11 @@
 
 set -euo pipefail
 
+unset CDPATH
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/slug-release-inactive.XXXXXXXX")"
+temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+scratch="$(mktemp -d "$temporary_root/slug-release-inactive.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 
 # Inactivity checking needs the Markdown tools but can run without Composer.

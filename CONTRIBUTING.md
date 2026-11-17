@@ -196,3 +196,25 @@ bash tools/ci/verify-published-artifact.sh "${tag#v}" "$reference"
 The command isolates the external Composer project, home, cache and environment, sets `minimum-stability` to `stable` and grants RC allowance only to the exact Slug version and its pinned Persistence RC when applicable. It verifies the installed delivery mode and reference, the required Git files and their bytes, and release presentation in the installed directory. A zero exit verifies the installed bytes and structural checks and reports `PAV=SEMANTIC_REVIEW_REQUIRED`. Review the release claims in the README, package reference, CHANGELOG and SECURITY at the verified Git reference. The command has already proved that those files exactly match the installed bytes. Record the combined Published Artifact Verification result and retain the command output and semantic review with the release evidence. Use the existing Consumer Verification Harness for independent runtime evidence. See [CI Workflow Standard §2.6](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#26-published-artifact-verification).
 
 Thank you for contributing to the stability and reliability of the Maatify Ecosystem!
+
+## Read-only and Shell Path Regressions
+
+The canonical Compose lifecycle provisions a disposable SELECT-only account from
+`tests/Fixtures/Infrastructure/readonly-account.sql` for both database services.
+`run-integration.sh` supplies its credentials to the query tests. These tests fail
+if the fixture is missing; they do not silently skip reader verification.
+The MariaDB regression gate also runs availability interleavings and cold/warm
+read verification. Host READ ONLY transactions and both PDO buffering modes are covered.
+
+With the release-artifact prerequisites above installed, run this from the checkout:
+
+```bash
+bash tools/ci/test-shell-paths.sh '1.0.0-rc.3'
+```
+
+It runs the actual PHP runtime and release-artifact gate commands for empty/nonempty
+`CDPATH` and absolute/relative `TMPDIR`, using relative and absolute script invocation
+from the checkout and a different working directory. All paths include spaces.
+Pass the configured RC target, or an empty argument when no target is active.
+Working-tree shell edits are applied only to that disposable fixture. The real
+source index and working tree are left untouched. CI runs the same command.

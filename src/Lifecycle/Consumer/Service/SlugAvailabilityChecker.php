@@ -14,6 +14,7 @@ use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryClaimRecord;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryRepositoryInterface;
+use Maatify\Slug\Lifecycle\Repository\Registry\RegistryResolutionReaderInterface;
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
 use Maatify\Slug\Lifecycle\Service\Reserved\ReservationEvaluator;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
@@ -53,6 +54,19 @@ final readonly class SlugAvailabilityChecker
         $slug = $lookup->canonicalSlug;
 
         $this->registry->assertInstalledSchemaSupported();
+        if ($this->registry instanceof RegistryResolutionReaderInterface) {
+            $match = $this->registry->findResolution($criteria->scopeProfile, $slug);
+            $owner = $match['owner'] ?? null;
+            $status = $owner !== null
+                ? ($this->sameBinding($criteria->requestingBinding, $owner->identity)
+                    ? AvailabilityStatusEnum::OWNED_BY_SAME_BINDING
+                    : AvailabilityStatusEnum::OWNED_BY_OTHER_BINDING)
+                : ($this->reservations->isReserved($criteria->scopeProfile->scope, $slug)
+                    ? AvailabilityStatusEnum::RESERVED
+                    : AvailabilityStatusEnum::AVAILABLE);
+
+            return new SlugAvailabilityDTO($criteria->scopeProfile, $criteria->candidate, $slug, $status, $owner, true);
+        }
         $scope = $this->registry->findScope(
             $criteria->scopeProfile->scope,
             $criteria->scopeProfile->expectedProfileKey,

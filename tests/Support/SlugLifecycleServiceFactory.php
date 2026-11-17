@@ -16,6 +16,7 @@ use Maatify\Slug\Lifecycle\Repository\Pdo\Operation\PdoOperationRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Registry\PdoRegistryRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Scope\PdoScopeRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoMutationCapabilityGuard;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Transaction\PdoTransactionCoordinator;
 use Maatify\Slug\Lifecycle\Service\Allocation\GeneratedCandidateSequence;
 use Maatify\Slug\Lifecycle\Service\SlugLifecycleService;
@@ -50,7 +51,7 @@ final class SlugLifecycleServiceFactory
             $history,
             $operations,
             $transactions,
-            $capabilities,
+            new PdoMutationCapabilityGuard($capabilities),
             $maintenance,
             $reservedPolicy,
             $clock,

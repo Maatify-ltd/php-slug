@@ -295,6 +295,8 @@ jobs:
         run: bash tools/ci/test-release-artifact-inactive.sh
       - name: Run release archive regression tests
         run: bash tools/ci/test-release-artifact-active.sh
+      - name: Verify shell path portability with actual gate commands
+        run: bash tools/ci/test-shell-paths.sh "$RELEASE_ARTIFACT_TARGET"
       - name: Verify the release artifact or inactive state
         run: bash tools/ci/run-gate.sh release-artifact "$RELEASE_ARTIFACT_SHA" "$RELEASE_ARTIFACT_TARGET"
 

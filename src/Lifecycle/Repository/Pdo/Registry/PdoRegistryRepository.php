@@ -27,6 +27,8 @@ use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryBindingRecord;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryClaimRecord;
 use Maatify\Slug\Lifecycle\Repository\Registry\RegistryRepositoryInterface;
+use Maatify\Slug\Lifecycle\Repository\Registry\RegistryResolutionReaderInterface;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Scope\PdoScopeRepository;
 use Maatify\Slug\Lifecycle\Repository\Scope\ScopePersistenceInterface;
 use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
@@ -37,7 +39,7 @@ use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
  * This repository deliberately exposes no public package contract. Lifecycle
  * code owns the public boundary and supplies its own transaction boundary.
  */
-final readonly class PdoRegistryRepository implements RegistryRepositoryInterface
+final readonly class PdoRegistryRepository implements RegistryRepositoryInterface, RegistryResolutionReaderInterface
 {
     private PdoCapabilityGuard $capabilities;
 
@@ -59,6 +61,20 @@ final readonly class PdoRegistryRepository implements RegistryRepositoryInterfac
     public function assertInstalledSchemaSupported(): void
     {
         $this->capabilities->assertInstalledSchemaSupported();
+    }
+
+    /**
+     * Reads a claim and its complete owner snapshot from the same PDO observation.
+     *
+     * @return array{claim: \Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO, owner: BindingDTO}|null
+     */
+    public function findResolution(ScopeProfileRequestDTO $request, Slug $slug): ?array
+    {
+        $reader = $this->scopes instanceof RegistryResolutionReaderInterface
+            ? $this->scopes
+            : new PdoScopeRepository($this->pdo, $this->profiles, $this->clock, $this->capabilities);
+
+        return $reader->findResolution($request, $slug);
     }
 
     /** Ensures a scope/profile row and returns its immutable snapshot. */

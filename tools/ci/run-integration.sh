@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+unset CDPATH
+if [[ -n "${TMPDIR:-}" ]]; then
+    TMPDIR="$(cd "$TMPDIR" && pwd -P)"
+    export TMPDIR
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
@@ -110,6 +116,8 @@ export SLUG_TEST_DB_HOST=127.0.0.1
 export SLUG_TEST_DB_NAME=maatify_slug_test
 export SLUG_TEST_DB_USER=slug_test
 export SLUG_TEST_DB_PASSWORD=slug_test_password
+export SLUG_TEST_DB_READER_USER=slug_readonly_test
+export SLUG_TEST_DB_READER_PASSWORD=slug_readonly_test_password
 
 umask 077
 started=1
@@ -200,7 +208,9 @@ run_workflow() {
             ;;
         mariadb-snapshot)
             SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION=1 vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
-                tests/System/Lifecycle/HostSnapshotMutationSystemTest.php
+                tests/System/Lifecycle/HostSnapshotMutationSystemTest.php \
+                tests/System/Resolution/AvailabilityObservationSystemTest.php \
+                tests/System/Resolution/ReadCapabilitySystemTest.php
             ;;
         consumer)
             php tests/Consumer/run.php

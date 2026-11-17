@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+unset CDPATH
+if [[ -n "${TMPDIR:-}" ]]; then
+    TMPDIR="$(cd "$TMPDIR" && pwd -P)"
+    export TMPDIR
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 

@@ -18,6 +18,7 @@ use Throwable;
 final class PdoCapabilityGuard implements CapabilityGuardInterface
 {
     private bool $installedSchemaVerified = false;
+    private bool $mutationCapabilitiesVerified = false;
     private bool $snapshotIsolationAvailable = true;
 
     /** Stores the injected PDO connection without creating hidden connections. */
@@ -37,43 +38,41 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         $this->assertDatetimePrecision();
     }
 
-    /**
-     * Verifies capabilities that require the installed package schema.
-     *
-     * Probes use real package rows inside a transaction/savepoint and leave no
-     * rows or schema objects behind. No product or server version is inspected.
-     */
+    /** Verifies installed-schema metadata using only non-locking reads. */
     public function assertInstalledSchemaSupported(): void
     {
         $this->assertInstalledSchema(forMutation: false);
     }
 
-    /** Verifies the installed schema and that lifecycle writes can perform current locking reads. */
+    /** Verifies write capabilities without committing or rolling back the Host transaction. */
     public function assertMutationSupported(): void
     {
         $this->assertInstalledSchema(forMutation: true);
     }
 
+    /** Keeps read metadata validation independent from rollback-protected write probes. */
     private function assertInstalledSchema(bool $forMutation): void
     {
         if (! $this->installedSchemaVerified) {
-            $this->assertSupported();
+            $this->assertDriverAndConnectionAttributes();
+            $this->assertExactStringSemantics();
+            $this->assertDatetimePrecision();
+            $this->assertPackageTables();
+            try {
+                (new PdoSchemaVerifier($this->pdo))->assertRegistryLockProjection();
+            } catch (Throwable $throwable) {
+                throw new SlugRuntimeCompatibilityException('The Registry lock projection is unavailable or incompatible.', 0, $throwable);
+            }
+            $this->installedSchemaVerified = true;
         }
         if ($forMutation) {
             $this->assertCurrentLockingReads();
+            if (! $this->mutationCapabilitiesVerified) {
+                $this->assertTransactionAndSavepointCapabilities();
+                $this->probeInstalledSchemaCapabilities();
+                $this->mutationCapabilitiesVerified = true;
+            }
         }
-        if ($this->installedSchemaVerified) {
-            return;
-        }
-
-        $this->assertPackageTables();
-        try {
-            (new PdoSchemaVerifier($this->pdo))->assertRegistryLockProjection();
-        } catch (Throwable $throwable) {
-            throw new SlugRuntimeCompatibilityException('The Registry lock projection is unavailable or incompatible.', 0, $throwable);
-        }
-        $this->probeInstalledSchemaCapabilities();
-        $this->installedSchemaVerified = true;
     }
 
     /** Returns the active PDO driver name when it can be read. */
