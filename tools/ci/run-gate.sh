@@ -210,6 +210,7 @@ runtime_portability() {
     vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
         tests/Unit/Profile/RuntimeCompatibilityTest.php \
         tests/Unit/Canonicalization/ProfileCanonicalizationTest.php \
+        tests/Unit/Canonicalization/UnicodeNfcClosureTest.php \
         tests/Unit/Validation/ProfileInputValidationTest.php
     php examples/canonicalization.php
 }
