@@ -259,6 +259,42 @@ jobs:
       - name: Check the committed comparison range
         run: bash tools/ci/run-gate.sh whitespace "$CI_COMPARISON_RANGE"
 
+  release-artifact:
+    name: Release Artifact Verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_ARTIFACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      RELEASE_ARTIFACT_TARGET: '1.0.0-rc.3'
+    steps:
+      - name: Checkout the exact candidate commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_ARTIFACT_SHA }}
+          fetch-depth: 0
+      - name: Set up PHP 8.5
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          extensions: dom, intl, mbstring, pdo, pdo_mysql
+          coverage: none
+          tools: composer:2.10
+        env:
+          update: true
+      - name: Verify the installed Stable PHP patch
+        run: bash tools/ci/run-gate.sh php-runtime "8.5"
+      - name: Install pinned cmark-gfm
+        run: |
+          markdown_tools="$RUNNER_TEMP/slug-release-markdown"
+          bash tools/ci/install-release-markdown.sh "$markdown_tools"
+          printf '%s\n' "$markdown_tools/bin" >> "$GITHUB_PATH"
+      - name: Run release inactivity regression tests
+        run: bash tools/ci/test-release-artifact-inactive.sh
+      - name: Run release archive regression tests
+        run: bash tools/ci/test-release-artifact-active.sh
+      - name: Verify the release artifact or inactive state
+        run: bash tools/ci/run-gate.sh release-artifact "$RELEASE_ARTIFACT_SHA" "$RELEASE_ARTIFACT_TARGET"
+
   stable-gate:
     name: CI Gate (stable)
     if: ${{ always() }}
@@ -272,6 +308,7 @@ jobs:
       - workflow-lint
       - whitespace
       - runtime-portability
+      - release-artifact
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -286,6 +323,7 @@ jobs:
           WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
           WHITESPACE: ${{ needs.whitespace.result }}
           RUNTIME_PORTABILITY: ${{ needs.runtime-portability.result }}
+          RELEASE_ARTIFACT: ${{ needs.release-artifact.result }}
         run: |
           set -euo pipefail
           for result in \
@@ -296,7 +334,8 @@ jobs:
             "consumer-harness:$CONSUMER_HARNESS" \
             "examples-smoke:$EXAMPLES_SMOKE" \
             "workflow-lint:$WORKFLOW_LINT" \
-            "whitespace:$WHITESPACE"; do
+            "whitespace:$WHITESPACE" \
+            "release-artifact:$RELEASE_ARTIFACT"; do
             job="${result%%:*}"
             status="${result##*:}"
             if [[ "$status" != success ]]; then

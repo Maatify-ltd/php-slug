@@ -129,4 +129,52 @@ bash tools/ci/run-gate.sh whitespace BASE...HEAD
 ```
 Replace `BASE...HEAD` with your specific base and head branches (e.g., `main...HEAD`).
 
+### 6. Release Artifact Verification
+
+Run the same command as CI from a clean repository checkout. Both modes require Bash, Git, PHP with DOM, and [cmark-gfm 0.29.0.gfm.13](https://github.com/github/cmark-gfm/releases/tag/0.29.0.gfm.13) to parse release metadata. The CI installer checks the pinned source archive and builds the tool into a local directory. To use it locally, have `curl`, `shasum`, `tar`, CMake, a C/C++ compiler, and a build tool such as Make available.
+
+```bash
+markdown_tools="$(mktemp -d)"
+bash tools/ci/install-release-markdown.sh "$markdown_tools"
+export PATH="$markdown_tools/bin:$PATH"
+```
+
+Both modes take the full 40-character checkout SHA and an explicit target argument. For an active release, pass the exact `x.y.z-rc.N` target without a leading `v`. This mode also needs Composer, PHP Phar support, and either the PHP zip extension or the `zip` command. The command inspects the Git and Composer archives and prints the SHA, target, digests, file counts, and result.
+
+```bash
+bash tools/ci/run-gate.sh release-artifact "$(git rev-parse HEAD)" 1.0.0-rc.3
+```
+
+When no release target is active, pass an explicit empty argument to check the committed release metadata.
+
+```bash
+bash tools/ci/run-gate.sh release-artifact "$(git rev-parse HEAD)" ""
+```
+
+In the [CI workflow](https://github.com/Maatify-ltd/php-slug/blob/main/.github/workflows/ci.yml), set `RELEASE_ARTIFACT_TARGET` to the exact RC target during preparation. For this target, use the following structure:
+
+| File | Level-2 publication section | Level-2 installation section |
+|---|---|---|
+| `README.md` | `Publication State` | `Installation` |
+| `README_AR.md` | `حالة النشر` | `التثبيت` |
+
+Use each heading once in its file. In the publication section, start one top-level paragraph with the localized `Release target:` or `الإصدار المستهدف:` declaration followed by the exact active target in plain text or inline code. The release-target declaration is reserved for the current artifact.
+
+In the installation section, use one direct Bash fence with one nonblank line containing the canonical exact Composer command for Slug and its Persistence RC dependency. Whitespace is allowed, and the fence is reserved for that command. Put all other code blocks and historical examples outside the two reserved sections. Keep raw HTML blocks outside both reserved sections. HTML comments may remain in either section.
+
+Clear `RELEASE_ARTIFACT_TARGET` to `''` when no RC is in preparation. The inactive check reads both READMEs and the CHANGELOG from the candidate commit. It requires readable, nonempty metadata and fails if any of the three files signals an active RC, including a quoted release declaration inside a reserved publication section. After publication, update both READMEs to show the published state and record the actual publication date in the CHANGELOG.
+
+CI uses Stable PHP 8.5 and Composer 2.10 and always runs both regression suites. The active suite needs the archive prerequisites. To run the same suites locally:
+
+```bash
+bash tools/ci/test-release-artifact-inactive.sh
+bash tools/ci/test-release-artifact-active.sh
+```
+
+For release qualification, run full applicable CI and archive verification on the same candidate commit on `main`. The automated result covers archive SHA and file contents, the Composer manifest, exact release identities and install commands, and the structural CHANGELOG and SECURITY checks.
+
+Review the archived documents on that same SHA and record the semantic result alongside the CI evidence before qualification. Confirm that the publication and availability claims, historical guidance, CHANGELOG allocation and date, and SECURITY support wording match the actual release state in context. Follow [CI Workflow Standard §2.5](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#25-release-artifact-verification). Repeat verification if the candidate content changes. Tag, Release, and Publish remain subject to owner authorization after qualification.
+
+After publication, perform Published Artifact Verification in a clean external Composer project against the exact version served by Packagist. Record the observed installation mode and reference, and inspect the files installed from dist.
+
 Thank you for contributing to the stability and reliability of the Maatify Ecosystem!

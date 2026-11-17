@@ -210,7 +210,7 @@ runtime_portability() {
 
 usage() {
     cat >&2 <<'USAGE'
-Usage: tools/ci/run-gate.sh <gate> [argument]
+Usage: tools/ci/run-gate.sh <gate> [arguments...]
 
 Gates:
   latest-quality   Latest dependency resolution, syntax, PHPStan max, style, audit
@@ -229,6 +229,8 @@ Gates:
   workflow-lint    actionlint for every .github/workflows/*.yml|*.yaml
   whitespace RANGE Git-aware whitespace check for an explicit BASE...HEAD committed range
   consumer         Consumer Verification Harness clean run x2
+  release-artifact SHA TARGET Verify archives for an exact x.y.z-rc.N target
+  release-artifact SHA ""     Verify there is no active release target
   examples-smoke   All maintained standalone examples; persisted examples use the canonical Compose lifecycle
   runtime-portability Latest dependencies, runtime diagnostics, focused portability tests, and stateless example
 USAGE
@@ -253,6 +255,7 @@ case "$gate" in
     workflow-lint) workflow_lint ;;
     whitespace) whitespace "${2:-}" ;;
     consumer) consumer ;;
+    release-artifact) shift; bash tools/ci/verify-release-artifact.sh "$@" ;;
     examples-smoke) examples_smoke ;;
     runtime-portability) runtime_portability ;;
     *) usage ;;
