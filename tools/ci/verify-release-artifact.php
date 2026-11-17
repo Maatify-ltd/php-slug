@@ -3,78 +3,12 @@
 declare(strict_types=1);
 
 require __DIR__ . '/release-artifact-markdown.php';
+require __DIR__ . '/release-artifact-files.php';
 
 const RELEASE_READMES = [
     'README.md' => ['Publication State', 'Installation', 'release\h+target'],
     'README_AR.md' => ['حالة النشر', 'التثبيت', 'الإصدار\h+المستهدف'],
 ];
-
-/** Reads a verification input or fails with its origin. */
-function readArtifactInput(string $path): string
-{
-    $contents = file_get_contents($path);
-    if ($contents === false) {
-        throw new RuntimeException('Unable to read verification input: ' . $path);
-    }
-
-    return $contents;
-}
-
-/**
- * Collects the unfiltered Git blobs from the consumer directories and root documents.
- *
- * @return array<string, string> Git blob identity by relative path
- */
-function requiredBlobs(string $candidateTree): array
-{
-    $rootFiles = [
-        'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'LICENSE', 'README.md', 'README_AR.md',
-        'SECURITY.md', 'SLUG_PACKAGE_REFERENCE.md', 'composer.json', 'llms.txt',
-    ];
-    $directories = ['src/', 'schema/', 'docs/guides/', 'examples/'];
-    $blobs = [];
-    foreach (explode("\0", rtrim(readArtifactInput($candidateTree), "\0")) as $line) {
-        $fields = explode("\t", $line, 2);
-        if (count($fields) !== 2) {
-            throw new RuntimeException('Unexpected candidate Git tree entry.');
-        }
-        [$metadata, $path] = $fields;
-        if (! in_array($path, $rootFiles, true) && ! array_any($directories, static fn(string $prefix): bool => str_starts_with($path, $prefix))) {
-            continue;
-        }
-        if (preg_match('/\A100(?:644|755) blob ([0-9a-f]{40})\z/', $metadata, $match) !== 1) {
-            throw new RuntimeException('Candidate package path is not a regular tracked file: ' . $path);
-        }
-        $blobs[$path] = $match[1];
-    }
-    foreach ($rootFiles as $path) {
-        if (! isset($blobs[$path])) {
-            throw new RuntimeException('The candidate Git tree lacks the required root file: ' . $path);
-        }
-    }
-    foreach ($directories as $prefix) {
-        if (! array_any(array_keys($blobs), static fn(string $path): bool => str_starts_with($path, $prefix))) {
-            throw new RuntimeException('The candidate Git tree lacks files under ' . $prefix);
-        }
-    }
-    ksort($blobs, SORT_STRING);
-
-    return $blobs;
-}
-
-/** Rejects escaped archive paths and well-known development and credential filenames. */
-function assertSafeArchivePath(string $path): void
-{
-    $segments = explode('/', $path);
-    foreach ($segments as $segment) {
-        if (in_array($segment, [
-            '', '.', '..', '.agents', '.git', '.github', '.idea', '.fleet', '.vscode', '.DS_Store',
-            '.php-cs-fixer.cache', '.phpunit.cache', '.phpunit.result.cache', 'auth.json', 'composer.lock', 'vendor',
-        ], true) || preg_match('/\A\.env(?:\.|\z)|\.(?:iml|pem|key|p12|pfx)\z|[\x00-\x1f\\\\]/i', $segment) === 1) {
-            throw new RuntimeException('Forbidden archive path: ' . $path);
-        }
-    }
-}
 
 /**
  * Reads the actual archive payload without extracting entries to the filesystem.
@@ -143,9 +77,9 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
         if ($name === 'README.md') {
             $images = markdownImageDestinations($document);
             $badgeTarget = str_replace('-', '--', $target);
-            if (! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Version-' . $badgeTarget . '-'))
+            if (! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Artifact%20target-' . $badgeTarget . '-'))
                 || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-'))) {
-                throw new RuntimeException('README.md must show the exact release target in its Version and Install after publication badges.');
+                throw new RuntimeException('README.md must show the exact release target in its Artifact target and Install after publication badges.');
             }
         }
     }
@@ -244,7 +178,7 @@ try {
             throw new RuntimeException('The exact candidate checkout lacks a regular required file: ' . $path);
         }
         $contents = readArtifactInput($sourcePath);
-        if (hash('sha1', 'blob ' . strlen($contents) . "\0" . $contents) !== $blob) {
+        if (artifactBlobId($contents) !== $blob) {
             throw new RuntimeException('Checkout bytes do not match the exact candidate Git blob: ' . $path);
         }
         $expected[$path] = hash('sha256', $contents);

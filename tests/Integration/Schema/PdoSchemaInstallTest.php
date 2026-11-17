@@ -40,6 +40,21 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' AND (COLUMN_COMMENT IS NULL OR CHAR_LENGTH(TRIM(COLUMN_COMMENT)) < 8)");
         self::assertNotFalse($statement);
         self::assertSame('0', (string) $statement->fetchColumn(), 'Every package column must carry a meaningful schema comment.');
+
+        $statement = $this->pdo->query(
+            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
+            . "AND TABLE_NAME LIKE 'maa\\_slug\\_%' AND INDEX_NAME = 'PRIMARY' ORDER BY TABLE_NAME, SEQ_IN_INDEX",
+        );
+        self::assertNotFalse($statement);
+        self::assertSame([
+            ['maa_slug_bindings', 'id'],
+            ['maa_slug_history', 'id'],
+            ['maa_slug_operation_bindings', 'id'],
+            ['maa_slug_operations', 'id'],
+            ['maa_slug_registry', 'id'],
+            ['maa_slug_registry_lock_keys', 'id'],
+            ['maa_slug_scopes', 'id'],
+        ], $statement->fetchAll(PDO::FETCH_NUM));
     }
 
     public function testSchemaInstallAndCleanupAreRepeatableTwice(): void
@@ -69,7 +84,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
 
         $projection = $this->readSchemaAsset('003_registry_lock_projection.sql');
         $installer->installSql($projection);
-        $keys = $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug');
+        $keys = $this->readRows('SELECT scope_id, scope_end, binding_partition, key_kind, slug, registry_id, owner_binding_id FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug');
         self::assertSame([
             [0, 0, 0, 2, '', null, null],
             [11, 0, 0, 0, '', null, null],
@@ -92,7 +107,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
 
         $installer->installSql($projection);
-        self::assertSame($keys, $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug'));
+        self::assertSame($keys, $this->readRows('SELECT scope_id, scope_end, binding_partition, key_kind, slug, registry_id, owner_binding_id FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug'));
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
         (new PdoSchemaVerifier($this->pdo))->assertInstalled();
 
@@ -188,12 +203,16 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
     public static function incompleteProjectionSchemas(): iterable
     {
         yield 'out-of-order columns' => [
-            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, binding_partition, scope_end, key_kind, slug)',
-            'full ordered ascending primary key',
+            'ALTER TABLE maa_slug_registry_lock_keys DROP INDEX uk_registry_lock_partition, ADD UNIQUE INDEX uk_registry_lock_partition (scope_id, binding_partition, scope_end, key_kind, slug)',
+            'ordered unique partition index',
         ];
         yield 'prefix instead of full slug' => [
-            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, scope_end, binding_partition, key_kind, slug(30))',
-            'full ordered ascending primary key',
+            'ALTER TABLE maa_slug_registry_lock_keys DROP INDEX uk_registry_lock_partition, ADD UNIQUE INDEX uk_registry_lock_partition (scope_id, scope_end, binding_partition, key_kind, slug(30))',
+            'full ascending unique keys',
+        ];
+        yield 'id without automatic allocation' => [
+            'ALTER TABLE maa_slug_registry_lock_keys MODIFY id BIGINT UNSIGNED NOT NULL',
+            'requires an auto-increment unsigned bigint identity',
         ];
         yield 'table installed but backfill incomplete' => [
             'DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0',

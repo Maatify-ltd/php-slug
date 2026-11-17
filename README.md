@@ -9,7 +9,8 @@
 </picture>
 
 [![Status](https://img.shields.io/badge/Status-Release%20Candidate-orange.svg)](#publication-state)
-[![Version](https://img.shields.io/badge/Version-1.0.0--rc.3-blue.svg)](#publication-state)
+[![Artifact target](https://img.shields.io/badge/Artifact%20target-1.0.0--rc.3-blue.svg)](#publication-state)
+[![Published at qualification](https://img.shields.io/badge/Published%20at%20qualification-1.0.0--rc.2-blue.svg)](https://packagist.org/packages/maatify/php-slug#v1.0.0-rc.2)
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D8.4.27%20%3C8.5.0%20%7C%7C%20%3E%3D8.5.12%20%3C9.0.0-8892BF)](composer.json)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PHPStan](https://img.shields.io/badge/PHPStan-Max-brightgreen.svg)](#quality-status)
@@ -18,6 +19,7 @@
 [![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Total Downloads](https://img.shields.io/packagist/dt/maatify/php-slug.svg)](https://packagist.org/packages/maatify/php-slug)
 [![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify-ltd)
+[![Install published RC.2](https://img.shields.io/badge/Install%20published%20RC.2-1.0.0--rc.2%40RC-blue.svg)](#published-rc2)
 [![Install after publication](https://img.shields.io/badge/Install%20after%20publication-1.0.0--rc.3%40RC-blue.svg)](#installation)
 
 [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue.svg)](docs/guides/USAGE_GUIDE.md)
@@ -79,7 +81,15 @@ composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc
 
 **Upgrading from RC.2.** Stop Slug traffic and apply the additive `003_registry_lock_projection.sql` migration before enabling the RC.3 persisted runtime. Follow the [schema upgrade guide](schema/mysql/README.md#installation-and-upgrade) for the backfill and verification steps. Update any pagination imports from the retired `maatify/persistence` dependency to the [types from `maatify/php-persistence`](SLUG_PACKAGE_REFERENCE.md#10-management-resolution-and-pagination).
 
-For RC.2, use its [versioned usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
+## Published RC.2
+
+`1.0.0-rc.2` was the published version at RC.3 qualification. To install that exact earlier version:
+
+```bash
+composer require maatify/php-slug:1.0.0-rc.2@RC
+```
+
+Use the [versioned RC.2 usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
 
 ## Quick Usage
 

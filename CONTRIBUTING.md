@@ -30,7 +30,8 @@ Any contribution must strictly respect these boundaries. Architectural changes s
 Use a [repository checkout](https://github.com/Maatify-ltd/php-slug) for this setup and the commands below. The distribution archive ships the runtime, schema, and consumer examples. The [CI tooling](https://github.com/Maatify-ltd/php-slug/tree/main/tools/ci) and disposable database configuration are available in the checkout.
 
 - **PHP (Composer):** `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`
-- **Extensions:** `filter`, `intl`, `mbstring`, `pdo`, `pdo_mysql`
+- **Runtime extensions:** `filter`, `intl`, `mbstring`, `pdo`, `pdo_mysql`
+- **Development extensions:** `pdo_sqlite` for the Factory unit test and `iconv` for the Composer development toolchain.
 - **Docker Engine:** Required for Integration, System, complete-suite, Consumer Harness, and examples-smoke gates.
 - **Docker Compose v2:** Required for the repository-owned Integration lifecycle.
 
@@ -175,6 +176,17 @@ For release qualification, run full applicable CI and archive verification on th
 
 Review the archived documents on that same SHA and record the semantic result alongside the CI evidence before qualification. Confirm that the publication and availability claims, historical guidance, CHANGELOG allocation and date, and SECURITY support wording match the actual release state in context. Follow [CI Workflow Standard §2.5](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#25-release-artifact-verification). Repeat verification if the candidate content changes. Tag, Release, and Publish remain subject to owner authorization after qualification.
 
-After publication, perform Published Artifact Verification in a clean external Composer project against the exact version served by Packagist. Record the observed installation mode and reference, and inspect the files installed from dist.
+### Published Artifact Verification
+
+Run this from a checkout after publication. Replace the tag and reference below with the exact published tag and its independently recorded full qualification SHA. This needs PHP with DOM, Composer, Git, `cmark-gfm`, and direct network access to Packagist and the reported distribution host.
+
+```bash
+tag=v1.0.0-rc.3
+reference='<full qualified Git SHA recorded in the release PR>'
+git fetch origin tag "$tag"
+bash tools/ci/verify-published-artifact.sh "${tag#v}" "$reference"
+```
+
+The command isolates the external Composer project, home, cache and environment, sets `minimum-stability` to `stable` and grants RC allowance only to the exact Slug version and its pinned Persistence RC when applicable. It verifies the installed delivery mode and reference, the required Git files and their bytes, and release presentation in the installed directory. Review the release claims in the installed README, package reference, CHANGELOG and SECURITY in context, then retain the output and semantic result with the release evidence. Use the existing Consumer Verification Harness for independent runtime evidence. See [CI Workflow Standard §2.6](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#26-published-artifact-verification).
 
 Thank you for contributing to the stability and reliability of the Maatify Ecosystem!

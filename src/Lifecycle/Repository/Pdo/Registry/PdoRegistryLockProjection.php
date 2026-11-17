@@ -32,7 +32,7 @@ final readonly class PdoRegistryLockProjection
      * Locks exact current slug keys within one Scope or Binding partition.
      *
      * Driving the join from ordered candidates keeps each lookup on the full
-     * primary key. MySQL reports every matching request ordinal, including
+     * unique partition key. MySQL reports every matching request ordinal, including
      * byte-distinct requests that compare equal under the Registry collation.
      *
      * @param non-empty-list<string> $slugs
@@ -67,7 +67,7 @@ final readonly class PdoRegistryLockProjection
         }
         return $this->prepare(
             'SELECT c.candidate_index, k.registry_id, k.owner_binding_id, k.slug FROM (' . implode(' UNION ALL ', $candidates) . ') c '
-            . 'STRAIGHT_JOIN maa_slug_registry_lock_keys k FORCE INDEX (PRIMARY) '
+            . 'STRAIGHT_JOIN maa_slug_registry_lock_keys k FORCE INDEX (uk_registry_lock_partition) '
             . 'ON k.scope_id = ? AND k.scope_end = 0 AND k.binding_partition = ? AND k.key_kind = 1 AND k.slug = c.slug '
             . 'FOR UPDATE',
         );
@@ -82,7 +82,7 @@ final readonly class PdoRegistryLockProjection
     {
         $this->ensureBoundaries($scopeId, $bindingId);
         $statement = $this->prepare(
-            'SELECT registry_id, owner_binding_id, slug FROM maa_slug_registry_lock_keys FORCE INDEX (PRIMARY) '
+            'SELECT registry_id, owner_binding_id, slug FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) '
             . 'WHERE scope_id = ? AND scope_end = 0 AND binding_partition = ? AND key_kind = 1 ORDER BY slug FOR UPDATE',
         );
         $statement->execute([$scopeId, $bindingId]);
@@ -101,7 +101,7 @@ final readonly class PdoRegistryLockProjection
         $statement->execute([$scopeId, $slug, $registryId, $bindingId, $scopeId, $bindingId, $slug, $registryId, $bindingId]);
     }
 
-    /** Removes both claim keys through exact clustered-key deletes. */
+    /** Removes both claim keys through exact partition-key deletes. */
     public function deleteClaimKeys(int $scopeId, int $bindingId, string $slug, int $registryId): void
     {
         $statement = $this->prepare(
@@ -116,7 +116,7 @@ final readonly class PdoRegistryLockProjection
         }
     }
 
-    /** Removes the now-empty Binding partition by exact clustered keys. */
+    /** Removes the now-empty Binding partition by exact partition keys. */
     public function deleteBindingBoundaries(int $scopeId, int $bindingId): void
     {
         $statement = $this->prepare(
@@ -178,12 +178,25 @@ final readonly class PdoRegistryLockProjection
         if ($scopeId < 1 || $bindingPartition < 0) {
             throw new SlugPersistenceInvariantException('Registry lock partition identity is invalid.');
         }
-        $statement = $this->prepare(
-            'INSERT INTO maa_slug_registry_lock_keys (scope_id, scope_end, binding_partition, key_kind, slug) '
-            . "VALUES (?, 0, ?, 0, ''), (?, 0, ?, 2, ''), (?, 1, 0, 2, '') "
-            . 'ON DUPLICATE KEY UPDATE registry_id = NULL',
+        // The Scope and Binding locks already serialize creation. An upsert on
+        // the secondary unique index would next-key lock even existing anchors.
+        $lookup = $this->prepare(
+            'SELECT id FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) '
+            . "WHERE scope_id = ? AND scope_end = ? AND binding_partition = ? AND key_kind = ? AND slug = '' FOR UPDATE",
         );
-        $statement->execute([$scopeId, $bindingPartition, $scopeId, $bindingPartition, $scopeId]);
+        $insert = null;
+        foreach ([[0, $bindingPartition, 0], [0, $bindingPartition, 2], [1, 0, 2]] as $boundary) {
+            $parameters = [$scopeId, ...$boundary];
+            $lookup->execute($parameters);
+            $exists = $lookup->fetchColumn() !== false;
+            $lookup->closeCursor();
+            if (! $exists) {
+                $insert ??= $this->prepare(
+                    "INSERT INTO maa_slug_registry_lock_keys (scope_id, scope_end, binding_partition, key_kind, slug) VALUES (?, ?, ?, ?, '')",
+                );
+                $insert->execute($parameters);
+            }
+        }
     }
 
     /** @return list<array{id: int, scope_id: int, binding_id: int, slug: string}> */
