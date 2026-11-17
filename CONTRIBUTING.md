@@ -131,23 +131,34 @@ Replace `BASE...HEAD` with your specific base and head branches (e.g., `main...H
 
 ### 6. Release Artifact Verification
 
-Run the same command as CI from a clean repository checkout. Both modes take the full 40-character checkout SHA and an explicit target argument. For an active release, pass the exact `x.y.z-rc.N` target without a leading `v`.
+Run the same command as CI from a clean repository checkout. Both modes require Bash, Git, PHP with DOM, and [cmark-gfm 0.29.0.gfm.13](https://github.com/github/cmark-gfm/releases/tag/0.29.0.gfm.13) to parse release metadata. The CI installer checks the pinned source archive and builds the tool into a local directory. To use it locally, have `curl`, `shasum`, `tar`, CMake, a C/C++ compiler, and a build tool such as Make available.
+
+```bash
+markdown_tools="$(mktemp -d)"
+bash tools/ci/install-release-markdown.sh "$markdown_tools"
+export PATH="$markdown_tools/bin:$PATH"
+```
+
+Both modes take the full 40-character checkout SHA and an explicit target argument. For an active release, pass the exact `x.y.z-rc.N` target without a leading `v`. This mode also needs Composer, PHP Phar support, and either the PHP zip extension or the `zip` command. The command inspects the Git and Composer archives and prints the SHA, target, digests, file counts, and result.
 
 ```bash
 bash tools/ci/run-gate.sh release-artifact "$(git rev-parse HEAD)" 1.0.0-rc.3
 ```
 
-Active verification needs Bash, Git, Composer, and PHP with Phar support. Composer also needs the PHP zip extension or the `zip` command. CI uses Stable PHP 8.5 and Composer 2.10 for this mode. The command inspects the Git and Composer archives and prints the SHA, target, archive and payload digests, file counts, and result.
-
-When no release target is active, pass an explicit empty argument. This mode checks release metadata using Bash, Git, `awk`, and `dirname`.
+When no release target is active, pass an explicit empty argument to check the committed release metadata.
 
 ```bash
 bash tools/ci/run-gate.sh release-artifact "$(git rev-parse HEAD)" ""
 ```
 
-In the [CI workflow](https://github.com/Maatify-ltd/php-slug/blob/main/.github/workflows/ci.yml), set `RELEASE_ARTIFACT_TARGET` to the exact RC target during preparation. Clear it to `''` after the README release-target marker is removed and the CHANGELOG has no undated RC section. A not-applicable result requires both files to be readable and nonempty, with no active marker in either file. Dated CHANGELOG entries are historical.
+In the [CI workflow](https://github.com/Maatify-ltd/php-slug/blob/main/.github/workflows/ci.yml), set `RELEASE_ARTIFACT_TARGET` to the exact RC target during preparation. Clear it to `''` when no RC is in preparation. After publication, update the README to show the published state and record the actual publication date in the CHANGELOG. A not-applicable result requires both files to be readable and nonempty, with no active marker in either file.
 
-CI requires the inactivity regression suite in both modes. Run it locally with `bash tools/ci/test-release-artifact-inactive.sh`.
+CI uses Stable PHP 8.5 and Composer 2.10 and always runs both regression suites. The active suite needs the archive prerequisites. To run the same suites locally:
+
+```bash
+bash tools/ci/test-release-artifact-inactive.sh
+bash tools/ci/test-release-artifact-active.sh
+```
 
 For release qualification, run full applicable CI and archive verification on the same candidate commit on `main`. Record the run and review the archived README installation and publication claims, CHANGELOG allocation, SECURITY support wording, and distributed file contents in context, as required by [CI Workflow Standard §2.5](https://github.com/Maatify-ltd/php-engineering-standards/blob/7f73468922d4e58b5d86cd9511e1081c28acf420/standards/packages/CI_WORKFLOW_STANDARD.md#25-release-artifact-verification). Repeat verification if the candidate content changes.
 

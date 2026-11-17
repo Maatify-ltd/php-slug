@@ -9,44 +9,6 @@ require_command() {
     fi
 }
 
-verify_inactive() (
-    cd "$repo_root"
-    require_command awk
-    for file in README.md CHANGELOG.md; do
-        if [[ ! -f "$file" || ! -r "$file" || ! -s "$file" ]]; then
-            echo "Cannot determine release preparation state from $file." >&2
-            exit 1
-        fi
-    done
-    active_metadata=$(awk '
-        # Preserve a boundary where comment text was masked, without joining records.
-        function mask_changelog_comments(line,    visible, comment_start, comment_end) {
-            visible = in_html_comment ? "\001" : ""
-            while (1) {
-                if (in_html_comment) {
-                    comment_end = index(line, "-->")
-                    if (comment_end == 0) { return visible }
-                    line = substr(line, comment_end + 3)
-                    in_html_comment = 0
-                }
-                comment_start = index(line, "<!--")
-                if (comment_start == 0) { return visible line }
-                visible = visible substr(line, 1, comment_start - 1) "\001"
-                line = substr(line, comment_start + 4)
-                in_html_comment = 1
-            }
-        }
-        FILENAME == "README.md" && tolower($0) ~ /^[[:blank:]]*(\*\*)?release target:/ { print FILENAME }
-        FILENAME == "CHANGELOG.md" && mask_changelog_comments($0) ~ /^##[[:blank:]]+(\[[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)[[:space:]\001]*$/ { print FILENAME }
-    ' README.md CHANGELOG.md)
-    if [[ -n "$active_metadata" ]]; then
-        echo 'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.' >&2
-        printf 'Active release metadata found in:\n%s\n' "$active_metadata" >&2
-        exit 1
-    fi
-    echo 'Release Artifact Verification is not applicable. No release target is active.'
-)
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ $# -ne 2 || ! "$1" =~ ^[0-9a-f]{40}$ || ( -n "$2" && ! "$2" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.(0|[1-9][0-9]*)$ ) ]]; then
     echo "Usage: bash tools/ci/verify-release-artifact.sh <full Git SHA> <x.y.z-rc.N or ''>" >&2
@@ -65,12 +27,16 @@ if [[ -n "$source_status" ]]; then
     echo 'Release Artifact Verification requires a clean source worktree and index.' >&2
     exit 1
 fi
+require_command php
+require_command cmark-gfm
+if ! php -r 'exit(extension_loaded("dom") ? 0 : 1);'; then
+    echo 'Release Artifact Verification requires PHP DOM support.' >&2
+    exit 1
+fi
 if [[ -z "$target" ]]; then
-    verify_inactive
-    exit 0
+    exec php "$repo_root/tools/ci/verify-release-artifact.php" --inactive "$repo_root"
 fi
 
-require_command php
 require_command composer
 if ! php -r 'exit(class_exists(PharData::class) ? 0 : 1);'; then
     echo 'Release Artifact Verification requires PHP Phar support.' >&2

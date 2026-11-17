@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require __DIR__ . '/release-artifact-markdown.php';
+
 /** Reads a verification input or fails with its origin. */
 function readArtifactInput(string $path): string
 {
@@ -115,54 +117,83 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     }
 
     $install = 'composer require maatify/php-slug:' . $target . '@RC maatify/php-persistence:' . $match[1] . '@RC';
-    $readme = artifactDocument($artifact, 'README.md');
-    foreach (['README.md' => $readme, 'README_AR.md' => artifactDocument($artifact, 'README_AR.md')] as $name => $contents) {
-        if (! in_array($install, preg_split('/\R/', $contents) ?: [], true)) {
+    $readme = parseReleaseMarkdown(artifactDocument($artifact, 'README.md'), 'README.md');
+    $readmeArabic = parseReleaseMarkdown(artifactDocument($artifact, 'README_AR.md'), 'README_AR.md');
+    foreach (['README.md' => [$readme, 'Installation'], 'README_AR.md' => [$readmeArabic, 'التثبيت']] as $name => [$document, $section]) {
+        if (! markdownInstallationContains($document, $section, $install)) {
             throw new RuntimeException($name . ' lacks the exact package-scoped installation command for the target and its Persistence dependency.');
         }
     }
+    $paragraphs = markdownParagraphs($readme);
+    $images = markdownImageDestinations($readme);
+    $quotedTarget = preg_quote($target, '/');
     $badgeTarget = str_replace('-', '--', $target);
-    if (! str_contains($readme, '**Release target:** `' . $target . '`')
-        || ! str_contains($readme, '`' . $target . '` is unpublished')
-        || ! str_contains($readme, '/badge/Version-' . $badgeTarget . '-')
-        || ! str_contains($readme, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-')) {
+    if (! array_any($paragraphs, static fn(string $text): bool => preg_match('/\ARelease target:\h+' . $quotedTarget . '(?![A-Za-z0-9.-])/i', $text) === 1)
+        || ! array_any($paragraphs, static fn(string $text): bool => preg_match('/(?<![A-Za-z0-9.-])' . $quotedTarget . ' is unpublished\b/', $text) === 1)
+        || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Version-' . $badgeTarget . '-'))
+        || ! array_any($images, static fn(string $image): bool => str_contains($image, '/badge/Install%20after%20publication-' . $badgeTarget . '%40RC-'))) {
         throw new RuntimeException('README.md lacks the exact unpublished release target and badges.');
     }
 
-    $changelog = artifactDocument($artifact, 'CHANGELOG.md');
-    // Mask comments without joining lines or adjacent heading syntax.
-    $masked = preg_replace_callback('/<!--.*?(?:-->|\z)/s', static function (array $comment): string {
-        return preg_replace('/[^\r\n]+/', "\0", $comment[0])
-            ?? throw new RuntimeException('Unable to mask CHANGELOG.md HTML comment text.');
-    }, $changelog);
-    if ($masked === null || preg_match_all('/^##\h+([^\r\n]*\S)\h*\r?$/m', $masked, $headings) === false) {
-        throw new RuntimeException('Unable to read CHANGELOG.md release headings.');
-    }
-    $visibleHeadings = [];
-    foreach ($headings[1] as $rawHeading) {
-        $title = rtrim($rawHeading, " \t\0");
-        if ($title !== '') {
-            $visibleHeadings[] = $title;
-        }
-    }
-    $firstRelease = ($visibleHeadings[0] ?? null) === '[Unreleased]' ? 1 : 0;
-    $heading = $visibleHeadings[$firstRelease] ?? null;
-    if ($heading !== $target && $heading !== '[' . $target . ']') {
+    $changelog = parseReleaseMarkdown(artifactDocument($artifact, 'CHANGELOG.md'), 'CHANGELOG.md');
+    $headings = markdownReleaseHeadings($changelog);
+    $firstTitle = $headings[0]['title'] ?? null;
+    $unreleased = $firstTitle === '[Unreleased]' || ($firstTitle === 'Unreleased' && $headings[0]['linked']);
+    $release = $headings[$unreleased ? 1 : 0] ?? null;
+    if ($release === null || $release['linked'] || ! in_array($release['title'], [$target, '[' . $target . ']'], true)) {
         throw new RuntimeException('CHANGELOG.md must put the exact undated target in its first release section.');
     }
-    $security = artifactDocument($artifact, 'SECURITY.md');
-    if (! str_contains($security, 'This artifact targets `' . $target . '` as a Pre-Stable Release Candidate.')
-        || ! str_contains($security, '| `' . $target . '` pre-release (artifact target) | No |')) {
+    $security = parseReleaseMarkdown(artifactDocument($artifact, 'SECURITY.md'), 'SECURITY.md');
+    $supportClaim = 'This artifact targets ' . $target . ' as a Pre-Stable Release Candidate.';
+    if (! array_any(markdownParagraphs($security), static fn(string $text): bool => str_contains($text, $supportClaim))
+        || ! markdownHasUnsupportedRelease($security, $target)) {
         throw new RuntimeException('SECURITY.md lacks the exact release target and unsupported pre-release row.');
     }
 }
 
-if ($argc !== 7) {
-    fwrite(STDERR, "Use the shell driver to run Release Artifact Verification.\n");
-    exit(2);
+/** Verifies that the candidate's visible release metadata permits the inactive gate. */
+function verifyInactiveRelease(string $checkout): int
+{
+    $documents = [];
+    foreach (['README.md', 'CHANGELOG.md'] as $name) {
+        $path = $checkout . '/' . $name;
+        if (! is_file($path) || ! is_readable($path) || ! filesize($path)) {
+            fwrite(STDERR, 'Cannot determine release preparation state from ' . $name . '.' . PHP_EOL);
+
+            return 1;
+        }
+        $documents[$name] = readArtifactInput($path);
+    }
+
+    $active = [];
+    $readme = parseReleaseMarkdown($documents['README.md'], 'README.md');
+    if (array_any(markdownParagraphs($readme), static fn(string $paragraph): bool => preg_match('/\A\h*release target:/i', $paragraph) === 1)) {
+        $active[] = 'README.md';
+    }
+    $changelog = parseReleaseMarkdown($documents['CHANGELOG.md'], 'CHANGELOG.md');
+    $version = '[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+';
+    $pattern = '/\A(?:' . $version . '|\[' . $version . '\])\z/';
+    if (array_any(markdownReleaseHeadings($changelog), static fn(array $heading): bool => preg_match($pattern, $heading['title']) === 1)) {
+        $active[] = 'CHANGELOG.md';
+    }
+    if ($active !== []) {
+        fwrite(STDERR, "Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.\nActive release metadata found in:\n" . implode("\n", $active) . PHP_EOL);
+
+        return 1;
+    }
+    echo "Release Artifact Verification is not applicable. No release target is active.\n";
+
+    return 0;
 }
 
 try {
+    if ($argc === 3 && $argv[1] === '--inactive') {
+        exit(verifyInactiveRelease($argv[2]));
+    }
+    if ($argc !== 7) {
+        fwrite(STDERR, "Use the shell driver to run Release Artifact Verification.\n");
+        exit(2);
+    }
     [, $checkout, $candidateTree, $target, $gitTar, $composerZip, $populatedZip] = $argv;
     $expected = [];
     foreach (requiredBlobs($candidateTree) as $path => $blob) {
