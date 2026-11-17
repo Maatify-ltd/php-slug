@@ -19,8 +19,25 @@ verify_inactive() (
         fi
     done
     active_metadata=$(awk '
+        # Preserve a boundary where comment text was masked, without joining records.
+        function mask_changelog_comments(line,    visible, comment_start, comment_end) {
+            visible = in_html_comment ? "\001" : ""
+            while (1) {
+                if (in_html_comment) {
+                    comment_end = index(line, "-->")
+                    if (comment_end == 0) { return visible }
+                    line = substr(line, comment_end + 3)
+                    in_html_comment = 0
+                }
+                comment_start = index(line, "<!--")
+                if (comment_start == 0) { return visible line }
+                visible = visible substr(line, 1, comment_start - 1) "\001"
+                line = substr(line, comment_start + 4)
+                in_html_comment = 1
+            }
+        }
         FILENAME == "README.md" && tolower($0) ~ /^[[:blank:]]*(\*\*)?release target:/ { print FILENAME }
-        FILENAME == "CHANGELOG.md" && /^##[[:blank:]]+(\[[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)[[:space:]]*$/ { print FILENAME }
+        FILENAME == "CHANGELOG.md" && mask_changelog_comments($0) ~ /^##[[:blank:]]+(\[[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)[[:space:]\001]*$/ { print FILENAME }
     ' README.md CHANGELOG.md)
     if [[ -n "$active_metadata" ]]; then
         echo 'Set RELEASE_ARTIFACT_TARGET to the exact RC being prepared.' >&2
