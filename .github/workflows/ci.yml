@@ -284,7 +284,7 @@ jobs:
             fi
           done
           active_metadata=$(awk '
-            FILENAME == "README.md" && /^[[:blank:]]*(\*\*)?Release target:/ { print FILENAME }
+            FILENAME == "README.md" && tolower($0) ~ /^[[:blank:]]*(\*\*)?release target:/ { print FILENAME }
             FILENAME == "CHANGELOG.md" && /^##[[:blank:]]+(\[[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+\]|[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+)[[:space:]]*$/ { print FILENAME }
           ' README.md CHANGELOG.md)
           if [[ -n "$active_metadata" ]]; then
