@@ -18,6 +18,7 @@ sha="$1"
 target="$2"
 
 require_command git
+export GIT_NO_REPLACE_OBJECTS=1
 if [[ "$(git -C "$repo_root" rev-parse HEAD)" != "$sha" ]]; then
     echo 'Release Artifact Verification requires the supplied SHA to match checkout HEAD.' >&2
     exit 1

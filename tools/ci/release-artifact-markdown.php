@@ -71,12 +71,13 @@ function markdownElements(DOMElement $parent, ?string $type = null): array
 /** Returns visible inline text while ignoring HTML, images, and fenced examples. */
 function markdownVisibleText(DOMElement $node, bool $maskInlineCode = false): string
 {
+    $separator = in_array($node->localName, ['table_header', 'table_row'], true) ? ' ' : '';
     return match ($node->localName) {
         'html_block', 'html_inline', 'image', 'code_block' => '',
         'text' => $node->textContent,
         'code' => $maskInlineCode ? str_repeat("\0", strlen($node->textContent)) : $node->textContent,
         'softbreak', 'linebreak' => ' ',
-        default => implode('', array_map(static fn(DOMElement $child): string => markdownVisibleText($child, $maskInlineCode), markdownElements($node))),
+        default => implode($separator, array_map(static fn(DOMElement $child): string => markdownVisibleText($child, $maskInlineCode), markdownElements($node))),
     };
 }
 
@@ -91,14 +92,45 @@ function markdownHasVisibleContent(DOMElement $node): bool
     };
 }
 
+/** @return Generator<int, DOMElement> */
+function markdownDeclarationBlocks(DOMElement $container): Generator
+{
+    foreach (markdownElements($container) as $node) {
+        if (in_array($node->localName, ['paragraph', 'heading', 'table_header', 'table_row'], true)) {
+            yield $node;
+        } elseif (in_array($node->localName, ['list', 'item', 'table'], true)) {
+            yield from markdownDeclarationBlocks($node);
+        } elseif ($node->localName === 'block_quote' && markdownIsGitHubAlert($node)) {
+            yield from markdownDeclarationBlocks($node);
+        }
+    }
+}
+
+/** A GitHub alert starts with its marker alone on the first quoted line. */
+function markdownIsGitHubAlert(DOMElement $quote): bool
+{
+    $firstBlock = markdownElements($quote)[0] ?? null;
+    if ($firstBlock?->localName !== 'paragraph') {
+        return false;
+    }
+
+    $firstLine = markdownElements($firstBlock);
+    $marker = $firstLine[0] ?? null;
+    $afterMarker = $firstLine[1] ?? null;
+
+    return $marker?->localName === 'text'
+        && preg_match('/\A\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\z/', rtrim($marker->textContent)) === 1
+        && ($afterMarker === null || in_array($afterMarker->localName, ['softbreak', 'linebreak'], true));
+}
+
 /** @return list<string|null> Declared release targets, with null for a label lacking a valid RC */
 function markdownReleaseDeclarations(DOMElement $document): array
 {
     $declarations = [];
-    foreach (markdownElements($document, 'paragraph') as $paragraph) {
+    foreach (markdownDeclarationBlocks($document) as $block) {
         // Inline code values remain available, but inline code cannot supply the declaration label.
-        $text = markdownVisibleText($paragraph);
-        $labelsOnly = markdownVisibleText($paragraph, true);
+        $text = markdownVisibleText($block);
+        $labelsOnly = markdownVisibleText($block, true);
         if (preg_match_all('/(?<![\p{L}\p{N}_])release\h+target:/iu', $labelsOnly, $matches, PREG_OFFSET_CAPTURE) === false) {
             throw new RuntimeException('Unable to parse README release target declarations.');
         }
@@ -169,14 +201,21 @@ function markdownImageDestinations(DOMElement $document): array
 /** Confirms the target support row comes from a visible GFM table. */
 function markdownHasUnsupportedRelease(DOMElement $document, string $target): bool
 {
+    $version = preg_quote($target, '/');
+    $versionCell = '/\A(?:' . $version . '|\[' . $version . '\])(?=\h|\z)/u';
+    $hasUnsupportedRow = false;
     foreach (markdownElements($document, 'table') as $table) {
         foreach (markdownElements($table, 'table_row') as $row) {
             $columns = array_map(markdownVisibleText(...), markdownElements($row, 'table_cell'));
-            if ($columns === [$target . ' pre-release (artifact target)', 'No']) {
-                return true;
+            if (preg_match($versionCell, trim($columns[0] ?? '')) !== 1) {
+                continue;
             }
+            if (trim($columns[1] ?? '') !== 'No') {
+                return false;
+            }
+            $hasUnsupportedRow = $hasUnsupportedRow || $columns === [$target . ' pre-release (artifact target)', 'No'];
         }
     }
 
-    return false;
+    return $hasUnsupportedRow;
 }

@@ -73,6 +73,18 @@ assert_inactive_fixture readme-after-softbreak 1 "$readme_guard" \
     $'# Slug\n\nA consumer-facing package.\n**Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture inline-code-readme-label 0 "$inactive" \
     $'# Slug\n\n`Release target:` is a field in the preparation template.\n' "$dated"
+assert_inactive_fixture readme-list-marker 1 "$readme_guard" \
+    $'# Slug\n\n- **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-nested-list-marker 1 "$readme_guard" \
+    $'# Slug\n\n- Package metadata\n  1. **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-table-marker 1 "$readme_guard" \
+    $'# Slug\n\n| Package metadata |\n| --- |\n| **Release target:** `1.0.0-rc.3` |\n' "$dated"
+assert_inactive_fixture readme-alert-marker 1 "$readme_guard" \
+    $'# Slug\n\n> [!NOTE]\n> **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-inline-alert-example 0 "$inactive" \
+    "$readme"$'\n> [!NOTE] **Release target:** `1.0.0-rc.3`\n' "$dated"
+assert_inactive_fixture readme-list-examples 0 "$inactive" \
+    "$readme"$'\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.3`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.3`\n' "$dated"
 assert_inactive_fixture changelog-plain 1 "$changelog_guard" "$readme" $'# Changelog\n\n## 1.0.0-rc.3\n'
 assert_inactive_fixture changelog-bracketed 1 "$changelog_guard" "$readme" $'# Changelog\n\n## [1.0.0-rc.3]\n'
 assert_inactive_fixture changelog-linked 1 "$changelog_guard" "$readme" \
@@ -123,4 +135,41 @@ active_readme=$'# Slug\n\n**Release target:** `1.0.0-rc.3`\n'
 assert_assume_unchanged_readme committed-active 1 "$readme_guard" "$active_readme" "$readme"
 assert_assume_unchanged_readme committed-inactive 0 "$inactive" "$readme" "$active_readme"
 
-echo 'Release Artifact Verification inactive regression passed (29 cases).'
+(
+    unset GIT_NO_REPLACE_OBJECTS
+    build_fixture replaced-readme-blob "$active_readme" "$dated"
+    replaced_blob_fixture="$scratch/replaced-readme-blob"
+    replaced_blob_head="$(git -C "$replaced_blob_fixture" rev-parse HEAD)"
+    assert_gate replaced-readme-blob 1 "$readme_guard" "$replaced_blob_head" ''
+    original_blob="$(git -C "$replaced_blob_fixture" rev-parse "$replaced_blob_head:README.md")"
+    replacement_blob="$(printf '%s' "$readme" | git -C "$replaced_blob_fixture" hash-object -w --stdin)"
+    git -C "$replaced_blob_fixture" replace "$original_blob" "$replacement_blob"
+    if [[ "$(git -C "$replaced_blob_fixture" cat-file blob "$original_blob")" != "${readme%$'\n'}" ||
+        -n "$(git --no-optional-locks -C "$replaced_blob_fixture" status --porcelain)" ]]; then
+        echo 'The inactive fixture must replace the README blob without changing the clean checkout.' >&2
+        exit 1
+    fi
+    assert_gate replaced-readme-blob 1 "$readme_guard" "$replaced_blob_head" ''
+
+    # Materialize a replacement tree in a separate detached fixture and verify its dirty status.
+    replaced_commit_fixture="$scratch/replaced-readme-commit"
+    git --no-replace-objects -c core.hooksPath=/dev/null clone --quiet --shared --no-tags -- \
+        "$replaced_blob_fixture" "$replaced_commit_fixture"
+    git --no-replace-objects -C "$replaced_commit_fixture" -c core.hooksPath=/dev/null \
+        checkout --quiet --detach "$replaced_blob_head"
+    printf '%s' "$readme" > "$replaced_commit_fixture/README.md"
+    git -C "$replaced_commit_fixture" add README.md
+    replacement_tree="$(git -C "$replaced_commit_fixture" write-tree)"
+    replacement_commit="$(git -C "$replaced_commit_fixture" -c user.name='Release Artifact Fixture' \
+        -c user.email='fixture@example.invalid' -c commit.gpgSign=false commit-tree "$replacement_tree" \
+        -m 'Build synthetic Git replacement commit')"
+    git -C "$replaced_commit_fixture" replace "$replaced_blob_head" "$replacement_commit"
+    if [[ -n "$(git --no-optional-locks -C "$replaced_commit_fixture" status --porcelain)" ]]; then
+        echo 'The inactive fixture must make the materialized replacement appear clean to Git.' >&2
+        exit 1
+    fi
+    assert_gate replaced-readme-commit 1 'Release Artifact Verification requires a clean source worktree and index.' \
+        "$replaced_blob_head" ''
+)
+
+echo 'Release Artifact Verification inactive regression passed (38 cases).'

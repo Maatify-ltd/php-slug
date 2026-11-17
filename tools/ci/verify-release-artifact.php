@@ -155,7 +155,7 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     $supportClaim = 'This artifact targets ' . $target . ' as a Pre-Stable Release Candidate.';
     if (! array_any(markdownParagraphs($security), static fn(string $text): bool => str_contains($text, $supportClaim))
         || ! markdownHasUnsupportedRelease($security, $target)) {
-        throw new RuntimeException('SECURITY.md lacks the exact release target and unsupported pre-release row.');
+        throw new RuntimeException('SECURITY.md must identify the release target and mark it unsupported without conflicting rows.');
     }
 }
 

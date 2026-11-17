@@ -174,9 +174,18 @@ replace_document_marker() {
 hide_markup=$'<!--\n$0\n-->'
 readme_target_pattern='~^\*\*Release target:\*\*[^\r\n]+$~m'
 readme_target_failure='README.md lacks the exact unpublished release target and badges.'
+readme_conflict='README.md contains an invalid or conflicting release target declaration.'
 replace_document_marker conflicting-release-identity README.md "$readme_target_pattern" \
-    $'$0\n\n**Release target:** `1.0.0-rc.4`, a Pre-Stable Release Candidate.' 1 \
-    'README.md contains an invalid or conflicting release target declaration.'
+    $'$0\n\n**Release target:** `1.0.0-rc.4`, a Pre-Stable Release Candidate.' 1 "$readme_conflict"
+replace_document_marker conflicting-list-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n1. Package metadata\n   - **Release target:** `1.0.0-rc.4`' 1 "$readme_conflict"
+replace_document_marker valid-list-release-identity README.md "$readme_target_pattern" '- $0' 0 "$pass"
+replace_document_marker conflicting-table-release-identity README.md "$readme_target_pattern" \
+    $'$0\n\n| Package metadata |\n| --- |\n| **Release target:** `1.0.0-rc.4` |' 1 "$readme_conflict"
+replace_document_marker valid-alert-release-identity README.md "$readme_target_pattern" \
+    $'> [!NOTE]\n> $0' 0 "$pass"
+replace_document_marker ignored-list-release-examples README.md "$readme_target_pattern" \
+    $'$0\n\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.4`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.4`' 0 "$pass"
 readme_install_pattern='#^(```|~~~)bash[^\S\r\n]*\Rcomposer require maatify/php-slug:[^\r\n]+\R\1[^\S\r\n]*$#m'
 install_failure='lacks the exact package-scoped installation command for the target and its Persistence dependency.'
 replace_document_marker hidden-release-identity README.md "$readme_target_pattern" "$hide_markup" 1 "$readme_target_failure"
@@ -184,9 +193,15 @@ replace_document_marker hidden-install-command README.md "$readme_install_patter
 replace_document_marker hidden-arabic-install-command README_AR.md "$readme_install_pattern" "$hide_markup" 1 "README_AR.md $install_failure"
 
 security_row_pattern='~^(\| `1\.0\.0-rc\.3` pre-release \(artifact target\) \| )No( \|[^\r\n]*)$~m'
-replace_document_marker hidden-security-row SECURITY.md "$security_row_pattern" "$hide_markup" 1 \
-    'SECURITY.md lacks the exact release target and unsupported pre-release row.'
+security_failure='SECURITY.md must identify the release target and mark it unsupported without conflicting rows.'
+replace_document_marker hidden-security-row SECURITY.md "$security_row_pattern" "$hide_markup" 1 "$security_failure"
 replace_document_marker styled-security-row SECURITY.md "$security_row_pattern" '${1}**No**${2}' 0 "$pass"
+replace_document_marker supported-after-unsupported SECURITY.md "$security_row_pattern" \
+    $'$0\n${1}Yes${2}' 1 "$security_failure"
+replace_document_marker supported-before-unsupported SECURITY.md "$security_row_pattern" \
+    $'${1}Yes${2}\n$0' 1 "$security_failure"
+replace_document_marker supported-unrelated-release SECURITY.md "$security_row_pattern" \
+    $'$0\n| `1.0.0-rc.30` pre-release (artifact target) | Yes |' 0 "$pass"
 
 new_fixture missing-runtime
 printf '%s\n' '/src/Fixture.php export-ignore' >> "$scratch/missing-runtime/.gitattributes"
