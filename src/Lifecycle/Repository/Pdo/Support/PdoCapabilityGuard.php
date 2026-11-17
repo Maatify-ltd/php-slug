@@ -27,7 +27,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
      * Verifies connection capabilities that do not require the package schema.
      *
      * This method performs no DDL and does not mutate package tables. Runtime
-     * callers must use assertInstalledSchemaSupported() before package writes.
+     * callers must use assertMutationSupported() before package writes.
      */
     public function assertSupported(): void
     {
@@ -45,13 +45,27 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
      */
     public function assertInstalledSchemaSupported(): void
     {
-        if ($this->installedSchemaVerified) {
+        $this->assertInstalledSchema(forMutation: false);
+    }
+
+    /** Verifies the installed schema and that lifecycle writes can perform current locking reads. */
+    public function assertMutationSupported(): void
+    {
+        $this->assertInstalledSchema(forMutation: true);
+    }
+
+    private function assertInstalledSchema(bool $forMutation): void
+    {
+        if (! $this->installedSchemaVerified) {
+            $this->assertSupported();
+        }
+        if ($forMutation) {
             $this->assertCurrentLockingReads();
+        }
+        if ($this->installedSchemaVerified) {
             return;
         }
 
-        $this->assertSupported();
-        $this->assertCurrentLockingReads();
         $this->assertPackageTables();
         try {
             (new PdoSchemaVerifier($this->pdo))->assertRegistryLockProjection();
@@ -168,23 +182,19 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             return;
         }
 
-        try {
-            $statement = $this->pdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
-            if ($statement === false) {
-                throw new SlugRuntimeCompatibilityException('Unable to inspect the session snapshot isolation setting.');
-            }
-            $setting = self::fetchColumnAndClose($statement, 1);
-        } catch (PDOException $exception) {
-            throw new SlugRuntimeCompatibilityException('Unable to inspect the session snapshot isolation setting.', 0, $exception);
+        $statement = $this->pdo->query("SHOW SESSION VARIABLES WHERE Variable_name = 'innodb_snapshot_isolation'");
+        if ($statement === false) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect the session snapshot isolation setting.');
         }
 
+        $setting = self::fetchColumnAndClose($statement, 1);
         if ($setting === false) {
             $this->snapshotIsolationAvailable = false;
             return;
         }
         if ($setting !== 'OFF') {
             throw new SlugRuntimeCompatibilityException(
-                'Slug requires innodb_snapshot_isolation=OFF on the Host PDO session. Configure it before starting the transaction.',
+                'Slug lifecycle writes require innodb_snapshot_isolation=OFF on the Host PDO session. Configure it before starting the transaction.',
             );
         }
     }

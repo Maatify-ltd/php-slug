@@ -68,7 +68,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
         $this->assertReservationInput($operationKey, $requestFingerprint, $resultType, $resultSchemaVersion, $participants);
         $this->assertResultOperationCompatibility($resultType, $operationType);
         $this->assertCallerTransaction();
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         /** @var OperationReservation|OperationRecord $result */
         $result = $this->transactions->run(function () use ($operationKey, $operationType, $requestFingerprint, $resultType, $resultSchemaVersion, $participants): OperationReservation|PdoTransactionRollback {
@@ -143,7 +143,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Operation id cannot be negative.');
         }
         $this->assertCallerTransaction();
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         $this->transactions->run(function () use ($operationId, $metadata, $profiles): void {
             $operation = $this->findOperationById($operationId, true);

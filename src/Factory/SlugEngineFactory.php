@@ -14,6 +14,7 @@ use Maatify\Slug\Lifecycle\Consumer\Service\SlugAvailabilityChecker;
 use Maatify\Slug\Lifecycle\Contract\ReservedSlugPolicyInterface;
 use Maatify\Slug\Canonicalization\Factory\SlugTextServiceFactory;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoCapabilityGuard;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoMutationCapabilityGuard;
 use Maatify\Slug\Lifecycle\Repository\Pdo\History\PdoHistoryRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Operation\PdoOperationRepository;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Binding\PdoBindingMaintenanceRepository;
@@ -44,6 +45,7 @@ final class SlugEngineFactory
     public static function create(PDO $pdo, SlugProfileRegistryInterface $profiles, ReservedSlugPolicyInterface $reservedPolicy, ClockInterface $clock): SlugEngine
     {
         $capabilities = new PdoCapabilityGuard($pdo);
+        $mutationCapabilities = new PdoMutationCapabilityGuard($capabilities);
         $transactions = new PdoTransactionCoordinator($pdo);
         $scopePersistence = new PdoScopeRepository($pdo, $profiles, $clock, $capabilities, $transactions);
         $scopes = new SlugScopeRegistryService($scopePersistence);
@@ -61,7 +63,7 @@ final class SlugEngineFactory
             $history,
             $operations,
             $transactions,
-            $capabilities,
+            $mutationCapabilities,
             $clock,
             $reservedPolicy,
             $candidates,
@@ -74,7 +76,7 @@ final class SlugEngineFactory
             $history,
             $operations,
             $transactions,
-            $capabilities,
+            $mutationCapabilities,
             $clock,
             $reservedPolicy,
             $fingerprints,
@@ -86,7 +88,7 @@ final class SlugEngineFactory
             $history,
             $operations,
             $transactions,
-            $capabilities,
+            $mutationCapabilities,
             $maintenance,
             $reservedPolicy,
             $clock,

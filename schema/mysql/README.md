@@ -35,8 +35,8 @@ The package maintains the projection through its injected PDO as part of the Reg
 The schema assets are deliberately not vendor-specific migrations and must not be
 replaced with a MariaDB or MySQL variant. CI database versions are
 verification targets only; runtime acceptance is capability-based.
-Use a MariaDB connection with `innodb_snapshot_isolation=OFF` where available.
-Set it before opening a Host transaction, as described in
+For lifecycle writes on MariaDB servers exposing `innodb_snapshot_isolation`, set it to `OFF`
+before opening a Host write transaction, as described in
 [Package Reference §9](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 
 ## Canonical integration infrastructure

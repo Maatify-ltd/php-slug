@@ -14,7 +14,7 @@ An unbuffered PDO connection could still have a live capability-probe result whe
 
 ## Decision
 
-Release each probe result before the next command uses that connection. When the database exposes `innodb_snapshot_isolation`, require the Host PDO session to have it disabled. Check the session setting even when the schema capability check has already succeeded. Leave the setting and the outer transaction under Host control.
+Release each probe result before the next command uses that connection. When the database exposes `innodb_snapshot_isolation`, require it to be disabled before package mutation, including after successful schema verification. Non-locking reads support either setting. PDO failures during the setting check propagate unchanged. Leave the setting and the outer transaction under Host control.
 
 ## Rationale
 
@@ -23,7 +23,7 @@ Closing the result supports unbuffered operation with the same connection and tr
 ## Consequences
 
 - The package supports either PDO buffering mode and uses the same adapter for qualified database sessions.
-- Hosts using the MariaDB setting configure it before starting a transaction. The package does not change the setting or retry the Host transaction.
+- Hosts using the MariaDB setting configure it before starting a write transaction. The package does not change the setting or retry the Host transaction.
 - MySQL and MariaDB run the same maintained PDO and snapshot regression suite.
 
 ## Canonical Contract / Current Owner

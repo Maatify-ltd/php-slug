@@ -417,7 +417,7 @@ The persisted path uses direct PDO inside package infrastructure only:
 - `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION` and `PDO::ATTR_EMULATE_PREPARES = false`.
 - PDO queries can be buffered or unbuffered. The package releases its own results before reusing the connection. The Host closes any unbuffered result it owns before calling Slug.
 - Connection charset is `utf8mb4`; timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
-- MySQL and compatible MariaDB sessions use the same PDO adapter and schema. The supported MariaDB session has `innodb_snapshot_isolation=OFF` when the server exposes that setting. Set it on the injected PDO before beginning a Host transaction. The package leaves session settings under Host control.
+- MySQL and compatible MariaDB sessions use the same PDO adapter and schema. On MariaDB servers that expose `innodb_snapshot_isolation`, lifecycle writes require `OFF` on the injected PDO before beginning a Host write transaction. Non-locking reads work with either setting. The package leaves session settings under Host control.
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
 - The package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
@@ -737,7 +737,7 @@ The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does
 
 Before acquiring the Scope lock, a lifecycle mutation throws `SlugRuntimeCompatibilityException` if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`.
 
-On a server that exposes `innodb_snapshot_isolation`, the same exception reports an unsupported session setting before package mutation. This check also applies after the installed schema has already been verified for the engine.
+On a server that exposes `innodb_snapshot_isolation`, the same exception reports an unsupported session setting before package mutation, including after the engine has verified the installed schema. A PDO failure while reading the setting propagates unchanged.
 
 ## 13. Release State
 

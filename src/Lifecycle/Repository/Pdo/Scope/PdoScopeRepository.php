@@ -59,7 +59,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
     public function ensureScope(ScopeProfileRequestDTO $request): ScopeDTO
     {
         $this->profiles->get($request->expectedProfileKey);
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         return $this->transactions->run(fn(): ScopeDTO => $this->ensureScopeInsideTransaction($request));
     }
@@ -68,7 +68,7 @@ final readonly class PdoScopeRepository implements ScopePersistenceInterface, Re
     public function ensureBindingPlaceholder(ScopeProfileRequestDTO $request, EntityReference $entity): BindingDTO
     {
         $this->profiles->get($request->expectedProfileKey);
-        $this->capabilities->assertInstalledSchemaSupported();
+        $this->capabilities->assertMutationSupported();
 
         return $this->transactions->run(function () use ($request, $entity): BindingDTO {
             $scope = $this->ensureScopeInsideTransaction($request);
