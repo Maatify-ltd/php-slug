@@ -47,6 +47,7 @@ if ! php -r 'exit(class_exists(PharData::class) ? 0 : 1);'; then
 fi
 
 temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+export TMPDIR="$temporary_root"
 scratch="$(mktemp -d "$temporary_root/slug-release-artifact.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 checkout="$scratch/checkout"

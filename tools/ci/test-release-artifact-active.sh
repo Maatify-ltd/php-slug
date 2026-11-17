@@ -7,6 +7,7 @@ unset CDPATH
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target='1.0.0-rc.3'
 temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+export TMPDIR="$temporary_root"
 scratch="$(mktemp -d "$temporary_root/slug-release-active.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 base="$scratch/base"

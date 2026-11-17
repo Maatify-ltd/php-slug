@@ -214,7 +214,10 @@ bash tools/ci/test-shell-paths.sh '1.0.0-rc.3'
 
 It runs the actual PHP runtime and release-artifact gate commands for empty/nonempty
 `CDPATH` and absolute/relative `TMPDIR`, using relative and absolute script invocation
-from the checkout and a different working directory. All paths include spaces.
+from the checkout and a different working directory. It also directly invokes both
+release-artifact regression suites and the archive verifier, without the gate wrapper,
+with absolute/relative `TMPDIR` and nonempty `CDPATH`. All 28 cases use paths with spaces
+and reject Composer temporary-directory diagnostics even when the command exits zero.
 Pass the configured RC target, or an empty argument when no target is active.
 Working-tree shell edits are applied only to that disposable fixture. The real
 source index and working tree are left untouched. CI runs the same command.

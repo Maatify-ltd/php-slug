@@ -19,7 +19,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Restored NFC after Unicode lowercasing before grammar, length checks, and generated truncation, preserving profile keys and existing valid outputs.
 - Made advisory PDO availability observe the claim and its owner together during concurrent release, purge, reuse, and transfer.
 - Kept public PDO query verification read-only; first mutations still perform the separate rollback-protected write probes.
-- Made local gate and archive scripts independent of `CDPATH`, relative `TMPDIR`, and spaces in temporary paths, with maintained real-command regressions.
+- Made local gate and archive scripts independent of `CDPATH`, relative `TMPDIR`, and spaces in temporary paths, including child commands reached through direct script invocation, with maintained real-command regressions.
 
 - Preserved custom profile grammars during generated allocation across assignment, change, scope transition, and transfer replacement. Profile-rejected numeric suffixes no longer prevent allocation of a free base.
 - Applied input-safety and 160-code-point boundaries in the runnable custom-profile example, and corrected the management Criteria inventory and History sorting reference.
