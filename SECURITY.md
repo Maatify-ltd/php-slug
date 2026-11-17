@@ -3,16 +3,17 @@
 [![Maatify Slug](https://img.shields.io/badge/Maatify-Slug-blue?style=for-the-badge)](https://github.com/Maatify-ltd/php-slug)
 [![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-9C27B0?style=for-the-badge)](https://github.com/Maatify-ltd)
 
-## Current Support State
+## Release and Support State
 
-This repository contains the package implementation, Runtime, and CI. `v1.0.0-rc.2` is the current published Packagist Release Candidate / pre-release, not Stable. There is no Published Stable release and no Stable support line. The RC does not create a public Stable support or SLA commitment.
+This artifact targets `1.0.0-rc.3` as a Pre-Stable Release Candidate. At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available through Packagist. No Stable support line is established.
 
 ## Supported Versions
 
 | Version | Supported |
 |---|---|
 | Stable release line | No |
-| `1.0.0-rc.2` pre-release | No — pre-release; no Stable support line |
+| `1.0.0-rc.2` pre-release (published at qualification) | No |
+| `1.0.0-rc.3` pre-release (artifact target) | No |
 
 This table is support-oriented, not a mutable publication-status ledger. The RC does not create a Stable support line or SLA.
 

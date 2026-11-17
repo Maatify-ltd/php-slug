@@ -3,13 +3,13 @@
 > هذا الملف ترجمة عربية غير معيارية لملف [`USAGE_GUIDE.md`](USAGE_GUIDE.md).
 > النسخة الإنجليزية هي الوثيقة authoritative وcanonical، ولا ينشئ هذا الملف عقدًا تقنيًا منافسًا. عند وجود اختلاف، تكون النسخة الإنجليزية و[`SLUG_PACKAGE_REFERENCE.md`](../../SLUG_PACKAGE_REFERENCE.md) هما المرجعان.
 
-> **دورة الإصدار:** `v1.0.0-rc.2` هي Published Release Candidate الحالية. أصبحت `searchScopes()` و`getScopeOperationalSummary()` و`searchHistory()` ضمن RC2 المنشورة، وتبقى الحزمة Pre-Stable دون Stable support line.
+> **الإصدار المستهدف:** `1.0.0-rc.3`، نسخة Release Candidate قبل الإصدار المستقر.
 
 ## الملاءمة ومتى تستخدم الحزمة
 
 استخدم maatify/php-slug عندما تحتاج إلى توليد Slug أو canonicalization أو ملكية scoped مستمرة مع resolution وHistory. يناسب المسار stateless النصوص التي لا تحتاج إلى Persistence، بينما يناسب المسار persisted الحالات التي تملك فيها الحزمة lifecycle والـclaims.
 
-## متطلبات نسخة المستودع
+## المتطلبات
 
 - PHP (Composer): `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. تتحقق CI من PHP 8.4 و8.5. يسمح Composer أيضًا بفروع PHP 8 الأحدث ضمن هذا النطاق. يلزم دليل مستقل على الأمان والتوافق لكل فرع أحدث قبل إعلان دعمه.
 - `ext-filter` و`ext-intl` و`ext-mbstring` و`ext-pdo` و`ext-pdo_mysql`.
@@ -17,15 +17,17 @@
 - يحتاج المسار stateless إلى production Composer autoload فقط.
 - يحتاج المسار persisted إلى اتصال PDO متوافق مع MySQL وإلى schema الحزمة. يستخدم التحقق المحلي [خدمة MySQL المؤقتة من نسخة المستودع](../../CONTRIBUTING.md#prerequisites-for-local-development).
 
-## حالة النشر
+## التثبيت
 
-إن `v1.0.0-rc.2` هي Published Release Candidate الحالية وقابلة للحل خارجيًا عبر مصدر Composer المعتمد للتوزيع. وتبقى دورة الحياة Pre-Stable ولا تنشئ Stable support line. يمكن للمستهلك تثبيتها بالأمر:
+حالة النشر عند التأهيل: `1.0.0-rc.3` غير منشورة، و`1.0.0-rc.2` متاحة عبر Packagist. لا يوجد خط دعم Stable.
+
+بعد نشر RC.3 عبر Packagist، ثبّتها بالأمر التالي:
 
 ~~~bash
-composer require maatify/php-slug:1.0.0-rc.2@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
 ~~~
 
-الأمثلة أدناه تخص نسخة الـCheckout الحالية. عند تثبيت الإصدار المنشور، اتبع [دليل استخدام RC.2](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
+أبقِ قيمة `minimum-stability` في المشروع على `stable`. راجع [قسم التثبيت في README](../../README_AR.md#التثبيت) لترقية RC.2 وتغيير أنواع الترقيم. إذا كنت تستخدم RC.2، اتّبع [دليل نسختها](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## ما لا تهدف إليه الحزمة وحدود Host
 
