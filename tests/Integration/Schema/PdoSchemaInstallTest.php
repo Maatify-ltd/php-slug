@@ -40,6 +40,21 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' AND (COLUMN_COMMENT IS NULL OR CHAR_LENGTH(TRIM(COLUMN_COMMENT)) < 8)");
         self::assertNotFalse($statement);
         self::assertSame('0', (string) $statement->fetchColumn(), 'Every package column must carry a meaningful schema comment.');
+
+        $statement = $this->pdo->query(
+            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
+            . "AND TABLE_NAME LIKE 'maa\\_slug\\_%' AND INDEX_NAME = 'PRIMARY' ORDER BY BINARY TABLE_NAME, SEQ_IN_INDEX",
+        );
+        self::assertNotFalse($statement);
+        self::assertSame([
+            ['maa_slug_bindings', 'id'],
+            ['maa_slug_history', 'id'],
+            ['maa_slug_operation_bindings', 'id'],
+            ['maa_slug_operations', 'id'],
+            ['maa_slug_registry', 'id'],
+            ['maa_slug_registry_lock_keys', 'id'],
+            ['maa_slug_scopes', 'id'],
+        ], $statement->fetchAll(PDO::FETCH_NUM));
     }
 
     public function testSchemaInstallAndCleanupAreRepeatableTwice(): void
@@ -69,7 +84,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
 
         $projection = $this->readSchemaAsset('003_registry_lock_projection.sql');
         $installer->installSql($projection);
-        $keys = $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug');
+        $keys = $this->readRows('SELECT scope_id, scope_end, binding_partition, key_kind, slug, registry_id, owner_binding_id FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug');
         self::assertSame([
             [0, 0, 0, 2, '', null, null],
             [11, 0, 0, 0, '', null, null],
@@ -92,7 +107,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
 
         $installer->installSql($projection);
-        self::assertSame($keys, $this->readRows('SELECT * FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug'));
+        self::assertSame($keys, $this->readRows('SELECT scope_id, scope_end, binding_partition, key_kind, slug, registry_id, owner_binding_id FROM maa_slug_registry_lock_keys ORDER BY scope_id, scope_end, binding_partition, key_kind, slug'));
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
         (new PdoSchemaVerifier($this->pdo))->assertInstalled();
 
@@ -109,17 +124,17 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame([[0, 101], [101, 101]], $this->readRows("SELECT binding_partition, owner_binding_id FROM maa_slug_registry_lock_keys WHERE slug = 'post-upgrade' ORDER BY binding_partition"));
     }
 
-    #[DataProvider('missingProjectionRequirements')]
-    public function testFacadeRejectsMissingSchemaMigrationBeforeMutation(bool $projectionTableExists, string $reason): void
+    #[DataProvider('invalidRuntimeProjections')]
+    public function testFacadeRejectsIncompatibleSchemaBeforeMutation(?string $projectionChange, string $reason): void
     {
         $this->dropSchemaForUpgradeProof();
         $installer = new PdoSchemaInstaller($this->pdo);
         $installer->installSql($this->readSchemaAsset('001_slug_rc1.sql'));
         $installer->installSql($this->readSchemaAsset('002_operational_reporting_indexes.sql'));
         $this->seedPublishedRegistry();
-        if ($projectionTableExists) {
+        if ($projectionChange !== null) {
             $installer->installSql($this->readSchemaAsset('003_registry_lock_projection.sql'));
-            $this->pdo->exec('DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0');
+            $this->pdo->exec($projectionChange);
         }
 
         $profiles = new SlugProfileRegistry();
@@ -160,11 +175,18 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertSame($before, $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id'));
     }
 
-    /** @return iterable<string, array{bool, string}> */
-    public static function missingProjectionRequirements(): iterable
+    /** @return iterable<string, array{?string, string}> */
+    public static function invalidRuntimeProjections(): iterable
     {
-        yield 'RC.2 schema without migration' => [false, 'installed package table set is not exact'];
-        yield '003 table without completion marker' => [true, 'Registry lock projection is unavailable or incompatible'];
+        yield 'RC.2 schema without migration' => [null, 'installed package table set is not exact'];
+        yield '003 table without completion marker' => [
+            'DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0',
+            'Registry lock projection is unavailable or incompatible',
+        ];
+        yield 'projection slug with an incompatible collation' => [
+            'ALTER TABLE maa_slug_registry_lock_keys MODIFY slug VARCHAR(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL',
+            'Registry lock projection is unavailable or incompatible',
+        ];
     }
 
     #[DataProvider('incompleteProjectionSchemas')]
@@ -184,16 +206,31 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         (new PdoCapabilityGuard($this->pdo))->assertInstalledSchemaSupported();
     }
 
+    public function testUnusableProjectionIndexFailsBeforeCapabilityProbe(): void
+    {
+        $server = $this->pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+        $attribute = is_string($server) && str_contains($server, 'MariaDB') ? 'IGNORED' : 'INVISIBLE';
+        $this->pdo->exec('ALTER TABLE maa_slug_registry_lock_keys ALTER INDEX uk_registry_lock_partition ' . $attribute);
+
+        $this->expectException(SlugRuntimeCompatibilityException::class);
+        $this->expectExceptionMessage('The Registry lock projection is unavailable or incompatible.');
+        (new PdoCapabilityGuard($this->pdo))->assertInstalledSchemaSupported();
+    }
+
     /** @return iterable<string, array{string, string}> */
     public static function incompleteProjectionSchemas(): iterable
     {
         yield 'out-of-order columns' => [
-            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, binding_partition, scope_end, key_kind, slug)',
-            'full ordered ascending primary key',
+            'ALTER TABLE maa_slug_registry_lock_keys DROP INDEX uk_registry_lock_partition, ADD UNIQUE INDEX uk_registry_lock_partition (scope_id, binding_partition, scope_end, key_kind, slug)',
+            'ordered unique partition index',
         ];
         yield 'prefix instead of full slug' => [
-            'ALTER TABLE maa_slug_registry_lock_keys DROP PRIMARY KEY, ADD PRIMARY KEY (scope_id, scope_end, binding_partition, key_kind, slug(30))',
-            'full ordered ascending primary key',
+            'ALTER TABLE maa_slug_registry_lock_keys DROP INDEX uk_registry_lock_partition, ADD UNIQUE INDEX uk_registry_lock_partition (scope_id, scope_end, binding_partition, key_kind, slug(30))',
+            'full ascending unique keys',
+        ];
+        yield 'id without automatic allocation' => [
+            'ALTER TABLE maa_slug_registry_lock_keys MODIFY id BIGINT UNSIGNED NOT NULL',
+            'requires an auto-increment unsigned bigint identity',
         ];
         yield 'table installed but backfill incomplete' => [
             'DELETE FROM maa_slug_registry_lock_keys WHERE scope_id = 0',

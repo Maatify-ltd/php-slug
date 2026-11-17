@@ -26,7 +26,7 @@ Apply the ordered SQL assets through the Host's migration or bootstrap process b
 | Existing published RC1 schema | `002_operational_reporting_indexes.sql`, then `003_registry_lock_projection.sql` |
 | Existing published RC2 schema | `003_registry_lock_projection.sql` |
 
-`003_registry_lock_projection.sql` was introduced after the published RC2 schema. It creates the internal InnoDB Registry lock-key projection, then backfills existing keys and anchors and records completion in one atomic SQL statement. The runtime checks that completion marker.
+`003_registry_lock_projection.sql` was introduced after the published RC2 schema. It creates the internal InnoDB Registry lock-key projection, then backfills existing keys and anchors and records completion in one atomic SQL statement. The runtime checks the `id` primary key, the full ordered, visible unique `uk_registry_lock_partition` index and the completion marker.
 
 For an installed database, stop Slug traffic and wait for in-flight Slug transactions. Run `003` outside a caller-managed transaction. Stop at the first SQL error and close the failed migration session before retrying. Resume traffic only after the matching runtime is deployed and its schema verification succeeds.
 

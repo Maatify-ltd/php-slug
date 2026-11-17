@@ -3,7 +3,8 @@
 | Field | Value |
 |---|---|
 | Decision ID | `DEC-003` |
-| Status | `ACTIVE` |
+| Status | `SUPERSEDED` |
+| Superseded By | [DEC-005](DEC-005_REGISTRY_LOCK_PROJECTION_INDEX.md) |
 | Scope | `/` |
 | Concern | InnoDB lock boundaries for Registry lifecycle current reads |
 | Date | `2026-11-16` |

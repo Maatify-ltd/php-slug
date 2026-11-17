@@ -63,7 +63,15 @@ composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc
 
 **الترقية من RC.2.** أوقف حركة Slug وطبّق الترحيل الإضافي `003_registry_lock_projection.sql` قبل تشغيل مسار التخزين في RC.3. اتبع [دليل ترقية قاعدة البيانات](schema/mysql/README.md#installation-and-upgrade) لاستكمال ملء البيانات والتحقق. حدّث استيرادات أنواع الترقيم من اعتماد `maatify/persistence` السابق إلى [أنواع `maatify/php-persistence`](SLUG_PACKAGE_REFERENCE.md#10-management-resolution-and-pagination).
 
-إذا كنت تستخدم RC.2، ارجع إلى [دليل نسختها](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
+## النسخة المنشورة RC.2
+
+كانت `1.0.0-rc.2` النسخة المنشورة عند تأهيل RC.3. لتثبيت النسخة السابقة نفسها:
+
+```bash
+composer require maatify/php-slug:1.0.0-rc.2@RC
+```
+
+استخدم [دليل استخدام RC.2](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).
 
 ## الاستخدام السريع
 

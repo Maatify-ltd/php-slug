@@ -59,30 +59,55 @@ final readonly class PdoSchemaVerifier
     public function assertRegistryLockProjection(): void
     {
         $statement = $this->pdo->query(
-            "SELECT COLUMN_NAME, SEQ_IN_INDEX, SUB_PART, COLLATION FROM information_schema.STATISTICS "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND INDEX_NAME = 'PRIMARY' "
-            . 'ORDER BY SEQ_IN_INDEX',
+            "SHOW INDEX FROM maa_slug_registry_lock_keys WHERE Key_name IN ('PRIMARY', 'uk_registry_lock_partition')",
         );
         if ($statement === false) {
-            throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection primary key.');
+            throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection indexes.');
         }
-        $columns = ['scope_id', 'scope_end', 'binding_partition', 'key_kind', 'slug'];
-        $rows = PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC));
-        if (count($rows) !== count($columns)) {
-            throw new SlugPersistenceInvariantException('Registry lock projection requires the full ordered ascending primary key.');
-        }
-        foreach ($columns as $index => $name) {
-            $row = $rows[$index];
-            if (PdoRowHydrator::string($row, 'COLUMN_NAME') !== $name
-                || PdoRowHydrator::nonNegativeInt($row, 'SEQ_IN_INDEX') !== $index + 1
-                || $row['SUB_PART'] !== null
-                || $row['COLLATION'] !== 'A') {
-                throw new SlugPersistenceInvariantException('Registry lock projection requires the full ordered ascending primary key.');
+
+        $indexes = [];
+        foreach (PdoRowHydrator::many($statement->fetchAll(PDO::FETCH_ASSOC)) as $row) {
+            if (($row['Visible'] ?? null) === 'NO' || ($row['Ignored'] ?? null) === 'YES') {
+                throw new SlugPersistenceInvariantException('Registry lock projection requires visible, usable indexes.');
             }
+            if (PdoRowHydrator::nonNegativeInt($row, 'Non_unique') !== 0
+                || $row['Sub_part'] !== null
+                || $row['Collation'] !== 'A') {
+                throw new SlugPersistenceInvariantException('Registry lock projection requires full ascending unique keys.');
+            }
+
+            $name = PdoRowHydrator::string($row, 'Key_name');
+            $position = PdoRowHydrator::nonNegativeInt($row, 'Seq_in_index');
+            $indexes[$name][$position] = PdoRowHydrator::string($row, 'Column_name');
+        }
+        foreach ($indexes as &$columns) {
+            ksort($columns);
+        }
+        unset($columns);
+        if (($indexes['PRIMARY'] ?? []) !== [1 => 'id']
+            || ($indexes['uk_registry_lock_partition'] ?? []) !== [1 => 'scope_id', 2 => 'scope_end', 3 => 'binding_partition', 4 => 'key_kind', 5 => 'slug']) {
+            throw new SlugPersistenceInvariantException('Registry lock projection requires the id primary key and the ordered unique partition index.');
+        }
+
+        $columns = $this->pdo->query(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+            . "AND TABLE_NAME = 'maa_slug_registry_lock_keys' AND ("
+            . "(COLUMN_NAME = 'id' AND DATA_TYPE = 'bigint' AND COLUMN_TYPE LIKE '% unsigned' AND EXTRA = 'auto_increment') "
+            . "OR (COLUMN_NAME = 'slug' AND COLLATION_NAME = 'utf8mb4_bin'))",
+        );
+        if ($columns === false) {
+            throw new SlugPersistenceInvariantException('Unable to inspect the Registry lock projection columns.');
+        }
+        $matchingColumns = $columns->fetchAll(PDO::FETCH_COLUMN);
+        if (! in_array('id', $matchingColumns, true)) {
+            throw new SlugPersistenceInvariantException('Registry lock projection requires an auto-increment unsigned bigint identity.');
+        }
+        if (! in_array('slug', $matchingColumns, true)) {
+            throw new SlugPersistenceInvariantException('Registry lock projection slug column has unexpected collation. Expected utf8mb4_bin.');
         }
 
         $marker = $this->pdo->query(
-            "SELECT 1 FROM maa_slug_registry_lock_keys WHERE scope_id = 0 AND scope_end = 0 AND binding_partition = 0 AND key_kind = 2 AND slug = '' "
+            "SELECT 1 FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) WHERE scope_id = 0 AND scope_end = 0 AND binding_partition = 0 AND key_kind = 2 AND slug = '' "
             . 'AND registry_id IS NULL AND owner_binding_id IS NULL',
         );
         if ($marker === false || (int) $marker->fetchColumn() !== 1) {

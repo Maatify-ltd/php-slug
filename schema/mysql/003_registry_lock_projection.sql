@@ -1,5 +1,6 @@
 -- Apply after 001 and 002 with package writers quiesced. The backfill is retryable.
 CREATE TABLE IF NOT EXISTS maa_slug_registry_lock_keys (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Internal identity of this lock projection row',
     scope_id BIGINT UNSIGNED NOT NULL COMMENT 'Scope owning the physical lock partition',
     scope_end TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'One for the permanent separator beyond all partitions in the Scope',
     binding_partition BIGINT UNSIGNED NOT NULL COMMENT 'Zero for Scope occupancy, otherwise the participating Binding ID',
@@ -7,7 +8,8 @@ CREATE TABLE IF NOT EXISTS maa_slug_registry_lock_keys (
     slug VARCHAR(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'Exact Registry slug for a claim, otherwise an empty boundary value',
     registry_id BIGINT UNSIGNED NULL COMMENT 'Canonical Registry row ID for a projected claim key',
     owner_binding_id BIGINT UNSIGNED NULL COMMENT 'Binding owner of a projected claim key',
-    PRIMARY KEY (scope_id, scope_end, binding_partition, key_kind, slug)
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_registry_lock_partition (scope_id, scope_end, binding_partition, key_kind, slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Physical Registry lock partitions and boundary keys';
 
 INSERT INTO maa_slug_registry_lock_keys (scope_id, scope_end, binding_partition, key_kind, slug, registry_id, owner_binding_id)

@@ -21,7 +21,7 @@ build_fixture() {
     local readme_ar="${4-$arabic_readme}"
 
     mkdir -p "$fixture/tools/ci"
-    cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php} \
+    cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php,release-artifact-files.php} \
         "$fixture/tools/ci/"
     if [[ "$readme" != MISSING ]]; then
         printf '%s' "$readme" > "$fixture/README.md"

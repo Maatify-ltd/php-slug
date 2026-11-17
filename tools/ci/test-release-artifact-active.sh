@@ -16,12 +16,21 @@ commit_fixture() {
 }
 
 mkdir -p "$base"/{tools/ci,src,schema/mysql,docs/guides,examples}
-cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,SLUG_PACKAGE_REFERENCE.md,llms.txt} \
+cp "$repo_root/"{.gitattributes,.gitignore,CONTRIBUTING.md,CODE_OF_CONDUCT.md,LICENSE,llms.txt} \
     "$base/"
-cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php} \
+cp "$repo_root/tools/ci/"{run-gate.sh,verify-release-artifact.sh,verify-release-artifact.php,release-artifact-markdown.php,release-artifact-files.php,verify-published-artifact.sh,verify-published-artifact.php} \
     "$base/tools/ci/"
 
 # The fixture has fixed release documents and dependency identity in every repository phase.
+cat > "$base/SLUG_PACKAGE_REFERENCE.md" <<'MARKDOWN'
+# Slug Release Fixture Reference
+
+## 1. Package Identity and Status
+
+| Field | Current value |
+|---|---|
+| Exact release target | `1.0.0-rc.3` |
+MARKDOWN
 php -r '
     $manifest = json_decode(file_get_contents($argv[1]), true, flags: JSON_THROW_ON_ERROR);
     $fixture = [
@@ -37,7 +46,7 @@ php -r '
 cat > "$base/README.md" <<'MARKDOWN'
 # Slug
 
-[![Version](https://img.shields.io/badge/Version-1.0.0--rc.3-blue.svg)](#publication-state)
+[![Artifact target](https://img.shields.io/badge/Artifact%20target-1.0.0--rc.3-blue.svg)](#publication-state)
 [![Install after publication](https://img.shields.io/badge/Install%20after%20publication-1.0.0--rc.3%40RC-blue.svg)](#installation)
 
 ## Publication State
@@ -133,6 +142,89 @@ changelog_fixture() {
 }
 
 assert_gate "$base" 0 "$pass"
+
+# Simulate Composer metadata over the archived fixture without querying Packagist.
+published_project="$scratch/published"
+published_package="$published_project/vendor/maatify/php-slug"
+mkdir -p "$published_package" "$published_project/vendor/composer"
+published_sha="$(git -C "$base" rev-parse HEAD)"
+git -C "$base" archive "$published_sha" | tar -x -C "$published_package"
+git -C "$base" ls-tree -rz "$published_sha" > "$scratch/published-tree"
+php "$repo_root/tools/ci/verify-published-artifact.php" prepare "$target" "$base/composer.json" > "$published_project/composer.json"
+grep -Fq '"maatify/php-persistence":"1.0.0-rc.1@RC"' "$published_project/composer.json"
+
+assert_published_fixture() {
+    local mode="$1"
+    local expected_status="$2"
+    local expected="$3"
+    local output status=0
+    cat > "$published_project/vendor/composer/installed.json" <<JSON
+{"packages":[{"name":"maatify/php-slug","version":"v$target","installation-source":"$mode","install-path":"../maatify/php-slug","dist":{"type":"zip","url":"https://example.invalid/archive.zip","reference":"$published_sha"},"source":{"reference":"$published_sha"}}]}
+JSON
+    output=$(php "$repo_root/tools/ci/verify-published-artifact.php" verify "$target" "$published_sha" "$scratch/published-tree" "$published_project" 2>&1) || status=$?
+    if [[ "$status" != "$expected_status" ]] || ! grep -Fq -- "$expected" <<< "$output" \
+        || grep -Fxq 'PAV=PASS' <<< "$output"; then
+        printf 'Published artifact fixture failed (expected exit %s and %s, got %s).\n%s\n' "$expected_status" "$expected" "$status" "$output" >&2
+        exit 1
+    fi
+}
+
+assert_published_fixture dist 0 'PAV=SEMANTIC_REVIEW_REQUIRED'
+assert_published_fixture source 1 'Installed Zip dist identity or Git reference does not match the qualified release.'
+rm -- "$published_package/src/Fixture.php"
+assert_published_fixture dist 1 'Required regular file missing in dist: src/Fixture.php'
+new_fixture published-stale-reference
+stale_repo="$scratch/published-stale-reference"
+php -r '
+    $contents = file_get_contents($argv[1]);
+    $changed = str_replace("| Exact release target | `1.0.0-rc.3` |", "| Exact release target | `1.0.0-rc.2` |", $contents, $count);
+    if ($count !== 1) {
+        exit(1);
+    }
+    file_put_contents($argv[1], $changed);
+' "$stale_repo/SLUG_PACKAGE_REFERENCE.md"
+commit_fixture "$stale_repo"
+assert_gate "$stale_repo" 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly one matching release target'
+published_sha="$(git -C "$stale_repo" rev-parse HEAD)"
+git -C "$stale_repo" archive "$published_sha" | tar -x -C "$published_package"
+git -C "$stale_repo" ls-tree -rz "$published_sha" > "$scratch/published-tree"
+assert_published_fixture dist 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly one matching release target'
+
+# A synthetic local tag and a Composer probe exercise the actual shell driver without network access.
+git -C "$stale_repo" -c tag.gpgSign=false tag "v$target" "$published_sha"
+mkdir -p "$scratch/relative-run/bin" "$scratch/relative-run/runtime-temp" "$scratch/cdpath/runtime-temp"
+cat > "$scratch/relative-run/bin/composer" <<'SHELL'
+#!/usr/bin/env bash
+set -eu
+[[ "$HOME" = /* && -d "$HOME" && -d "$COMPOSER_CACHE_DIR" && -d "$TMPDIR" ]]
+if [[ "${1:-}" == --version ]]; then
+    echo 'Mock Composer version'
+    exit 0
+fi
+printf 'Composer reached the isolated project: %s\n' "$PWD"
+exit 42
+SHELL
+chmod +x "$scratch/relative-run/bin/composer"
+
+assert_relative_tmpdir() {
+    local tmpdir="$1"
+    local cdpath="$2"
+    local relative_output relative_status=0 expected_root
+    expected_root=$(CDPATH= cd -- "$scratch/relative-run/$tmpdir" && pwd -P)
+    relative_output=$(cd "$scratch/relative-run" && TMPDIR="$tmpdir" CDPATH="$cdpath" PATH="$PWD/bin:$PATH" \
+        bash "$stale_repo/tools/ci/verify-published-artifact.sh" "$target" "$published_sha" 2>&1) || relative_status=$?
+    if [[ "$relative_status" != 42 ]] \
+        || ! grep -Fq "Composer reached the isolated project: $expected_root/slug-published-artifact." <<< "$relative_output" \
+        || compgen -G "$expected_root/slug-published-artifact.*" >/dev/null \
+        || compgen -G "$scratch/cdpath/runtime-temp/slug-published-artifact.*" >/dev/null; then
+        printf 'Published artifact relative TMPDIR fixture failed for %s.\n%s\n' "$tmpdir" "$relative_output" >&2
+        exit 1
+    fi
+}
+
+assert_relative_tmpdir . ''
+assert_relative_tmpdir runtime-temp "$scratch/cdpath"
+printf '%s\n' 'Published artifact regression fixtures passed (6 cases).'
 changelog_fixture bracketed 0 "$pass" "## [$target]"
 changelog_fixture empty-unreleased 0 "$pass" '## [Unreleased]' '' "## $target"
 changelog_fixture empty-unreleased-and-bracketed 0 "$pass" '## [Unreleased]' '' "## [$target]"
@@ -211,8 +303,8 @@ replace_document_marker ignored-history-quote-example README.md "$readme_install
     $'$0\n\n## Earlier release examples\n\n> **Release target:** `1.0.0-rc.2`' 0 "$pass"
 replace_document_marker ignored-history-list-examples README.md "$readme_install_pattern" \
     $'$0\n\n## Earlier release examples\n\n- Template example:\n\n  ```markdown\n  **Release target:** `1.0.0-rc.2`\n  ```\n\n- Quoted example:\n\n  > **Release target:** `1.0.0-rc.2`' 0 "$pass"
-replace_document_marker missing-version-badge README.md '~^\[!\[Version\][^\r\n]+$~m' '' 1 \
-    'README.md must show the exact release target in its Version and Install after publication badges.'
+replace_document_marker missing-artifact-target-badge README.md '~^\[!\[Artifact target\][^\r\n]+$~m' '' 1 \
+    'README.md must show the exact release target in its Artifact target and Install after publication badges.'
 
 assert_readme_structure() {
     local language="$1"

@@ -285,3 +285,28 @@ function markdownHasUnsupportedRelease(DOMElement $document, string $target): bo
 
     return $hasUnsupportedRow;
 }
+
+/** Confirms the visible exact target in the package identity table. */
+function assertPackageReferenceReleaseTarget(string $contents, string $target): void
+{
+    $name = 'SLUG_PACKAGE_REFERENCE.md';
+    $reference = parseReleaseMarkdown($contents, $name);
+    $identity = markdownSections($reference, '1. Package Identity and Status');
+    $releaseTargets = [];
+    if (count($identity) === 1) {
+        foreach ($identity[0] as $node) {
+            if ($node->localName !== 'table') {
+                continue;
+            }
+            foreach (markdownElements($node, 'table_row') as $row) {
+                $cells = markdownElements($row, 'table_cell');
+                if (count($cells) === 2 && trim(markdownVisibleText($cells[0])) === 'Exact release target') {
+                    $releaseTargets[] = trim(markdownVisibleText($cells[1]));
+                }
+            }
+        }
+    }
+    if ($releaseTargets !== [$target]) {
+        throw new RuntimeException($name . ' must identify exactly one matching release target in its package identity table.');
+    }
+}

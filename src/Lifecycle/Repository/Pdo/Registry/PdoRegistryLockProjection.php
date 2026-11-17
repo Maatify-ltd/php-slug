@@ -10,12 +10,22 @@ use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
 
 /** Maintains and reads the physical lock partitions after Scope and Binding locks. */
-final readonly class PdoRegistryLockProjection
+final class PdoRegistryLockProjection
 {
     private const KEY_COLUMNS = 'scope_id, binding_partition, key_kind, slug';
 
+    /** @var array<int, PDOStatement> */
+    private array $boundaryLookups = [];
+
+    /** @var array<int, PDOStatement> */
+    private array $boundaryInserts = [];
+
+    private ?PDOStatement $singleCandidateLookup = null;
+
+    private ?PDOStatement $bindingLookup = null;
+
     /** Uses the lifecycle transaction's PDO. */
-    public function __construct(private PDO $pdo) {}
+    public function __construct(private readonly PDO $pdo) {}
 
     /** Resolves the Scope of the already locked Binding using its exact primary key. */
     public function currentBindingScope(int $bindingId): ?int
@@ -32,7 +42,7 @@ final readonly class PdoRegistryLockProjection
      * Locks exact current slug keys within one Scope or Binding partition.
      *
      * Driving the join from ordered candidates keeps each lookup on the full
-     * primary key. MySQL reports every matching request ordinal, including
+     * unique partition key. MySQL reports every matching request ordinal, including
      * byte-distinct requests that compare equal under the Registry collation.
      *
      * @param non-empty-list<string> $slugs
@@ -45,7 +55,9 @@ final readonly class PdoRegistryLockProjection
         $statements = [];
         foreach (array_chunk($slugs, 100) as $chunk) {
             $size = count($chunk);
-            $statement = $statements[$size] ??= $this->prepareCandidateLookup($size);
+            $statement = $size === 1
+                ? ($this->singleCandidateLookup ??= $this->prepareCandidateLookup(1))
+                : ($statements[$size] ??= $this->prepareCandidateLookup($size));
             $statement->execute([...$chunk, $scopeId, $bindingPartition]);
             /** @var list<array<string, mixed>> $rawRows */
             $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -67,7 +79,7 @@ final readonly class PdoRegistryLockProjection
         }
         return $this->prepare(
             'SELECT c.candidate_index, k.registry_id, k.owner_binding_id, k.slug FROM (' . implode(' UNION ALL ', $candidates) . ') c '
-            . 'STRAIGHT_JOIN maa_slug_registry_lock_keys k FORCE INDEX (PRIMARY) '
+            . 'STRAIGHT_JOIN maa_slug_registry_lock_keys k FORCE INDEX (uk_registry_lock_partition) '
             . 'ON k.scope_id = ? AND k.scope_end = 0 AND k.binding_partition = ? AND k.key_kind = 1 AND k.slug = c.slug '
             . 'FOR UPDATE',
         );
@@ -81,8 +93,8 @@ final readonly class PdoRegistryLockProjection
     public function lockBinding(int $scopeId, int $bindingId): array
     {
         $this->ensureBoundaries($scopeId, $bindingId);
-        $statement = $this->prepare(
-            'SELECT registry_id, owner_binding_id, slug FROM maa_slug_registry_lock_keys FORCE INDEX (PRIMARY) '
+        $statement = $this->bindingLookup ??= $this->prepare(
+            'SELECT registry_id, owner_binding_id, slug FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) '
             . 'WHERE scope_id = ? AND scope_end = 0 AND binding_partition = ? AND key_kind = 1 ORDER BY slug FOR UPDATE',
         );
         $statement->execute([$scopeId, $bindingId]);
@@ -92,8 +104,7 @@ final readonly class PdoRegistryLockProjection
     /** Records both physical keys after inserting the authoritative claim. */
     public function insertClaimKeys(int $scopeId, int $bindingId, string $slug, int $registryId): void
     {
-        $this->ensureBoundaries($scopeId, 0);
-        $this->ensureBoundaries($scopeId, $bindingId);
+        $this->ensureBoundaries($scopeId, $bindingId, includeOccupancy: true);
         $statement = $this->prepare(
             'INSERT INTO maa_slug_registry_lock_keys (' . self::KEY_COLUMNS . ', registry_id, owner_binding_id) '
             . 'VALUES (?, 0, 1, ?, ?, ?), (?, ?, 1, ?, ?, ?)',
@@ -101,7 +112,7 @@ final readonly class PdoRegistryLockProjection
         $statement->execute([$scopeId, $slug, $registryId, $bindingId, $scopeId, $bindingId, $slug, $registryId, $bindingId]);
     }
 
-    /** Removes both claim keys through exact clustered-key deletes. */
+    /** Removes both claim keys through exact partition-key deletes. */
     public function deleteClaimKeys(int $scopeId, int $bindingId, string $slug, int $registryId): void
     {
         $statement = $this->prepare(
@@ -116,7 +127,7 @@ final readonly class PdoRegistryLockProjection
         }
     }
 
-    /** Removes the now-empty Binding partition by exact clustered keys. */
+    /** Removes the now-empty Binding partition by exact partition keys. */
     public function deleteBindingBoundaries(int $scopeId, int $bindingId): void
     {
         $statement = $this->prepare(
@@ -173,17 +184,53 @@ final readonly class PdoRegistryLockProjection
      * The permanent Scope separator stays in place even after its last Binding
      * partition is purged.
      */
-    private function ensureBoundaries(int $scopeId, int $bindingPartition): void
+    private function ensureBoundaries(int $scopeId, int $bindingPartition, bool $includeOccupancy = false): void
     {
         if ($scopeId < 1 || $bindingPartition < 0) {
             throw new SlugPersistenceInvariantException('Registry lock partition identity is invalid.');
         }
-        $statement = $this->prepare(
-            'INSERT INTO maa_slug_registry_lock_keys (scope_id, scope_end, binding_partition, key_kind, slug) '
-            . "VALUES (?, 0, ?, 0, ''), (?, 0, ?, 2, ''), (?, 1, 0, 2, '') "
-            . 'ON DUPLICATE KEY UPDATE registry_id = NULL',
+        $boundaries = [];
+        if ($includeOccupancy && $bindingPartition !== 0) {
+            $boundaries[] = [$scopeId, 0, 0, 0];
+            $boundaries[] = [$scopeId, 0, 0, 2];
+        }
+        $boundaries[] = [$scopeId, 0, $bindingPartition, 0];
+        $boundaries[] = [$scopeId, 0, $bindingPartition, 2];
+        $boundaries[] = [$scopeId, 1, 0, 2];
+
+        // Keep each locking read on the full unique key. A range lookup or
+        // secondary-key upsert can take unnecessary next-key locks.
+        $size = count($boundaries);
+        $lookup = $this->boundaryLookups[$size] ??= $this->prepare(
+            implode(' UNION ALL ', array_fill(
+                0,
+                $size,
+                "(SELECT ? AS boundary_index FROM maa_slug_registry_lock_keys FORCE INDEX (uk_registry_lock_partition) "
+                . "WHERE scope_id = ? AND scope_end = ? AND binding_partition = ? AND key_kind = ? AND slug = '' FOR UPDATE)",
+            )),
         );
-        $statement->execute([$scopeId, $bindingPartition, $scopeId, $bindingPartition, $scopeId]);
+        $parameters = [];
+        foreach ($boundaries as $index => $boundary) {
+            array_push($parameters, $index, ...$boundary);
+        }
+        $lookup->execute($parameters);
+        $missing = $boundaries;
+        /** @var list<array<string, mixed>> $found */
+        $found = $lookup->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($found as $row) {
+            unset($missing[PdoRowHydrator::nonNegativeInt($row, 'boundary_index')]);
+        }
+        if ($missing === []) {
+            return;
+        }
+
+        // Scope and Binding locks serialize creation of these missing anchors.
+        $size = count($missing);
+        $insert = $this->boundaryInserts[$size] ??= $this->prepare(
+            'INSERT INTO maa_slug_registry_lock_keys (scope_id, scope_end, binding_partition, key_kind, slug) VALUES '
+            . implode(', ', array_fill(0, $size, "(?, ?, ?, ?, '')")),
+        );
+        $insert->execute(array_merge(...array_values($missing)));
     }
 
     /** @return list<array{id: int, scope_id: int, binding_id: int, slug: string}> */
