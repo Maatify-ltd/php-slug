@@ -16,6 +16,8 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 
 ### Fixed
 
+- Preserved custom profile grammars during generated allocation across assignment, change, scope transition, and transfer replacement. Profile-rejected numeric suffixes no longer prevent allocation of a free base.
+- Applied input-safety and 160-code-point boundaries in the runnable custom-profile example, and corrected the management Criteria inventory and History sorting reference.
 - Lifecycle mutations reject a missing or incomplete Schema 003 with `SlugRuntimeCompatibilityException` before taking lifecycle locks.
 - Declared `ext-filter` for runtime integer validation and hardened the persisted lifecycle example against deleting pre-existing Slug tables or views.
 - Made PDO consumer reads consistent across Scope, Binding, and Registry state. Fixed transition, lifecycle mutations, and operation replay when the Host transaction has an older snapshot.

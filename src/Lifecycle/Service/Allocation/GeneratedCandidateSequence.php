@@ -4,16 +4,14 @@ declare(strict_types=1);
 
 namespace Maatify\Slug\Lifecycle\Service\Allocation;
 
-use Maatify\Slug\Lifecycle\Service\Allocation\SuffixCandidateGenerator;
+use InvalidArgumentException;
 use Maatify\Slug\Canonicalization\ValueObject\Slug;
 use Maatify\Slug\Canonicalization\Contract\SlugProfileInterface;
+use Maatify\Slug\Exception\SlugValidationException;
 
 /**
- * Internal bounded candidate preparation. WU-02 remains the owner of the
- * suffix/truncation algorithm; this class only applies it to the selected
- * Profile and returns validated Slug values in order.
- *
- * Applies the package's bounded suffix algorithm to profile-generated slugs.
+ * Applies bounded suffix preparation to the selected Profile and returns
+ * accepted Slug values in allocation order before mutation locks are taken.
  */
 final class GeneratedCandidateSequence
 {
@@ -26,9 +24,17 @@ final class GeneratedCandidateSequence
     {
         $base = $profile->generateFromSource($source)->slug;
 
-        return array_map(
-            static fn(string $candidate): Slug => Slug::fromProfile($profile, $candidate),
-            SuffixCandidateGenerator::prepare($base->value),
-        );
+        $values = SuffixCandidateGenerator::prepare($base->value);
+        $candidates = [$base];
+        foreach (array_slice($values, 1) as $value) {
+            try {
+                $candidates[] = Slug::fromProfile($profile, $value);
+            } catch (InvalidArgumentException|SlugValidationException) {
+                // A custom grammar may reject individual suffixes or all of them.
+                // Unexpected profile failures must still reach the caller.
+                continue;
+            }
+        }
+        return $candidates;
     }
 }

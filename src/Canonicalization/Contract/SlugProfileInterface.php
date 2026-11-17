@@ -30,6 +30,13 @@ interface SlugProfileInterface
     /** Classifies lookup input as canonical, non-canonical, or invalid. */
     public function canonicalizeLookup(string $decodedSegment): LookupCanonicalizationDTO;
 
-    /** Rejects a value unless it is already canonical for this profile. */
+    /**
+     * Rejects a value unless it is already canonical for this profile.
+     * Generated allocation skips suffixes rejected with either validation type;
+     * unexpected failures propagate to the caller.
+     *
+     * @throws \InvalidArgumentException
+     * @throws \Maatify\Slug\Exception\SlugValidationException
+     */
     public function assertCanonicalSlug(string $candidate): void;
 }

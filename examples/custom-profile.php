@@ -17,6 +17,8 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 /** Small application-owned profile with a stable, versioned semantic contract. */
 final class LowercaseWordsV1Profile implements SlugProfileInterface
 {
+    private const int MAX_CODE_POINTS = 160;
+
     private SlugProfileKey $profileKey;
 
     public function __construct()
@@ -31,15 +33,18 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
 
     public function generateFromSource(string $source): GeneratedSlugDTO
     {
+        $this->assertSafe($source);
         $value = trim(strtolower($source));
         $value = preg_replace('/[^a-z0-9]+/', '-', $value) ?? '';
         $value = trim($value, '-');
+        $value = rtrim(mb_substr($value, 0, self::MAX_CODE_POINTS, 'UTF-8'), '-');
 
         return new GeneratedSlugDTO($this->profileKey, $source, Slug::fromProfile($this, $value));
     }
 
     public function canonicalizeClaim(string $candidate): CanonicalSlugDTO
     {
+        $this->assertSafe($candidate);
         $value = strtolower($candidate);
         $this->assertCanonicalSlug($value);
 
@@ -49,7 +54,9 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
     public function canonicalizeLookup(string $decodedSegment): LookupCanonicalizationDTO
     {
         $value = strtolower($decodedSegment);
-        if (preg_match('/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/', $value) !== 1) {
+        try {
+            $this->assertCanonicalSlug($value);
+        } catch (InvalidArgumentException) {
             return new LookupCanonicalizationDTO($this->profileKey, $decodedSegment, InputFormCanonicalityEnum::INVALID, null);
         }
 
@@ -63,8 +70,22 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
 
     public function assertCanonicalSlug(string $candidate): void
     {
+        $this->assertSafe($candidate);
+        if (mb_strlen($candidate, 'UTF-8') > self::MAX_CODE_POINTS) {
+            throw new InvalidArgumentException('The custom profile permits at most 160 Unicode code points.');
+        }
         if (preg_match('/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/', $candidate) !== 1) {
             throw new InvalidArgumentException('The custom profile requires lowercase hyphen-separated words.');
+        }
+    }
+
+    /** Reject unsafe source bytes before a lossy transformation can hide them. */
+    private function assertSafe(string $value): void
+    {
+        if (preg_match('//u', $value) !== 1
+            || preg_match('/[\x00\p{Cc}\p{Cs}\p{Cf}]/u', $value) === 1
+            || strpbrk($value, '/\\') !== false) {
+            throw new InvalidArgumentException('The custom profile rejects invalid UTF-8, controls, format characters, and path separators.');
         }
     }
 }

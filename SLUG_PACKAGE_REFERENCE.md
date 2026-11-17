@@ -165,6 +165,8 @@ Before any lossy transformation, invalid UTF-8, NUL, `Cc`, `Cs`, `Cf`, `/`, `\\`
 
 The maximum is 160 Unicode code points after canonicalization. An exact claim or lookup exceeding the limit is rejected. Generated allocation uses the base and then only `-2` through `-1000`; it accounts for the suffix before code-point truncation, removes a trailing hyphen, and raises `SlugAllocationExhaustedException` when exhausted.
 
+Custom profiles own their canonical grammar. Generated allocation preserves a valid custom base without imposing built-in punctuation rules. It prepares bounded suffixes before taking mutation locks and skips suffixes rejected by `assertCanonicalSlug()` with `InvalidArgumentException` or `SlugValidationException`. Other exceptions propagate. A profile that permits no numeric suffix can still allocate its free base; an occupied or reserved base with no accepted alternative exhausts normally. The [custom-profile example](examples/custom-profile.php) demonstrates input safety, generation truncation, and exact-claim/lookup length checks without depending on internal helpers.
+
 `namespace` matches `^[a-z][a-z0-9-]{0,62}$`. `localeKey`, `contextKey`, `entityType`, and `entityKey` are opaque, valid UTF-8, and exact, without trimming, normalization, or case folding. A `null` locale or context is the exact empty dimension only; it is not a wildcard or fallback. `profileKey` is immutable Scope configuration and is not a uniqueness dimension.
 
 ## 6. Public API Inventory
@@ -288,7 +290,8 @@ The complete Criteria index is:
 ```text
 AvailabilityCriteria, ResolutionCriteria, BindingCriteria,
 CurrentSlugCriteria, AliasCriteria, HistoryCriteria, RegistryCriteria,
-ScopeCriteria, BindingSearchCriteria, RegistrySearchCriteria
+ScopeCriteria, ScopeSearchCriteria, HistorySearchCriteria,
+BindingSearchCriteria, RegistrySearchCriteria
 ```
 
 Criteria use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` as the only pagination and sorting input where required. There are no local `PageRequest`, `PageResultDTO`, `SortDirectionEnum`, or `*PageDTO` types.
@@ -438,7 +441,8 @@ When `getBinding()`, `getCurrent()`, or `resolve()` consults persisted state thr
 Management queries separate the live Registry from History:
 
 ```text
-listAliases, getHistory, inspectRegistry, searchBindings, searchRegistry
+listAliases, getHistory, inspectRegistry, searchScopes, searchHistory,
+searchBindings, searchRegistry
 ```
 
 Use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` for paging requests and `Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum` where a sort direction enum is used.
@@ -449,8 +453,13 @@ Every unbounded list or search returns `Maatify\PhpPersistence\Pagination\DTO\Pa
 defaultPerPage = 25
 minPerPage = 1
 maxPerPage = 100
-tie-breaker = id ASC
 ```
+
+| Query | Default sort | Tie-breaker |
+|---|---|---|
+| `getHistory` | `occurred_at ASC` | `id ASC` |
+| `searchHistory` | `occurred_at DESC` | `id DESC` |
+| `listAliases`, `inspectRegistry`, `searchScopes`, `searchBindings`, `searchRegistry` | `id ASC` | `id ASC` |
 
 There are no local pagination DTOs, enums, or paginator, and the Host does not interpret these contracts through generic filters or an Admin UI.
 
@@ -496,6 +505,7 @@ searchScopes(ScopeSearchCriteria)
 
 getScopeOperationalSummary(ScopeCriteria)
 → one exact Scope snapshot or `null` when the Scope is missing. The DTO contains exactly:
+```
 
 ```text
 ScopeDTO scope
@@ -507,6 +517,7 @@ int historyEventsTotal
 
 All counts are non-negative. `bindingsTotal = bindingsActive + bindingsInactive + bindingsReleased`; `registryClaimsTotal = registryCurrentCanonical + registryHistoricalCanonical + registryActiveAliases + registryRetiredAliases`. Binding counts describe current Binding rows, Registry counts describe live Registry rows, and History counts use each event's persisted Scope snapshot.
 
+```text
 searchHistory(HistorySearchCriteria)
 → package-wide History when `scopeProfile` is null, or History attributed to the exact persisted Scope snapshot when it is supplied. A missing Scope produces an empty page. `eventType` and the half-open UTC window `[occurredFromInclusive, occurredUntilExclusive)` are optional filters; when both bounds exist, `from < until` is required. Inputs are normalized to UTC and compared at the package's microsecond persistence precision. Filtering uses `occurredAt`, not `originalOccurredAt`. `total` is the unfiltered base boundary; `filtered` is the result after event-type and time-window filters. The deterministic default sort is `occurred_at DESC`, then `id DESC`; callers may use the supported paginator sort fields.
 
