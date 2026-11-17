@@ -130,8 +130,11 @@ function verifyReleaseMarkers(PharData $artifact, string $target): void
     }
 
     $changelog = artifactDocument($artifact, 'CHANGELOG.md');
-    if (preg_match('/^## ([^\r\n]+)$/m', $changelog, $heading) !== 1 || $heading[1] !== $target) {
-        throw new RuntimeException('CHANGELOG.md must start with the exact undated release heading.');
+    preg_match_all('/^##\h+([^\r\n]*\S)\h*\r?$/m', $changelog, $headings);
+    $firstRelease = ($headings[1][0] ?? null) === '[Unreleased]' ? 1 : 0;
+    $heading = $headings[1][$firstRelease] ?? null;
+    if ($heading !== $target && $heading !== '[' . $target . ']') {
+        throw new RuntimeException('CHANGELOG.md must put the exact undated target in its first release section.');
     }
     $security = artifactDocument($artifact, 'SECURITY.md');
     if (! str_contains($security, 'This artifact targets `' . $target . '` as a Pre-Stable Release Candidate.')
