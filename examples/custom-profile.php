@@ -31,6 +31,14 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
         return $this->profileKey;
     }
 
+    /**
+     * Generates lowercase ASCII letters/digits separated by single hyphens.
+     * Rejects invalid UTF-8, controls, format characters, and path separators
+     * before replacing other non-alphanumeric runs with hyphens. Trims edge
+     * hyphens, truncates to 160 code points, then removes any trailing hyphen.
+     *
+     * @throws InvalidArgumentException If the source is unsafe or no slug remains.
+     */
     public function generateFromSource(string $source): GeneratedSlugDTO
     {
         $this->assertSafe($source);
@@ -42,6 +50,13 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
         return new GeneratedSlugDTO($this->profileKey, $source, Slug::fromProfile($this, $value));
     }
 
+    /**
+     * Lowercases ASCII letters in an exact candidate without source cleanup.
+     * Requires a safe, canonical alphanumeric/hyphen value of at most 160 code
+     * points; it does not trim or truncate. Retains the original input in the DTO.
+     *
+     * @throws InvalidArgumentException If the lowercased candidate violates these input rules.
+     */
     public function canonicalizeClaim(string $candidate): CanonicalSlugDTO
     {
         $this->assertSafe($candidate);
@@ -51,6 +66,12 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
         return new CanonicalSlugDTO($this->profileKey, $candidate, Slug::fromProfile($this, $value));
     }
 
+    /**
+     * Classifies a decoded segment using ASCII lowercase only, without cleanup.
+     * Input that is unsafe, malformed, empty, or longer than 160 code points
+     * returns INVALID with canonicalSlug = null. Otherwise returns the slug with
+     * CANONICAL for unchanged input or NON_CANONICAL when letter case changed.
+     */
     public function canonicalizeLookup(string $decodedSegment): LookupCanonicalizationDTO
     {
         $value = strtolower($decodedSegment);
@@ -68,6 +89,13 @@ final class LowercaseWordsV1Profile implements SlugProfileInterface
         );
     }
 
+    /**
+     * Requires non-empty lowercase ASCII alphanumeric groups separated by
+     * single hyphens, at most 160 code points, without transforming the value.
+     * Rejects invalid UTF-8, controls, format characters, and path separators.
+     *
+     * @throws InvalidArgumentException If safety, grammar, or length validation fails.
+     */
     public function assertCanonicalSlug(string $candidate): void
     {
         $this->assertSafe($candidate);
