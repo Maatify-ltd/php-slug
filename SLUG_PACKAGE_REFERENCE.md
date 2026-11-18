@@ -372,6 +372,8 @@ AtomicTransferResultDTO: OperationTypeEnum $operationType, ?string $operationKey
 AdoptionResultDTO: OperationTypeEnum $operationType, ?string $operationKey, bool $replayed, ?BindingDTO $before, BindingDTO $after, RegistryClaimDTO $adoptedClaim, HistoryEventDTO $historyEvent
 ```
 
+`CurrentSlugDTO` requires a non-negative revision equal to the Binding state revision and a Claim that matches the Binding's current canonical Claim snapshot. The constructor accepts a separately constructed Claim with the same ID, Binding identity, slug text, canonical role, and timestamp instants. It throws `SlugInvalidArgumentException` for an invalid revision, a missing current Claim, or a Claim that differs from that snapshot.
+
 `ScopeProfileRequestDTO` carries `SlugScope $scope` and `SlugProfileKey $expectedProfileKey`; `BindingIdentityDTO` carries `ScopeProfileRequestDTO $scopeProfile` and `EntityReference $entity`. Intent DTOs carry `ClaimIntentModeEnum $mode` and `string $value`. `AuditContextDTO` has optional `?string $actorKey`, `?string $reason`, `?string $correlationKey`, and `?string $idempotencyKey`. `HistoryEventDTO` and its role-snapshot fields follow the applicability defined by the current lifecycle implementation.
 
 ## 7. Ownership and Lifecycle
