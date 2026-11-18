@@ -7,12 +7,13 @@ namespace Maatify\Slug\Lifecycle\DTO;
 use DateTimeImmutable;
 use JsonSerializable;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
 
 /** Immutable binding snapshot with identity, lifecycle state, and current claim. */
 final readonly class BindingDTO implements JsonSerializable
 {
-    /** Enforces consistency between binding status, current claim, and current slug. */
+    /** Requires a live Binding's current canonical claim to match its identity and current slug. */
     public function __construct(
         public int $id,
         public BindingIdentityDTO $identity,
@@ -32,6 +33,9 @@ final readonly class BindingDTO implements JsonSerializable
         }
         if ($currentClaim !== null && $currentClaim->slug->value !== $state->currentSlug?->value) {
             throw new SlugInvalidArgumentException('Binding current claim must match current slug.');
+        }
+        if ($currentClaim !== null && ($currentClaim->role !== RegistryRoleEnum::CURRENT_CANONICAL || ! $identity->equals($currentClaim->binding))) {
+            throw new SlugInvalidArgumentException('Binding current claim must be canonical and owned by that Binding.');
         }
     }
 

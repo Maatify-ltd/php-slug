@@ -17,6 +17,18 @@ final readonly class BindingIdentityDTO implements JsonSerializable
         public EntityReference $entity,
     ) {}
 
+    /**
+     * Compares Scope, profile, and entity dimensions by exact value, including numeric-looking keys.
+     *
+     * @internal
+     */
+    public function equals(self $other): bool
+    {
+        return $this->scopeProfile->scope->jsonSerialize() === $other->scopeProfile->scope->jsonSerialize()
+            && $this->scopeProfile->expectedProfileKey->value === $other->scopeProfile->expectedProfileKey->value
+            && $this->entity->jsonSerialize() === $other->entity->jsonSerialize();
+    }
+
     /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {

@@ -65,7 +65,7 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         $lastSequence = [];
         $lastId = [];
         foreach ($items as $item) {
-            if (! is_object($item) || ! property_exists($item, 'bindingId') || ! property_exists($item, 'sequenceNo') || ! property_exists($item, 'id') || ! is_int($item->bindingId) || ! is_int($item->sequenceNo) || ! is_int($item->id)) {
+            if (! $item instanceof HistoryEventDTO) {
                 throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
             }
             $participant = array_search($item->bindingId, $bindingIds, true);

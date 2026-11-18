@@ -11,6 +11,7 @@ final readonly class PdoMutationCapabilityGuard implements CapabilityGuardInterf
 {
     public function __construct(private PdoCapabilityGuard $capabilities) {}
 
+    /** Requires write compatibility and may run rollback-protected write probes without finishing the Host transaction. */
     public function assertInstalledSchemaSupported(): void
     {
         $this->capabilities->assertMutationSupported();

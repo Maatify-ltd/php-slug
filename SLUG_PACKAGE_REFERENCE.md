@@ -374,6 +374,8 @@ AdoptionResultDTO: OperationTypeEnum $operationType, ?string $operationKey, bool
 
 `CurrentSlugDTO` requires a non-negative revision equal to the Binding state revision and a Claim that matches the Binding's current canonical Claim snapshot. The constructor accepts a separately constructed Claim with the same ID, Binding identity, slug text, canonical role, and timestamp instants. It throws `SlugInvalidArgumentException` for an invalid revision, a missing current Claim, or a Claim that differs from that snapshot.
 
+`BindingDTO` requires the current Claim of an active or inactive Binding to be canonical, to belong to that Binding, and to match the current slug. `AliasDTO` accepts only active and retired alias Claims, with `resolvableAsAlias` true for an active alias and false for a retired alias. Mutation result claim and history lists accept objects of their declared DTO types. Violations raise `SlugInvalidArgumentException`.
+
 `ScopeProfileRequestDTO` carries `SlugScope $scope` and `SlugProfileKey $expectedProfileKey`; `BindingIdentityDTO` carries `ScopeProfileRequestDTO $scopeProfile` and `EntityReference $entity`. Intent DTOs carry `ClaimIntentModeEnum $mode` and `string $value`. `AuditContextDTO` has optional `?string $actorKey`, `?string $reason`, `?string $correlationKey`, and `?string $idempotencyKey`. `HistoryEventDTO` and its role-snapshot fields follow the applicability defined by the current lifecycle implementation.
 
 ## 7. Ownership and Lifecycle
@@ -421,12 +423,12 @@ Only a current `atomicTransfer` result may contain nested `sourceReplacementResu
 
 The persisted path uses direct PDO inside package infrastructure only:
 
-- `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION` and `PDO::ATTR_EMULATE_PREPARES = false`.
+- `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION`, `PDO::ATTR_EMULATE_PREPARES = false`, and `PDO::ATTR_CASE = PDO::CASE_NATURAL`.
 - PDO queries can be buffered or unbuffered. The package releases its own results before reusing the connection. The Host closes any unbuffered result it owns before calling Slug.
-- Connection charset is `utf8mb4`; timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
+- The Host keeps `character_set_client` and `character_set_connection` on `utf8mb4`. Use `utf8mb4` or `NULL` for `character_set_results` so result data is not converted to a narrower charset. The package checks these settings on the active PDO session. Timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
 - MySQL and compatible MariaDB sessions use the same PDO adapter and schema. On MariaDB servers that expose `innodb_snapshot_isolation`, lifecycle writes require `OFF` on the injected PDO before beginning a Host write transaction. Non-locking reads work with either setting. The package leaves session settings under Host control.
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
-- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. The first mutation separately verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
+- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. Before the first mutation the package verifies the required column definitions, index keys and foreign-key topology, then verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
 - For mutations, the package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
@@ -754,6 +756,8 @@ The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does
 Persisted queries, including `resolve()` when it consults persisted state, and lifecycle mutations throw `SlugRuntimeCompatibilityException` during schema verification if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`. For mutations, this verification precedes the Scope lock.
 
 Mutations throw `SlugRuntimeCompatibilityException` before taking the Scope lock if `foreign_key_checks` is disabled or if an exposed `innodb_snapshot_isolation` setting is enabled. These checks run even after successful schema verification. The settings stay under Host control, and a PDO failure while reading either setting propagates unchanged.
+
+Incompatible PDO column case or session charset settings also raise `SlugRuntimeCompatibilityException`. The first mutation reports an incompatible physical write schema through that exception, retaining the schema invariant failure as its cause. A current pointer referencing another Binding's Claim, or a replay snapshot with an inconsistent current Claim, raises `SlugPersistenceInvariantException`.
 
 ## 13. Release State
 

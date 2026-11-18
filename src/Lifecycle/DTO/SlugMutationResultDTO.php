@@ -54,8 +54,8 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         }
         $previous = null;
         foreach ($items as $item) {
-            if (! is_object($item) || ! property_exists($item, 'id') || ! is_int($item->id)) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an item without an integer id.', $field));
+            if (! $item instanceof RegistryClaimDTO) {
+                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid Registry claim.', $field));
             }
             if ($previous !== null && $item->id <= $previous) {
                 throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be strictly ordered by id.', $field));
@@ -73,7 +73,7 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         $previousSequence = null;
         $previousId = null;
         foreach ($items as $item) {
-            if (! is_object($item) || ! property_exists($item, 'sequenceNo') || ! property_exists($item, 'id') || ! is_int($item->sequenceNo) || ! is_int($item->id)) {
+            if (! $item instanceof HistoryEventDTO) {
                 throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
             }
             if ($previousSequence !== null && ($item->sequenceNo < $previousSequence || ($item->sequenceNo === $previousSequence && $item->id <= $previousId))) {

@@ -216,7 +216,8 @@ run_workflow() {
                 tests/System/Lifecycle/SameBindingCollationSystemTest.php \
                 tests/System/Resolution/AvailabilityObservationSystemTest.php \
                 tests/System/Resolution/ReadCapabilitySystemTest.php \
-                tests/System/Resolution/PersistedAdmissionSystemTest.php
+                tests/System/Resolution/PersistedAdmissionSystemTest.php \
+                tests/System/Resolution/PersistenceContractSystemTest.php
             ;;
         consumer)
             php tests/Consumer/run.php

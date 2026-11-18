@@ -407,7 +407,7 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
             . 'cr.claim_role AS current_claim_role, cr.claimed_at AS current_claimed_at, '
             . 'cr.updated_at AS current_claim_updated_at FROM maa_slug_bindings b '
             . 'INNER JOIN maa_slug_scopes s ON s.id = b.scope_id '
-            . 'LEFT JOIN maa_slug_registry cr ON cr.id = b.current_registry_id';
+            . 'LEFT JOIN maa_slug_registry cr ON cr.id = b.current_registry_id AND cr.binding_id = b.id AND cr.scope_id = b.scope_id';
     }
 
     /** Returns the history query projection and scope join. */
@@ -492,6 +492,9 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
             throw new SlugPersistenceInvariantException('Management query returned an unknown Binding status.');
         }
         $claim = null;
+        if ($row['current_registry_id'] !== null && $row['current_claim_id'] === null) {
+            throw new SlugPersistenceInvariantException('Binding current pointer does not reference a Registry claim owned by that Binding.');
+        }
         if ($row['current_claim_id'] !== null) {
             $role = RegistryRoleEnum::tryFrom(PdoRowHydrator::string($row, 'current_claim_role'));
             if ($role !== RegistryRoleEnum::CURRENT_CANONICAL) {

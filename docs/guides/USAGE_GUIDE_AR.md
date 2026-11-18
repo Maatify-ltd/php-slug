@@ -64,6 +64,8 @@ $engine = SlugEngineFactory::create(
 
 ينشئ الـHost اتصال `PDO` ويطبّق [ملفات الـSchema بالترتيب](../../schema/mysql/README.md#installation-and-upgrade)، مع إكمال ترحيل Schema 003 قبل أي قراءة أو كتابة تصل للتخزين. يوضح [المثال التنفيذي](../../examples/persisted-lifecycle.php) الإنشاء والتنظيف باستخدام بيئة الـIntegration المعتمدة.
 
+اضبط `charset=utf8mb4` في DSN، وأبقِ `PDO::ATTR_CASE` على `PDO::CASE_NATURAL`، وفعّل `PDO::ERRMODE_EXCEPTION` وعطّل محاكاة العبارات المجهزة. أبقِ ترميز العميل والاتصال على `utf8mb4` وترميز النتائج على `utf8mb4` أو `NULL`.
+
 يمكن للقراءات العامة، ومنها `resolve()` عند قراءة الحالة المخزّنة، استخدام حساب بصلاحية `SELECT` فقط أو معاملة `READ ONLY` مفتوحة يملكها الـHost. لا ينفّذ تحقق القراءة كتابةً ولا يفتح معاملة.
 
 تحتاج عمليات الكتابة إلى صلاحيات كتابة وإبقاء `foreign_key_checks=ON` على جلسة `PDO` الخاصة بالـHost. تتحقق الحزمة من قدرات الكتابة بشكل مستقل، وتبقى المعاملة الخارجية تحت تحكم الـHost.

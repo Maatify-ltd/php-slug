@@ -9,6 +9,7 @@ use PDOException;
 use PDOStatement;
 use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Lifecycle\Exception\SlugUnsupportedDriverException;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
@@ -53,8 +54,8 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
     /** Keeps read metadata validation independent from rollback-protected write probes. */
     private function assertInstalledSchema(bool $forMutation): void
     {
+        $this->assertDriverAndConnectionAttributes();
         if (! $this->installedSchemaVerified) {
-            $this->assertDriverAndConnectionAttributes();
             $this->assertExactStringSemantics();
             $this->assertDatetimePrecision();
             $this->assertPackageTables();
@@ -69,6 +70,11 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             $this->assertCurrentLockingReads();
             $this->assertForeignKeyChecksEnabled();
             if (! $this->mutationCapabilitiesVerified) {
+                try {
+                    (new PdoSchemaVerifier($this->pdo))->assertMutationStructure();
+                } catch (SlugPersistenceInvariantException $exception) {
+                    throw new SlugRuntimeCompatibilityException('The installed Slug write schema is incompatible.', 0, $exception);
+                }
                 $this->assertTransactionAndSavepointCapabilities();
                 $this->probeInstalledSchemaCapabilities();
                 $this->mutationCapabilitiesVerified = true;
@@ -108,20 +114,39 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             if ($emulatePrepares !== false && $emulatePrepares !== 0 && $emulatePrepares !== '0') {
                 throw new SlugRuntimeCompatibilityException('Native PDO prepares are required.');
             }
-            $this->assertConnectionCharset();
+            if ($this->pdo->getAttribute(PDO::ATTR_CASE) !== PDO::CASE_NATURAL) {
+                throw new SlugRuntimeCompatibilityException('PDO::ATTR_CASE must be PDO::CASE_NATURAL.');
+            }
         } catch (SlugRuntimeCompatibilityException $exception) {
             throw $exception;
         } catch (Throwable $throwable) {
             throw new SlugRuntimeCompatibilityException('Required PDO connection attributes are unavailable.', 0, $throwable);
         }
+
+        $this->assertConnectionCharset();
     }
 
-    /** Confirms the connection uses utf8mb4 for exact slug comparisons. */
+    /** Rejects client or server transcoding that could change persisted identity or returned text. */
     private function assertConnectionCharset(): void
     {
-        $statement = $this->pdo->query('SELECT @@character_set_connection');
-        if ($statement === false || $statement->fetchColumn() !== 'utf8mb4') {
-            throw new SlugRuntimeCompatibilityException('The injected PDO connection must use utf8mb4.');
+        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results');
+        if ($statement === false) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session character sets.');
+        }
+        try {
+            $charsets = $statement->fetch(PDO::FETCH_NUM);
+        } finally {
+            $statement->closeCursor();
+        }
+
+        if (! is_array($charsets) || $charsets[0] !== 'utf8mb4') {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_client must be utf8mb4.');
+        }
+        if ($charsets[1] !== 'utf8mb4') {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_connection must be utf8mb4.');
+        }
+        if ($charsets[2] !== 'utf8mb4' && $charsets[2] !== null) {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_results must be utf8mb4 or NULL.');
         }
     }
 
