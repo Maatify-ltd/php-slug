@@ -6,6 +6,7 @@ namespace Maatify\Slug\Lifecycle\DTO;
 
 use JsonSerializable;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
+use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Lifecycle\Enum\HistoryEventTypeEnum;
 use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
@@ -44,6 +45,12 @@ final readonly class AdoptionResultDTO implements JsonSerializable
             || $historyEvent->claimRoleSnapshot !== $role || $historyEvent->slugSnapshot?->value !== $adoptedClaim->slug->value
         ) {
             throw new SlugInvalidArgumentException('The adopted claim and history event must match the adoption operation.');
+        }
+        if (
+            $operationType === OperationTypeEnum::ADOPT_CURRENT
+            && ($after->state->status !== BindingStatusEnum::ACTIVE || ! $adoptedClaim->matches($after->currentClaim))
+        ) {
+            throw new SlugInvalidArgumentException('Current adoption must activate the Binding with the adopted claim.');
         }
     }
 

@@ -46,7 +46,9 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
         }
         self::assertAffectedClaims($affectedClaims, $after->identity);
-        $after->assertResultEvidence($before, $historyEvents);
+        // The enclosing transfer carries the out event after its nested replacement.
+        $trailingEvents = $operationType === OperationTypeEnum::ATOMIC_TRANSFER ? 1 : 0;
+        $after->assertResultEvidence($before, $historyEvents, $trailingEvents);
     }
 
     /** @param array<int, mixed> $items */

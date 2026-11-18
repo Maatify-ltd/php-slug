@@ -419,7 +419,11 @@ Result Snapshot JSON v1 has only four discriminators:
 
 Only a current `atomicTransfer` result may contain nested `sourceReplacementResult`; its `operationKey` and `replayed` values equal those of the outer result. A top-level `mutation` cannot use `ATOMIC_TRANSFER`.
 
-The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. A transition's outer states and history must agree with its participant results, and its source and target claims must match the source before and target after states. Each before state and its history must identify the corresponding after Binding. Mutation claims, transferred claims, and adoption claims must belong to the corresponding Binding. Transition states and history must agree with the transition mode. The adoption event and claim role must match the adoption operation. Replay also verifies the snapshot's Binding IDs and roles against the stored operation participants. A mismatch raises `SlugPersistenceInvariantException`.
+The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. A transition's outer states and history must agree with its participant results, and its source and target claims must match the source before and target after states. Each before state and its history must identify the corresponding after Binding. Mutation claims, transferred claims, and adoption claims must belong to the corresponding Binding.
+
+Transition states and history must agree with the transition mode. A transition event must record the corresponding canonical claim slug and role. The adoption event and claim role must match the adoption operation. Current adoption and current transfer must activate the target with the adopted or transferred Claim.
+
+History lists cover the sequence positions created by the operation. The nested transfer replacement covers its own History, and the enclosing transfer also covers its transfer-out event. Replay also verifies the snapshot's Binding IDs and roles against the stored operation participants. A mismatch raises `SlugPersistenceInvariantException`.
 
 ## 9. Persistence, Transactions, and Concurrency
 
@@ -455,7 +459,7 @@ listAliases, getHistory, inspectRegistry, searchScopes, searchHistory,
 searchBindings, searchRegistry
 ```
 
-`searchBindings()` raises `SlugPersistenceInvariantException` for an inconsistent Registry state. A `RELEASED` Binding must have no Claims or current pointer. An `ACTIVE` or `INACTIVE` Binding must point to its only current canonical Claim.
+For each Binding in its result page, `searchBindings()` checks Registry ownership, Scope, and role values. It raises `SlugPersistenceInvariantException` when these checks fail. A `RELEASED` Binding must have no Claims or current pointer. An `ACTIVE` or `INACTIVE` Binding must point to its only current canonical Claim.
 
 Use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` for paging requests and `Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum` where a sort direction enum is used.
 

@@ -8,6 +8,7 @@ use JsonSerializable;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Lifecycle\Enum\HistoryEventTypeEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\Enum\ScopeTransitionModeEnum;
@@ -78,14 +79,14 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
             throw new SlugInvalidArgumentException('Transition state and history must agree with the participant results.');
         }
 
-        if (! $targetResult->mutated || array_column($targetResult->historyEvents, 'eventType') !== [HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN]) {
+        if (! self::recordsTransitionClaim($targetResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, $targetClaim)) {
             throw new SlugInvalidArgumentException('The transition target must record its activation.');
         }
         if ($mode === ScopeTransitionModeEnum::MOVE) {
             if (
-                ! $sourceResult->mutated || $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
+                $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
                 || $sourceAfter->state->currentSlug?->value !== $sourceClaim?->value
-                || array_column($sourceResult->historyEvents, 'eventType') !== [HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT]
+                || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim)
             ) {
                 throw new SlugInvalidArgumentException('A move must deactivate the source and record its transition out.');
             }
@@ -95,6 +96,17 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         ) {
             throw new SlugInvalidArgumentException('A parallel transition must leave the source unchanged.');
         }
+    }
+
+    /** Checks the one canonical claim event for a participant changed by the transition. */
+    private static function recordsTransitionClaim(BindingStateResultDTO $participant, HistoryEventTypeEnum $eventType, ?Slug $claim): bool
+    {
+        $event = $participant->historyEvents[0] ?? null;
+
+        return $participant->mutated && count($participant->historyEvents) === 1
+            && $event?->eventType === $eventType
+            && $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL
+            && $event->slugSnapshot?->value === $claim?->value;
     }
 
     /**

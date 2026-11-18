@@ -54,7 +54,17 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         if ($targetResult->before === null) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer target result requires its existing before state.');
         }
-        if (($transferredClaim->role === RegistryRoleEnum::CURRENT_CANONICAL) !== ($sourceReplacementResult !== null)) {
+        $transfersCurrent = $transferredClaim->role === RegistryRoleEnum::CURRENT_CANONICAL;
+        if (
+            $transfersCurrent && (
+                $targetResult->before->state->status !== BindingStatusEnum::RELEASED
+                || $targetResult->after->state->status !== BindingStatusEnum::ACTIVE
+                || ! $transferredClaim->matches($targetResult->after->currentClaim)
+            )
+        ) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Current transfer must activate the released target with the transferred claim.');
+        }
+        if ($transfersCurrent !== ($sourceReplacementResult !== null)) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Current transfers require a source replacement result.');
         }
         self::assertCompleteTransferHistory($sourceResult, $targetResult, $historyEvents, $transferredClaim);

@@ -40,12 +40,13 @@ final readonly class BindingDTO implements JsonSerializable
     }
 
     /**
-     * Validates an earlier state and ordered history against this Binding.
+     * Validates the earlier state and the newly recorded positions for this Binding.
      *
      * @param array<int, mixed> $historyEvents
+     * @param non-negative-int $trailingEvents Events carried only by the enclosing result.
      * @internal
      */
-    public function assertResultEvidence(?self $before, array $historyEvents): void
+    public function assertResultEvidence(?self $before, array $historyEvents, int $trailingEvents = 0): void
     {
         if ($before !== null && ($before->id !== $this->id || ! $this->identity->equals($before->identity))) {
             throw new SlugInvalidArgumentException('Result before and after states must refer to the same Binding.');
@@ -53,9 +54,12 @@ final readonly class BindingDTO implements JsonSerializable
         if (! array_is_list($historyEvents)) {
             throw new SlugInvalidArgumentException('historyEvents must be a list.');
         }
+        $previousSequence = $before?->state->historySequence ?? 0;
+        if ($this->state->historySequence - $previousSequence - $trailingEvents !== count($historyEvents)) {
+            throw new SlugInvalidArgumentException('History event count must match the recorded Binding sequence range.');
+        }
         $scope = $this->identity->scopeProfile->scope->jsonSerialize();
         $entity = $this->identity->entity->jsonSerialize();
-        $previous = null;
         foreach ($historyEvents as $event) {
             if (! $event instanceof HistoryEventDTO) {
                 throw new SlugInvalidArgumentException('historyEvents contains an invalid history event.');
@@ -67,10 +71,10 @@ final readonly class BindingDTO implements JsonSerializable
             ) {
                 throw new SlugInvalidArgumentException('History events must refer to the result Binding.');
             }
-            if ($previous !== null && [$event->sequenceNo, $event->id] <= [$previous->sequenceNo, $previous->id]) {
-                throw new SlugInvalidArgumentException('historyEvents must be ordered by sequence and id.');
+            $previousSequence++;
+            if ($event->sequenceNo !== $previousSequence) {
+                throw new SlugInvalidArgumentException('History events must cover consecutive Binding sequence positions.');
             }
-            $previous = $event;
         }
     }
 

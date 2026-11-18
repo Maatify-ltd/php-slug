@@ -12,6 +12,7 @@ use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
+use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
@@ -238,6 +239,10 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
             ["ALTER TABLE maa_slug_operations ADD COLUMN required_marker INT NOT NULL COMMENT 'Required fixture value without a default'"],
             'required_marker',
         ];
+        yield 'generated column' => [
+            ["ALTER TABLE maa_slug_operations ADD COLUMN generated_marker INT GENERATED ALWAYS AS (6 + 1) STORED COMMENT 'Generated fixture value'"],
+            'generated columns',
+        ];
     }
 
     #[DataProvider('columnDefaults')]
@@ -319,6 +324,54 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
             . 'FROM maa_slug_registry WHERE binding_id = :binding',
             'current pointer',
         ];
+        yield 'active with a non-current claim of unknown role' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'UNRECOGNIZED', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'claim role',
+        ];
+        yield 'active with a padded non-current role' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'ACTIVE_ALIAS ', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'claim role',
+        ];
+    }
+
+    public function testSearchBindingsRejectsReleasedOwnershipInAnotherScope(): void
+    {
+        $engine = $this->engine();
+        $owner = $this->identity('released-owner');
+        $engine->assignExact(new AssignExactCommand($owner, 'first-book', null, new AuditContextDTO()));
+        $released = $engine->releaseAllOwnership(new ReleaseAllOwnershipCommand($owner, 1, new AuditContextDTO()));
+        $otherScope = $engine->ensureScope(new ScopeProfileRequestDTO(new SlugScope('other-scope', null, null), new SlugProfileKey('unicode-v1')));
+        $criteria = new BindingSearchCriteria($owner->scopeProfile, new PageRequest(1, 20));
+
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('SET SESSION foreign_key_checks = 0');
+            try {
+                $insert = $this->pdo->prepare(
+                    'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+                    . "VALUES (:scope, :binding, 'foreign-claim', 'ACTIVE_ALIAS', NOW(6), NOW(6))",
+                );
+                $insert->execute(['scope' => $otherScope->id, 'binding' => $released->after->id]);
+            } finally {
+                $this->pdo->exec('SET SESSION foreign_key_checks = 1');
+            }
+
+            try {
+                $engine->searchBindings($criteria);
+                self::fail('Management returned a released Binding that still owns a claim in another Scope.');
+            } catch (SlugPersistenceInvariantException $exception) {
+                self::assertStringContainsString('Released Binding', $exception->getMessage());
+                $this->assertHostWorkIsIntact();
+            }
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertCount(1, $engine->searchBindings($criteria)->data);
+        self::assertSame('0', $this->scalar("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'foreign-claim'"));
     }
 
     #[DataProvider('inconsistentReplayFields')]
@@ -332,12 +385,13 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         $read->execute(['operation' => $normal->operationKey]);
         $snapshotJson = $read->fetchColumn();
         self::assertIsString($snapshotJson);
-        /** @var array{result: array{revision: int, current_slug: string, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
+        /** @var array{result: array{revision: int, current_slug: string, history_events: mixed, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
         $snapshot = json_decode($snapshotJson, true, flags: JSON_THROW_ON_ERROR);
         match ($field) {
             'owner' => $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner',
             'revision' => $snapshot['result']['revision'] += 10,
             'slug' => $snapshot['result']['current_slug'] = 'another-book',
+            'history' => $snapshot['result']['history_events'] = [],
             default => throw new \LogicException('Unknown replay fixture field.'),
         };
         $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
@@ -362,6 +416,7 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'foreign current claim owner' => ['owner'];
         yield 'revision disagrees with the after state' => ['revision'];
         yield 'current slug disagrees with the after state' => ['slug'];
+        yield 'newly recorded History omitted from replay' => ['history'];
     }
 
     public function testReplayRejectsAnOtherwiseValidSnapshotFromAnotherParticipant(): void

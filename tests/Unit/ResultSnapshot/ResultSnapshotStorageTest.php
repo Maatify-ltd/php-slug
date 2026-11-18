@@ -71,6 +71,16 @@ final class ResultSnapshotStorageTest extends TestCase
         yield 'adoption history names another entity' => ['adoption', ['history_event', 'entity_snapshot', 'entity_key'], 'other-owner'];
         yield 'current adoption reports an alias event' => ['adoption', ['history_event', 'event_type'], 'ADOPTED_ALIAS'];
         yield 'current adoption reports an alias claim role' => ['adoption', ['adopted_claim', 'role'], 'ACTIVE_ALIAS'];
+        yield 'current adoption claim differs from the after current claim' => ['adoption', ['adopted_claim', 'id'], 999];
+        yield 'current transfer claim differs from the target current claim' => ['transfer', ['transferred_claim', 'id'], 999];
+        yield 'transition target history has a different slug in both copies' => [
+            'transition', ['target_result', 'history_events', 0, 'slug_snapshot'], 'different-slug', ['history_events', 1, 'slug_snapshot'],
+        ];
+        yield 'transition source history has the wrong role in both copies' => [
+            'transition', ['source_result', 'history_events', 0, 'claim_role_snapshot'], 'ACTIVE_ALIAS', ['history_events', 0, 'claim_role_snapshot'],
+        ];
+        yield 'mutation omits newly recorded history' => ['mutation', ['history_events'], []];
+        yield 'mutation history sequence skips the recorded position' => ['mutation', ['history_events', 0, 'sequence_no'], 2];
     }
 
     /**

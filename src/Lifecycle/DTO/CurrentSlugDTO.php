@@ -26,15 +26,7 @@ final readonly class CurrentSlugDTO implements JsonSerializable
             throw new SlugInvalidArgumentException('Current slug claim must match binding current slug.');
         }
 
-        $current = $binding->currentClaim;
-        if (
-            $current === null
-            || $claim->id !== $current->id
-            || $current->role !== $claim->role
-            || $claim->claimedAt != $current->claimedAt
-            || $claim->updatedAt != $current->updatedAt
-            || ! $binding->identity->equals($claim->binding)
-        ) {
+        if (! $claim->matches($binding->currentClaim)) {
             throw new SlugInvalidArgumentException("The claim must match the binding's current canonical claim.");
         }
     }

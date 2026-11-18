@@ -95,13 +95,14 @@ final class ContractFixtures
         BindingStatusEnum $status = BindingStatusEnum::ACTIVE,
         int $revision = 1,
         ?RegistryRoleEnum $role = RegistryRoleEnum::CURRENT_CANONICAL,
+        ?int $historySequence = null,
     ): BindingDTO {
         $slug = self::slug($slugValue);
         $claim = $status === BindingStatusEnum::RELEASED || $role === null ? null : self::claim($identity, $slug, $claimId, $role);
         return new BindingDTO(
             $id,
             $identity,
-            new BindingStateDTO($status, $status === BindingStatusEnum::RELEASED ? null : $slug, $revision, $revision),
+            new BindingStateDTO($status, $status === BindingStatusEnum::RELEASED ? null : $slug, $revision, $historySequence ?? $revision),
             $claim,
             self::date(),
             self::date(),
@@ -209,7 +210,7 @@ final class ContractFixtures
         $sourceIdentity = self::identity(1);
         $targetIdentity = self::identity(2);
         $sourceBefore = self::binding($sourceIdentity, $sourceId, 'hello', 200, BindingStatusEnum::ACTIVE, 1);
-        $sourceAfter = self::binding($sourceIdentity, $sourceId, 'replacement', 202, BindingStatusEnum::ACTIVE, 2);
+        $sourceAfter = self::binding($sourceIdentity, $sourceId, 'replacement', 202, BindingStatusEnum::ACTIVE, 2, historySequence: 3);
         $targetBefore = self::binding($targetIdentity, $targetId, 'hello', 201, BindingStatusEnum::RELEASED, 0);
         $targetAfter = self::binding($targetIdentity, $targetId, 'hello', 201, BindingStatusEnum::ACTIVE, 1);
         $hello = self::slug('hello');

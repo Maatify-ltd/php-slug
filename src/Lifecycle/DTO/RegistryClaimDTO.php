@@ -26,6 +26,22 @@ final readonly class RegistryClaimDTO implements JsonSerializable
         }
     }
 
+    /**
+     * Compares all stored claim fields, including timestamp instants, by value.
+     *
+     * @internal
+     */
+    public function matches(?self $other): bool
+    {
+        return $other !== null
+            && $this->id === $other->id
+            && $this->binding->equals($other->binding)
+            && $this->slug->value === $other->slug->value
+            && $this->role === $other->role
+            && $this->claimedAt == $other->claimedAt
+            && $this->updatedAt == $other->updatedAt;
+    }
+
     /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {
