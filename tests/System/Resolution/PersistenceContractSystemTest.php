@@ -450,10 +450,11 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
     /**
      * Exercises operation-specific evidence through persisted facade replays.
      *
-     * @param array<string, int|bool|string> $fields Dotted paths inside the stored result.
+     * @param array<string, int|bool|string|null> $fields Dotted paths inside the stored result.
+     * @param (Closure(array<array-key, mixed>): array<array-key, mixed>)|null $rewrite Rewrites linked result fields when they must change together.
      */
     #[DataProvider('inconsistentLifecycleResults')]
-    public function testReplayRejectsInconsistentLifecycleResults(string $path, array $fields): void
+    public function testReplayRejectsInconsistentLifecycleResults(string $path, array $fields, ?Closure $rewrite = null): void
     {
         $execute = $this->prepareLifecycleReplay($path);
         $normal = $execute();
@@ -471,6 +472,10 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         self::assertIsArray($snapshot);
         foreach ($fields as $field => $value) {
             $snapshot = self::replaceReplayField($snapshot, explode('.', 'result.' . $field), $value);
+        }
+        if ($rewrite !== null) {
+            self::assertIsArray($snapshot['result']);
+            $snapshot['result'] = $rewrite($snapshot['result']);
         }
         $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
         $update->execute([
@@ -493,9 +498,33 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
     }
 
-    /** @return iterable<string, array{string, array<string, int|bool|string>}> */
+    /** @return iterable<string, array{string, array<string, int|bool|string|null>, 2?: Closure(array<array-key, mixed>): array<array-key, mixed>}> */
     public static function inconsistentLifecycleResults(): iterable
     {
+        yield 'PARALLEL reports a released historical source without a current claim' => ['parallel', [
+            'source_before.state.status' => 'RELEASED',
+            'source_after.state.status' => 'RELEASED',
+            'source_result.before.state.status' => 'RELEASED',
+            'source_result.after.state.status' => 'RELEASED',
+            'source_before.state.current_slug' => null,
+            'source_after.state.current_slug' => null,
+            'source_result.before.state.current_slug' => null,
+            'source_result.after.state.current_slug' => null,
+            'source_before.current_claim' => null,
+            'source_after.current_claim' => null,
+            'source_result.before.current_claim' => null,
+            'source_result.after.current_claim' => null,
+            'source_claim' => null,
+        ]];
+        yield 'MOVE request replays an internally consistent PARALLEL result' => ['move', [], self::rewriteMoveAsParallel(...)];
+        yield 'change reports the same old and new Registry key' => ['change', [
+            'before.state.current_slug' => 'changed-slug',
+            'before.current_claim.slug' => 'changed-slug',
+            'previous_slug' => 'changed-slug',
+            'history_events.0.previous_slug_snapshot' => 'changed-slug',
+        ]];
+        yield 'change omits the demoted former current claim' => ['change', [], self::omitFormerCurrentClaim(...)];
+        yield 'release all records the same claim key twice' => ['release-all', [], self::repeatReleasedClaim(...)];
         yield 'released claim remains in affected claims' => ['release', ['affected_claims.1.slug' => 'alias-slug']];
         yield 'alias duplicates the current slug' => ['add', [
             'affected_claims.1.slug' => 'source-slug', 'history_events.0.slug_snapshot' => 'source-slug',
@@ -556,6 +585,83 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         ]];
     }
 
+    public function testParallelReplaysItsOriginalSourceAfterLiveRelease(): void
+    {
+        $execute = $this->prepareLifecycleReplay('parallel');
+        $first = $execute();
+        self::assertInstanceOf(ScopeTransitionResultDTO::class, $first);
+        $this->engine()->releaseAllOwnership(new ReleaseAllOwnershipCommand($this->identity('source'), 1, new AuditContextDTO()));
+
+        $this->beginHostWork();
+        try {
+            $replay = $execute();
+            self::assertSame(json_encode($first->withReplayed(true), JSON_THROW_ON_ERROR), json_encode($replay, JSON_THROW_ON_ERROR));
+            $this->assertHostWorkIsIntact();
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /**
+     * Substitutes a valid PARALLEL outcome while leaving the stored MOVE request unchanged.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function rewriteMoveAsParallel(array $result): array
+    {
+        self::assertIsArray($result['source_result']);
+        self::assertIsArray($result['source_before']);
+        self::assertIsArray($result['source_before']['state']);
+        self::assertIsArray($result['target_result']);
+        $sourceRevision = $result['source_before']['state']['revision'];
+        $result['mode'] = 'PARALLEL';
+        $result['source_after'] = $result['source_before'];
+        $result['source_revision'] = $sourceRevision;
+        $result['source_result']['after'] = $result['source_before'];
+        $result['source_result']['mutated'] = false;
+        $result['source_result']['revision'] = $sourceRevision;
+        $result['source_result']['history_events'] = [];
+        $result['history_events'] = $result['target_result']['history_events'];
+
+        return $result;
+    }
+
+    /**
+     * Leaves the new current claim and removes the former claim from the result.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function omitFormerCurrentClaim(array $result): array
+    {
+        self::assertIsArray($result['affected_claims']);
+        self::assertCount(2, $result['affected_claims']);
+        $result['affected_claims'] = array_slice($result['affected_claims'], 1);
+        return $result;
+    }
+
+    /**
+     * Gives the event for the second alias the slug of the first alias.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function repeatReleasedClaim(array $result): array
+    {
+        self::assertIsArray($result['history_events']);
+        foreach ($result['history_events'] as $index => $event) {
+            self::assertIsArray($event);
+            if ($event['slug_snapshot'] === 'second-alias') {
+                $event['slug_snapshot'] = 'alias-slug';
+                $result['history_events'][$index] = $event;
+                return $result;
+            }
+        }
+        self::fail('The release fixture must contain the second alias.');
+    }
+
     /** @return Closure(): (SlugMutationResultDTO|AdoptionResultDTO|AtomicTransferResultDTO|ScopeTransitionResultDTO) */
     private function prepareLifecycleReplay(string $path): Closure
     {
@@ -571,12 +677,16 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
             $command = new AdoptAliasCommand($source, 'adopted-slug', null, 1, $audit);
             return static fn(): AdoptionResultDTO => $engine->adoptAlias($command);
         }
-        if ($path === 'move') {
+        if ($path === 'change') {
+            $command = new ChangeExactCommand($source, 'changed-slug', 1, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->changeExact($command);
+        }
+        if ($path === 'move' || $path === 'parallel') {
             $targetScope = new ScopeProfileRequestDTO(new SlugScope('destination', null, null), $source->scopeProfile->expectedProfileKey);
             $move = new TransitionScopeCommand(
                 $source,
                 $targetScope,
-                ScopeTransitionModeEnum::MOVE,
+                $path === 'move' ? ScopeTransitionModeEnum::MOVE : ScopeTransitionModeEnum::PARALLEL,
                 new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'destination-slug'),
                 1,
                 $audit,
@@ -585,6 +695,11 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         }
 
         $engine->addAlias(new AddAliasCommand($source, 'alias-slug', 1, new AuditContextDTO()));
+        if ($path === 'release-all') {
+            $engine->addAlias(new AddAliasCommand($source, 'second-alias', 2, new AuditContextDTO()));
+            $command = new ReleaseAllOwnershipCommand($source, 3, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->releaseAllOwnership($command);
+        }
         if ($path === 'release') {
             $engine->addAlias(new AddAliasCommand($source, 'retained-alias', 2, new AuditContextDTO()));
             $command = new ReleaseClaimCommand($source, 'alias-slug', 3, $audit);
@@ -608,7 +723,7 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
      * @param non-empty-list<string> $path
      * @return array<array-key, mixed>
      */
-    private static function replaceReplayField(array $snapshot, array $path, int|bool|string $value): array
+    private static function replaceReplayField(array $snapshot, array $path, int|bool|string|null $value): array
     {
         $key = array_shift($path);
         self::assertArrayHasKey($key, $snapshot);

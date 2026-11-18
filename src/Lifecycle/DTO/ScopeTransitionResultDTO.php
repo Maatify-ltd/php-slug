@@ -59,8 +59,11 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         ) {
             throw new SlugInvalidArgumentException('Transition revisions must match the participants and their after states.');
         }
-        if ($sourceBefore === null || ! $targetCreated || $targetBefore !== null || $targetAfter->state->status !== BindingStatusEnum::ACTIVE) {
-            throw new SlugInvalidArgumentException('A transition requires an existing source and a newly created active target.');
+        if (
+            $sourceBefore?->currentClaim === null || ! $targetCreated
+            || $targetBefore !== null || $targetAfter->state->status !== BindingStatusEnum::ACTIVE
+        ) {
+            throw new SlugInvalidArgumentException('A transition requires a source with a current claim and a newly created active target.');
         }
         if (
             $sourceAfter->id === $targetAfter->id || $sourceAfter->identity->sharesScope($targetAfter->identity)
@@ -91,7 +94,7 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         if ($mode === ScopeTransitionModeEnum::MOVE) {
             if (
                 $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
-                || $sourceBefore->currentClaim?->matches($sourceAfter->currentClaim) !== true
+                || ! $sourceBefore->currentClaim->matches($sourceAfter->currentClaim)
                 || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim, $targetAfter->identity)
             ) {
                 throw new SlugInvalidArgumentException('A move must retain the source claim and record the deactivation and destination.');

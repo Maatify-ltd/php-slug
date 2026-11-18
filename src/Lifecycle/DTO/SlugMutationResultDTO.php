@@ -117,8 +117,9 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
                 && $afterStatus === BindingStatusEnum::ACTIVE && $this->previousSlug === null,
             ChangeTypeEnum::CHANGED, ChangeTypeEnum::RESTORED, ChangeTypeEnum::ALIAS_PROMOTED
                 => $beforeClaim !== null && $beforeStatus === $afterStatus
-                && $beforeClaim->id !== $this->after->currentClaim?->id
-                && $this->previousSlug?->value === $beforeClaim->slug->value,
+                && ! $beforeClaim->sharesKeyWithinScope($this->after->currentClaim)
+                && $this->previousSlug?->value === $beforeClaim->slug->value
+                && ($this->operationType === OperationTypeEnum::ATOMIC_TRANSFER || $this->retainsFormerCurrent($beforeClaim)),
             ChangeTypeEnum::DEACTIVATED => $beforeStatus === BindingStatusEnum::ACTIVE && $afterStatus === BindingStatusEnum::INACTIVE && $sameCurrent,
             ChangeTypeEnum::REACTIVATED => $beforeStatus === BindingStatusEnum::INACTIVE && $afterStatus === BindingStatusEnum::ACTIVE && $sameCurrent,
             ChangeTypeEnum::RELEASED_ALL => $beforeClaim !== null && $afterStatus === BindingStatusEnum::RELEASED
@@ -129,6 +130,17 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         if (! $valid) {
             throw new SlugInvalidArgumentException('Mutation Binding states must match the recorded outcome.');
         }
+    }
+
+    /** Checks the former current claim retained as historical by an ordinary replacement. */
+    private function retainsFormerCurrent(RegistryClaimDTO $before): bool
+    {
+        return array_any(
+            $this->affectedClaims,
+            static fn(RegistryClaimDTO $claim): bool => $claim->id === $before->id
+                && $claim->slug->value === $before->slug->value
+                && $claim->role === RegistryRoleEnum::HISTORICAL_CANONICAL,
+        );
     }
 
     /** Checks the event type and the claim evidence recorded for this mutation. */
@@ -180,16 +192,22 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         );
     }
 
-    /** Requires the release marker followed by the released claims, including the old current claim. */
+    /** Requires one event per released Registry key following the marker, including the old current claim. */
     private function assertReleaseAllHistory(): void
     {
         $releasedCurrent = false;
+        $releasedSlugs = [];
         foreach (array_slice($this->historyEvents, 1) as $event) {
-            if ($event->eventType !== HistoryEventTypeEnum::OWNERSHIP_RELEASED) {
+            if ($event->eventType !== HistoryEventTypeEnum::OWNERSHIP_RELEASED || $event->slugSnapshot === null) {
                 throw new SlugInvalidArgumentException('Release-all history must follow its marker with ownership releases.');
             }
+            $key = RegistryClaimDTO::scopeSlugKey($event->slugSnapshot);
+            if (isset($releasedSlugs[$key])) {
+                throw new SlugInvalidArgumentException('Release-all history must record each released Registry key once.');
+            }
+            $releasedSlugs[$key] = true;
             if ($event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL) {
-                if ($releasedCurrent || $event->slugSnapshot?->value !== $this->previousSlug?->value) {
+                if ($releasedCurrent || $event->slugSnapshot->value !== $this->previousSlug?->value) {
                     throw new SlugInvalidArgumentException('Release-all history must identify the one former current claim.');
                 }
                 $releasedCurrent = true;

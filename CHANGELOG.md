@@ -39,6 +39,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Reject mutation outcomes and History that contradict the operation, and reject adoption or transfer snapshots that unexpectedly replace a current Claim or change its Binding status.
 - Validate the current Claim in mutation results and match alias History to the resulting Claim. Enforce transition and transfer participant revisions and keep the same source Claim in a MOVE.
 - Reject contradictory replay evidence for released and duplicate claims, transfer and transition participants, and their counterpart identities in History.
+- Verify the recorded transition source and requested mode during replay. Reject reused keys in current-claim replacements, missing former historical claims after an ordinary replacement, and duplicate release-all History.
 - Accept compatible expression defaults on additional MySQL columns while continuing to reject generated columns.
 - Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 
