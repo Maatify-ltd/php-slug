@@ -9,6 +9,7 @@ use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeTransitionResultDTO;
 use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
 use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
+use Maatify\Slug\Lifecycle\Repository\Operation\OperationParticipant;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationRecord;
 use Maatify\Slug\Lifecycle\Repository\Operation\OperationSnapshotState;
 use Maatify\Slug\Lifecycle\Repository\Operation\ResultSnapshotMetadata;
@@ -17,22 +18,43 @@ use Maatify\Slug\Canonicalization\Service\SlugProfileRegistryInterface;
 /** Provides immutable snapshot storage semantics for operation replay. */
 final class ResultSnapshotStorage
 {
-    /** Decodes a complete immutable snapshot from the operation already read by the caller. */
+    /**
+     * Decodes a complete immutable snapshot and checks it against the operation participants.
+     *
+     * @param list<OperationParticipant> $participants
+     */
     public static function decodeOperation(
         OperationRecord $operation,
         SlugProfileRegistryInterface $profiles,
+        array $participants,
     ): SlugMutationResultDTO|ScopeTransitionResultDTO|AtomicTransferResultDTO|AdoptionResultDTO {
         if ($operation->status !== 'COMMITTED' || $operation->resultSnapshot === null || $operation->completedAt === null) {
             throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
         }
 
-        return self::decodeCommitted(new ResultSnapshotMetadata(
+        $result = self::decodeCommitted(new ResultSnapshotMetadata(
             $operation->resultType,
             $operation->resultSchemaVersion,
             $operation->operationType,
             $operation->operationKey,
             $operation->resultSnapshot,
         ), $profiles);
+        $expected = match (true) {
+            $result instanceof ScopeTransitionResultDTO => ['SOURCE' => $result->sourceAfter->id, 'TARGET' => $result->targetAfter->id],
+            $result instanceof AtomicTransferResultDTO => ['SOURCE' => $result->sourceResult->after->id, 'TARGET' => $result->targetResult->after->id],
+            default => ['SINGLE' => $result->after->id],
+        };
+        foreach ($participants as $participant) {
+            if (($expected[$participant->role] ?? null) !== $participant->bindingId) {
+                throw new SlugPersistenceInvariantException('Result Snapshot does not match the operation participants.');
+            }
+            unset($expected[$participant->role]);
+        }
+        if ($expected !== []) {
+            throw new SlugPersistenceInvariantException('Result Snapshot does not match the operation participants.');
+        }
+
+        return $result;
     }
 
     /**

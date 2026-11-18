@@ -21,6 +21,7 @@ use Maatify\Slug\Lifecycle\Enum\ClaimIntentModeEnum;
 use Maatify\Slug\Lifecycle\Enum\HistoryEventTypeEnum;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
 use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
+use Maatify\Slug\Lifecycle\Enum\ScopeTransitionModeEnum;
 use Maatify\Slug\Lifecycle\Exception\SlugAlreadyClaimedException;
 use Maatify\Slug\Lifecycle\Exception\SlugAllocationExhaustedException;
 use Maatify\Slug\Lifecycle\Exception\SlugAssignmentNotPermittedException;
@@ -158,7 +159,7 @@ final readonly class ScopeTransitionService
                 $existing,
             );
             if ($reservation !== null && ! $reservation->created) {
-                return $this->decodeReplay($reservation->operation);
+                return $this->decodeReplay($reservation, $command->mode);
             }
 
             $this->assertRevision($sourceRecord, $command->sourceExpectedRevision);
@@ -440,12 +441,15 @@ final readonly class ScopeTransitionService
         return $this->operations->reserve($key, OperationTypeEnum::TRANSITION_SCOPE, $fingerprint, 'transition', 1, $participants);
     }
 
-    /** Decodes the current, locked reservation without reading the Host's snapshot. */
-    private function decodeReplay(OperationRecord $operation): ScopeTransitionResultDTO
+    /** Decodes the locked reservation and verifies the mode of the original request. */
+    private function decodeReplay(OperationReservation $reservation, ScopeTransitionModeEnum $expectedMode): ScopeTransitionResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof ScopeTransitionResultDTO) {
             throw new SlugPersistenceInvariantException('Transition operation contains a non-transition snapshot.');
+        }
+        if ($result->mode !== $expectedMode) {
+            throw new SlugPersistenceInvariantException('Invalid result snapshot. The transition mode must match the request.');
         }
 
         return $result;

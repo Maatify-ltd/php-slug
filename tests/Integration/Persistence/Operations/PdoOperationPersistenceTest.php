@@ -176,25 +176,26 @@ final class PdoOperationPersistenceTest extends MySqlIntegrationTestCase
         $scopeRepository = new PdoScopeRepository($this->pdo, $profiles, $this->clock(), new PdoCapabilityGuard($this->pdo));
         $operationRepository = new PdoOperationRepository($this->pdo, $this->clock(), new PdoCapabilityGuard($this->pdo));
 
-        $source = $scopeRepository->ensureBindingPlaceholder(
-            new ScopeProfileRequestDTO(new SlugScope('catalog', null, null), new SlugProfileKey('ascii-v1')),
-            new EntityReference('product', 'snapshot-source'),
-        );
-        $target = $scopeRepository->ensureBindingPlaceholder(
-            new ScopeProfileRequestDTO(new SlugScope('store', null, null), new SlugProfileKey('ascii-v1')),
-            new EntityReference('product', 'snapshot-target'),
-        );
+        $source = ContractFixtures::identity(1);
+        $transitionTarget = ContractFixtures::identity(1, 'store');
+        $transferTarget = ContractFixtures::identity(2);
+        $adoption = ContractFixtures::identity(4);
+        $sourceId = $scopeRepository->ensureBindingPlaceholder($source->scopeProfile, $source->entity)->id;
+        $transitionTargetId = $scopeRepository->ensureBindingPlaceholder($transitionTarget->scopeProfile, $transitionTarget->entity)->id;
+        $transferTargetId = $scopeRepository->ensureBindingPlaceholder($transferTarget->scopeProfile, $transferTarget->entity)->id;
+        $adoptionId = $scopeRepository->ensureBindingPlaceholder($adoption->scopeProfile, $adoption->entity)->id;
+
         $definitions = [
-            ['mutation', ContractFixtures::mutation(), [new OperationParticipant($source->id, 'snapshot-mutation', 'SINGLE')]],
-            ['transition', ContractFixtures::transition(), [
-                new OperationParticipant($source->id, 'snapshot-transition', 'SOURCE'),
-                new OperationParticipant($target->id, 'snapshot-transition', 'TARGET'),
+            ['mutation', ContractFixtures::mutation($sourceId), [new OperationParticipant($sourceId, 'snapshot-mutation', 'SINGLE')]],
+            ['transition', ContractFixtures::transition($sourceId, $transitionTargetId), [
+                new OperationParticipant($sourceId, 'snapshot-transition', 'SOURCE'),
+                new OperationParticipant($transitionTargetId, 'snapshot-transition', 'TARGET'),
             ]],
-            ['transfer', ContractFixtures::transfer(), [
-                new OperationParticipant($source->id, 'snapshot-transfer', 'SOURCE'),
-                new OperationParticipant($target->id, 'snapshot-transfer', 'TARGET'),
+            ['transfer', ContractFixtures::transfer($sourceId, $transferTargetId), [
+                new OperationParticipant($sourceId, 'snapshot-transfer', 'SOURCE'),
+                new OperationParticipant($transferTargetId, 'snapshot-transfer', 'TARGET'),
             ]],
-            ['adoption', ContractFixtures::adoption(), [new OperationParticipant($source->id, 'snapshot-adoption', 'SINGLE')]],
+            ['adoption', ContractFixtures::adoption($adoptionId), [new OperationParticipant($adoptionId, 'snapshot-adoption', 'SINGLE')]],
         ];
 
         foreach ($definitions as $index => [$resultType, $fixture, $participants]) {

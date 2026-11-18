@@ -29,6 +29,7 @@ use Maatify\Slug\Lifecycle\DTO\BindingStateResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeDTO;
 use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Lifecycle\Enum\ChangeTypeEnum;
@@ -224,11 +225,11 @@ final class SlugLifecycleService
             $action = 'new';
             $currentDemoted = false;
             foreach ($candidateList as $candidate) {
-                $same = $this->claimInRecords($claims, $candidate);
+                $same = $this->claimInRecords($claims, $candidate, $lockedClaimIds);
                 if ($same !== null) {
                     if ($same->role === RegistryRoleEnum::CURRENT_CANONICAL) {
                         $selectedClaim = $same;
-                        $selectedSlug = $candidate;
+                        $selectedSlug = $same->toDto($this->profiles)->slug;
                         $action = 'noop';
                         break;
                     }
@@ -238,7 +239,7 @@ final class SlugLifecycleService
                             $currentDemoted = true;
                         }
                         $selectedClaim = $same;
-                        $selectedSlug = $candidate;
+                        $selectedSlug = $same->toDto($this->profiles)->slug;
                         $action = 'restore';
                         break;
                     }
@@ -353,7 +354,10 @@ final class SlugLifecycleService
             $this->assertRevision($binding, $expectedRevision);
             $this->assertCurrentBearingBinding($binding);
             $scopeId = $this->scopeId($claims);
-            $target = $this->claimInRecords($claims, $slug);
+            $target = $this->claimInRecords($claims, $slug, $lockedClaimIds);
+            if ($target !== null) {
+                $slug = $target->toDto($this->profiles)->slug;
+            }
             if ($mode === 'add') {
                 if ($target !== null) {
                     if ($target->role === RegistryRoleEnum::ACTIVE_ALIAS) {
@@ -543,17 +547,18 @@ final class SlugLifecycleService
         $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $slug, $fingerprint): SlugMutationResultDTO {
-            [$binding, $claims] = $this->lockExistingBinding($command->binding);
+            [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($command->binding, [$slug]);
             $reservation = $this->reserve(OperationTypeEnum::RESTORE_HISTORICAL, 'mutation', $fingerprint, [$binding->id], $command->audit);
             if ($reservation !== null && ! $reservation->created) {
                 return $this->replayMutation($reservation);
             }
             $this->assertRevision($binding, $command->expectedRevision);
             $this->assertCurrentBearingBinding($binding);
-            $target = $this->claimInRecords($claims, $slug);
+            $target = $this->claimInRecords($claims, $slug, $lockedClaimIds);
             if ($target === null || $target->role !== RegistryRoleEnum::HISTORICAL_CANONICAL) {
                 throw new SlugHistoricalRestoreNotPermittedException('Only a historical canonical claim can be restored.');
             }
+            $slug = $target->toDto($this->profiles)->slug;
             $current = $this->currentClaim($claims);
             $this->registry->updateClaimRole($current->id, RegistryRoleEnum::HISTORICAL_CANONICAL);
             $this->registry->updateClaimRole($target->id, RegistryRoleEnum::CURRENT_CANONICAL);
@@ -627,19 +632,20 @@ final class SlugLifecycleService
         $this->capabilities->assertInstalledSchemaSupported();
 
         return $this->transactions->run(function () use ($command, $slug, $fingerprint): SlugMutationResultDTO {
-            [$binding, $claims] = $this->lockExistingBinding($command->binding);
+            [$binding, $claims, $lockedClaimIds] = $this->lockCandidateBearingBinding($command->binding, [$slug]);
             $reservation = $this->reserve(OperationTypeEnum::RELEASE_CLAIM, 'mutation', $fingerprint, [$binding->id], $command->audit);
             if ($reservation !== null && ! $reservation->created) {
                 return $this->replayMutation($reservation);
             }
             $this->assertRevision($binding, $command->expectedRevision);
-            $claim = $this->claimInRecords($claims, $slug);
+            $claim = $this->claimInRecords($claims, $slug, $lockedClaimIds);
             if ($claim === null) {
                 throw new SlugNotFoundException('The requested Binding claim was not found.');
             }
             if ($claim->role === RegistryRoleEnum::CURRENT_CANONICAL) {
                 throw new SlugCurrentClaimReleaseException('The current claim cannot be released directly.');
             }
+            $slug = $claim->toDto($this->profiles)->slug;
             $event = $this->claimEvent(HistoryEventTypeEnum::OWNERSHIP_RELEASED, $command->binding, $slug, null, $claim->role, null, null, null, $reservation, $command->audit);
             $events = $this->appendEvents($binding->id, $binding->state->historySequence, [$event]);
             $this->registry->deleteClaim($claim->id);
@@ -751,7 +757,7 @@ final class SlugLifecycleService
             if (! in_array($source->state->status, [BindingStatusEnum::ACTIVE, BindingStatusEnum::INACTIVE], true)) {
                 throw new SlugAssignmentNotPermittedException('Transfer source must be ACTIVE or INACTIVE.');
             }
-            $moved = $this->claimInRecords($sourceClaims, $transferredSlug);
+            $moved = $this->claimInRecords($sourceClaims, $transferredSlug, $lockedClaimIds);
             if ($moved === null) {
                 throw new SlugNotFoundException('The source transfer claim was not found.');
             }
@@ -760,6 +766,7 @@ final class SlugLifecycleService
             if ($targetConflict !== null && $targetConflict !== $moved->id) {
                 throw new SlugAlreadyClaimedException('The transferred slug is already claimed in the target Scope.');
             }
+            $transferredSlug = $moved->toDto($this->profiles)->slug;
             if ($originalRole === RegistryRoleEnum::CURRENT_CANONICAL) {
                 if ($target->state->status !== BindingStatusEnum::RELEASED) {
                     throw new SlugAssignmentNotPermittedException('Current transfer requires a RELEASED target Binding.');
@@ -790,7 +797,7 @@ final class SlugLifecycleService
                     $sourceClaims,
                     $lockedClaimIds,
                     $replacementCandidates,
-                    $transferredSlug,
+                    $moved,
                     $reservation,
                 );
                 if ($replacement['kind'] === 'RESTORED') {
@@ -883,13 +890,27 @@ final class SlugLifecycleService
         return [$binding, $claims];
     }
 
+    /** Locks the Scope before its Binding and reports ordinary target absence as not found. */
+    private function lockRequiredScope(BindingIdentityDTO $identity): ScopeDTO
+    {
+        $request = $identity->scopeProfile;
+        $scope = $this->registry->findScope($request->scope, $request->expectedProfileKey, forUpdate: true);
+        if ($scope === null) {
+            throw new SlugNotFoundException('The requested Scope was not found.');
+        }
+
+        return $scope;
+    }
+
     /**
+     * Locks the Scope, Binding and requested Registry keys in that order.
+     *
      * @param non-empty-list<Slug> $candidateKeys
      * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: array<int|string, int>}
      */
     private function lockCandidateBearingBinding(BindingIdentityDTO $identity, array $candidateKeys): array
     {
-        $scope = $this->registry->lockScope($identity->scopeProfile->scope, $identity->scopeProfile->expectedProfileKey);
+        $scope = $this->lockRequiredScope($identity);
         $record = $this->registry->findBindingRecord($scope, $identity->entity, true);
         if ($record === null) {
             throw new SlugNotFoundException('The requested Binding was not found.');
@@ -926,7 +947,7 @@ final class SlugLifecycleService
             if (isset($lockedScopes[$scopeKey])) {
                 continue;
             }
-            $lockedScopes[$scopeKey] = $this->registry->lockScope($identity->scopeProfile->scope, $identity->scopeProfile->expectedProfileKey);
+            $lockedScopes[$scopeKey] = $this->lockRequiredScope($identity);
         }
 
         $bindingRequests = [
@@ -1052,11 +1073,20 @@ final class SlugLifecycleService
         return $current[0];
     }
 
-    /** @param list<RegistryClaimRecord> $claims */
-    private function claimInRecords(array $claims, Slug $slug): ?RegistryClaimRecord
+    /**
+     * Finds an owned claim by the Registry identity resolved under database equality.
+     *
+     * @param list<RegistryClaimRecord> $claims
+     * @param array<int|string, int> $lockedClaimIds Requested candidate bytes mapped to locked Registry IDs.
+     */
+    private function claimInRecords(array $claims, Slug $slug, array $lockedClaimIds): ?RegistryClaimRecord
     {
+        $matchedId = $lockedClaimIds[$slug->value] ?? null;
+        if ($matchedId === null) {
+            return null;
+        }
         foreach ($claims as $claim) {
-            if ($claim->slugValue === $slug->value) {
+            if ($claim->id === $matchedId) {
                 return $claim;
             }
         }
@@ -1219,7 +1249,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed mutation snapshot for replay. */
     private function replayMutation(OperationReservation $reservation): SlugMutationResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof SlugMutationResultDTO) {
             throw new SlugPersistenceInvariantException('Mutation operation contains a non-mutation snapshot.');
         }
@@ -1230,7 +1260,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed transfer snapshot for replay. */
     private function replayTransfer(OperationReservation $reservation): AtomicTransferResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof AtomicTransferResultDTO) {
             throw new SlugPersistenceInvariantException('Transfer operation contains a non-transfer snapshot.');
         }
@@ -1367,25 +1397,26 @@ final class SlugLifecycleService
         array $sourceClaims,
         array $lockedClaimIds,
         array $candidates,
-        Slug $moved,
+        RegistryClaimRecord $moved,
         ?OperationReservation $reservation,
     ): array {
         $intent = $command->sourceReplacementIntent;
         if ($intent === null) {
             throw new SlugTransferReplacementConflictException('Current transfer requires a replacement intent.');
         }
+        $movedSlug = $moved->toDto($this->profiles)->slug;
         $selection = null;
         foreach ($candidates as $candidate) {
-            if ($candidate->value === $moved->value) {
+            $same = $this->claimInRecords($sourceClaims, $candidate, $lockedClaimIds);
+            if ($same?->id === $moved->id) {
                 if ($intent->mode->value === 'EXACT') {
                     throw new SlugTransferReplacementConflictException('Replacement cannot equal the transferred slug.');
                 }
                 continue;
             }
-            $same = $this->claimInRecords($sourceClaims, $candidate);
             if ($same !== null) {
                 if ($same->role === RegistryRoleEnum::HISTORICAL_CANONICAL) {
-                    $selection = ['kind' => 'RESTORED', 'slug' => $candidate, 'claim' => $same];
+                    $selection = ['kind' => 'RESTORED', 'slug' => $same->toDto($this->profiles)->slug, 'claim' => $same];
                     break;
                 }
                 if (in_array($same->role, [RegistryRoleEnum::ACTIVE_ALIAS, RegistryRoleEnum::RETIRED_ALIAS], true)) {
@@ -1422,7 +1453,7 @@ final class SlugLifecycleService
             $selection['kind'] === 'RESTORED' ? HistoryEventTypeEnum::RESTORED : HistoryEventTypeEnum::CHANGED,
             $command->source,
             $selection['slug'],
-            $moved,
+            $movedSlug,
             RegistryRoleEnum::CURRENT_CANONICAL,
             RegistryRoleEnum::CURRENT_CANONICAL,
             null,

@@ -9,6 +9,7 @@ use PDOException;
 use PDOStatement;
 use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Lifecycle\Exception\SlugUnsupportedDriverException;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\CapabilityGuardInterface;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Support\PdoRowHydrator;
@@ -17,7 +18,7 @@ use Throwable;
 /** Validates PDO driver, connection, and installed-schema capabilities. */
 final class PdoCapabilityGuard implements CapabilityGuardInterface
 {
-    private bool $installedSchemaVerified = false;
+    private ?string $verifiedDatabase = null;
     private bool $mutationCapabilitiesVerified = false;
     private bool $snapshotIsolationAvailable = true;
 
@@ -50,11 +51,18 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         $this->assertInstalledSchema(forMutation: true);
     }
 
-    /** Keeps read metadata validation independent from rollback-protected write probes. */
+    /** Keeps separate read and write verification for the database currently selected on the Host connection. */
     private function assertInstalledSchema(bool $forMutation): void
     {
-        if (! $this->installedSchemaVerified) {
-            $this->assertDriverAndConnectionAttributes();
+        $database = $this->assertDriverAndConnectionAttributes();
+        if ($this->verifiedDatabase !== $database) {
+            $this->verifiedDatabase = null;
+            $this->mutationCapabilitiesVerified = false;
+        }
+        if ($database === null) {
+            throw new SlugRuntimeCompatibilityException('The Host PDO session must select a database.');
+        }
+        if ($this->verifiedDatabase === null) {
             $this->assertExactStringSemantics();
             $this->assertDatetimePrecision();
             $this->assertPackageTables();
@@ -63,11 +71,17 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             } catch (Throwable $throwable) {
                 throw new SlugRuntimeCompatibilityException('The Registry lock projection is unavailable or incompatible.', 0, $throwable);
             }
-            $this->installedSchemaVerified = true;
+            $this->verifiedDatabase = $database;
         }
         if ($forMutation) {
             $this->assertCurrentLockingReads();
+            $this->assertForeignKeyChecksEnabled();
             if (! $this->mutationCapabilitiesVerified) {
+                try {
+                    (new PdoSchemaVerifier($this->pdo))->assertMutationStructure();
+                } catch (SlugPersistenceInvariantException $exception) {
+                    throw new SlugRuntimeCompatibilityException('The installed Slug write schema is incompatible.', 0, $exception);
+                }
                 $this->assertTransactionAndSavepointCapabilities();
                 $this->probeInstalledSchemaCapabilities();
                 $this->mutationCapabilitiesVerified = true;
@@ -87,8 +101,8 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         return is_string($driver) ? $driver : null;
     }
 
-    /** Verifies the required MySQL driver, PDO attributes, and connection charset. */
-    private function assertDriverAndConnectionAttributes(): void
+    /** Verifies driver and PDO session attributes and returns the selected database, if there is one. */
+    private function assertDriverAndConnectionAttributes(): ?string
     {
         $driver = $this->driverName();
         if ($driver !== 'mysql') {
@@ -107,21 +121,55 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             if ($emulatePrepares !== false && $emulatePrepares !== 0 && $emulatePrepares !== '0') {
                 throw new SlugRuntimeCompatibilityException('Native PDO prepares are required.');
             }
-            $this->assertConnectionCharset();
+            if ($this->pdo->getAttribute(PDO::ATTR_CASE) !== PDO::CASE_NATURAL) {
+                throw new SlugRuntimeCompatibilityException('PDO::ATTR_CASE must be PDO::CASE_NATURAL.');
+            }
         } catch (SlugRuntimeCompatibilityException $exception) {
             throw $exception;
         } catch (Throwable $throwable) {
             throw new SlugRuntimeCompatibilityException('Required PDO connection attributes are unavailable.', 0, $throwable);
         }
+
+        return $this->assertSessionSettings();
     }
 
-    /** Confirms the connection uses utf8mb4 for exact slug comparisons. */
-    private function assertConnectionCharset(): void
+    /** Checks session charsets and transaction mode and returns the selected database. */
+    private function assertSessionSettings(): ?string
     {
-        $statement = $this->pdo->query('SELECT @@character_set_connection');
-        if ($statement === false || $statement->fetchColumn() !== 'utf8mb4') {
-            throw new SlugRuntimeCompatibilityException('The injected PDO connection must use utf8mb4.');
+        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results, DATABASE(), @@SESSION.autocommit');
+        if ($statement === false) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session settings.');
         }
+        try {
+            $settings = $statement->fetch(PDO::FETCH_NUM);
+        } finally {
+            $statement->closeCursor();
+        }
+
+        if (! is_array($settings) || $settings[0] !== 'utf8mb4') {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_client must be utf8mb4.');
+        }
+        if ($settings[1] !== 'utf8mb4') {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_connection must be utf8mb4.');
+        }
+        if ($settings[2] !== 'utf8mb4' && $settings[2] !== null) {
+            throw new SlugRuntimeCompatibilityException('PDO character_set_results must be utf8mb4 or NULL.');
+        }
+
+        $autocommit = $settings[4];
+        if (! in_array($autocommit, [0, 1, '0', '1'], true)) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session autocommit.');
+        }
+        if (in_array($autocommit, [0, '0'], true) && ! $this->pdo->inTransaction()) {
+            throw new SlugRuntimeCompatibilityException('PDO autocommit must be enabled when the Host has no active transaction.');
+        }
+
+        $database = $settings[3];
+        if ($database !== null && ! is_string($database)) {
+            throw new SlugRuntimeCompatibilityException('Unable to identify the database selected by the Host PDO session.');
+        }
+
+        return $database;
     }
 
     /** Probes transactions and savepoints while cleaning up the probe state. */
@@ -198,6 +246,15 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         }
     }
 
+    /** Checks live FK enforcement even after a successful probe, leaving session settings to the Host. */
+    private function assertForeignKeyChecksEnabled(): void
+    {
+        $statement = $this->pdo->query('SELECT @@SESSION.foreign_key_checks');
+        if ($statement === false || self::fetchColumnAndClose($statement) !== '1') {
+            throw new SlugRuntimeCompatibilityException('Slug lifecycle writes require foreign_key_checks=ON on the Host PDO session.');
+        }
+    }
+
     /** Probes binary equality semantics required for case-sensitive slugs. */
     private function assertExactStringSemantics(): void
     {
@@ -248,7 +305,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         ];
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION FROM information_schema.TABLES "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' ORDER BY TABLE_NAME",
+            . "WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' ORDER BY TABLE_NAME",
         );
         if ($statement === false) {
             throw new SlugRuntimeCompatibilityException('Package schema metadata is unavailable.');
@@ -317,6 +374,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
 
             try {
                 $insert->execute(['namespace' => $namespace, 'created_at' => $now, 'updated_at' => $now]);
+                throw new SlugRuntimeCompatibilityException('Package unique-key evidence is unavailable.');
             } catch (PDOException $exception) {
                 if (! PdoDuplicateClassifier::matches($exception, 'uk_scope_identity')) {
                     throw new SlugRuntimeCompatibilityException('Package unique-key evidence is unavailable.', 0, $exception);
@@ -338,6 +396,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]);
+                throw new SlugRuntimeCompatibilityException('Package foreign-key enforcement is unavailable.');
             } catch (PDOException $exception) {
                 if (! self::errorNumberIs($exception, 1452) || ! self::errorMentions($exception, 'fk_binding_scope')) {
                     throw new SlugRuntimeCompatibilityException('Package foreign-key enforcement is unavailable.', 0, $exception);

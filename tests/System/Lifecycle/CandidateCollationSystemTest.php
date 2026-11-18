@@ -16,6 +16,9 @@ use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\AssignGeneratedCommand;
+use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
+use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
+use Maatify\Slug\Lifecycle\Command\ChangeGeneratedCommand;
 use Maatify\Slug\Lifecycle\Consumer\Enum\InputFormCanonicalityEnum;
 use Maatify\Slug\Lifecycle\Contract\ReservedSlugPolicyInterface;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
@@ -28,9 +31,47 @@ use Maatify\Slug\Lifecycle\Repository\Pdo\Scope\PdoScopeRepository;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
 use Maatify\Slug\Tests\Integration\Schema\MySqlIntegrationTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class CandidateCollationSystemTest extends MySqlIntegrationTestCase
 {
+    #[DataProvider('bufferingModes')]
+    public function testEquivalentOwnClaimsRemainNoOpsWithoutInvokingPolicy(bool $buffered): void
+    {
+        $this->pdo->setAttribute(\Pdo\Mysql::ATTR_USE_BUFFERED_QUERY, $buffered);
+        $owner = $this->identity('own-claim');
+        $policy = new RecordingCandidatePolicy('alpha');
+        $engine = $this->engine($policy);
+        $audit = new AuditContextDTO();
+        $engine->assignExact(new AssignExactCommand($owner, 'alpha ', null, $audit));
+        $engine->addAlias(new AddAliasCommand($owner, 'alias ', 1, $audit));
+        $policy->candidates = [];
+        $this->pdo->beginTransaction();
+        try {
+            foreach (['exact', 'generated', 'alias'] as $path) {
+                $result = match ($path) {
+                    'exact' => $engine->changeExact(new ChangeExactCommand($owner, 'alpha', 2, $audit)),
+                    'generated' => $engine->changeGenerated(new ChangeGeneratedCommand($owner, 'alpha', 2, $audit)),
+                    'alias' => $engine->addAlias(new AddAliasCommand($owner, 'alias', 2, $audit)),
+                };
+                self::assertSame('alpha ', $result->after->currentClaim?->slug->value);
+                self::assertSame(2, $result->revision);
+                self::assertSame([], $result->historyEvents);
+                self::assertSame([], $policy->candidates);
+                self::assertTrue($this->pdo->inTransaction());
+            }
+        } finally {
+            $this->pdo->rollBack();
+        }
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function bufferingModes(): iterable
+    {
+        yield 'buffered' => [true];
+        yield 'unbuffered' => [false];
+    }
+
     public function testExactAssignmentRejectsDatabaseEquivalentClaimBeforeInvokingPolicy(): void
     {
         $owner = $this->identity('existing');

@@ -95,13 +95,14 @@ final class ContractFixtures
         BindingStatusEnum $status = BindingStatusEnum::ACTIVE,
         int $revision = 1,
         ?RegistryRoleEnum $role = RegistryRoleEnum::CURRENT_CANONICAL,
+        ?int $historySequence = null,
     ): BindingDTO {
         $slug = self::slug($slugValue);
         $claim = $status === BindingStatusEnum::RELEASED || $role === null ? null : self::claim($identity, $slug, $claimId, $role);
         return new BindingDTO(
             $id,
             $identity,
-            new BindingStateDTO($status, $status === BindingStatusEnum::RELEASED ? null : $slug, $revision, $revision),
+            new BindingStateDTO($status, $status === BindingStatusEnum::RELEASED ? null : $slug, $revision, $historySequence ?? $revision),
             $claim,
             self::date(),
             self::date(),
@@ -120,6 +121,7 @@ final class ContractFixtures
         ?Slug $previousSlug = null,
         ?RegistryRoleEnum $previousRole = null,
         ?DateTimeImmutable $originalOccurredAt = null,
+        ?BindingIdentityDTO $counterparty = null,
     ): HistoryEventDTO {
         return new HistoryEventDTO(
             $id,
@@ -132,8 +134,8 @@ final class ContractFixtures
             $previousSlug,
             $role,
             $previousRole,
-            null,
-            null,
+            $counterparty?->scopeProfile->scope,
+            $counterparty?->entity,
             null,
             null,
             null,
@@ -144,10 +146,10 @@ final class ContractFixtures
     }
 
     /** Builds an ASSIGN_EXACT result with one current claim and one history event. */
-    public static function mutation(): SlugMutationResultDTO
+    public static function mutation(int $bindingId = 100): SlugMutationResultDTO
     {
         $identity = self::identity(1);
-        $after = self::binding($identity, 100);
+        $after = self::binding($identity, $bindingId);
         $slug = self::slug('hello');
         $claim = $after->currentClaim;
         if ($claim === null) {
@@ -164,25 +166,25 @@ final class ContractFixtures
             $slug,
             ChangeTypeEnum::ASSIGNED,
             1,
-            [self::history(100, 500, 1, $identity, HistoryEventTypeEnum::ASSIGNED, $slug, RegistryRoleEnum::CURRENT_CANONICAL)],
+            [self::history($bindingId, 500, 1, $identity, HistoryEventTypeEnum::ASSIGNED, $slug, RegistryRoleEnum::CURRENT_CANONICAL)],
         );
     }
 
     /** Builds a successful MOVE result with source deactivation and target activation. */
-    public static function transition(): ScopeTransitionResultDTO
+    public static function transition(int $sourceId = 100, int $targetId = 300): ScopeTransitionResultDTO
     {
         $sourceIdentity = self::identity(1, 'catalog');
         $targetIdentity = self::identity(1, 'store');
-        $sourceBefore = self::binding($sourceIdentity, 100, 'hello', 200, BindingStatusEnum::ACTIVE, 1);
-        $sourceAfter = self::binding($sourceIdentity, 100, 'hello', 200, BindingStatusEnum::INACTIVE, 2);
-        $targetAfter = self::binding($targetIdentity, 300, 'hello', 201, BindingStatusEnum::ACTIVE, 1);
+        $sourceBefore = self::binding($sourceIdentity, $sourceId, 'hello', 200, BindingStatusEnum::ACTIVE, 1);
+        $sourceAfter = self::binding($sourceIdentity, $sourceId, 'hello', 200, BindingStatusEnum::INACTIVE, 2);
+        $targetAfter = self::binding($targetIdentity, $targetId, 'hello', 201, BindingStatusEnum::ACTIVE, 1);
         $sourceClaim = $sourceAfter->currentClaim;
         $targetClaim = $targetAfter->currentClaim;
         if ($sourceClaim === null || $targetClaim === null) {
             throw new \LogicException('MOVE transition bindings must have current claims.');
         }
-        $sourceEvent = self::history(100, 501, 2, $sourceIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL);
-        $targetEvent = self::history(300, 502, 1, $targetIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL);
+        $sourceEvent = self::history($sourceId, 501, 2, $sourceIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $targetIdentity);
+        $targetEvent = self::history($targetId, 502, 1, $targetIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $sourceIdentity);
         return new ScopeTransitionResultDTO(
             OperationTypeEnum::TRANSITION_SCOPE,
             null,
@@ -204,19 +206,19 @@ final class ContractFixtures
     }
 
     /** Builds a successful current-claim transfer with a source replacement claim. */
-    public static function transfer(): AtomicTransferResultDTO
+    public static function transfer(int $sourceId = 100, int $targetId = 300): AtomicTransferResultDTO
     {
         $sourceIdentity = self::identity(1);
         $targetIdentity = self::identity(2);
-        $sourceBefore = self::binding($sourceIdentity, 100, 'hello', 200, BindingStatusEnum::ACTIVE, 1);
-        $sourceAfter = self::binding($sourceIdentity, 100, 'replacement', 202, BindingStatusEnum::ACTIVE, 2);
-        $targetBefore = self::binding($targetIdentity, 300, 'hello', 201, BindingStatusEnum::RELEASED, 0);
-        $targetAfter = self::binding($targetIdentity, 300, 'hello', 201, BindingStatusEnum::ACTIVE, 1);
+        $sourceBefore = self::binding($sourceIdentity, $sourceId, 'hello', 200, BindingStatusEnum::ACTIVE, 1);
+        $sourceAfter = self::binding($sourceIdentity, $sourceId, 'replacement', 202, BindingStatusEnum::ACTIVE, 2, historySequence: 3);
+        $targetBefore = self::binding($targetIdentity, $targetId, 'hello', 201, BindingStatusEnum::RELEASED, 0);
+        $targetAfter = self::binding($targetIdentity, $targetId, 'hello', 201, BindingStatusEnum::ACTIVE, 1);
         $hello = self::slug('hello');
         $replacement = self::slug('replacement');
-        $sourceReplacementEvent = self::history(100, 506, 2, $sourceIdentity, HistoryEventTypeEnum::CHANGED, $replacement, RegistryRoleEnum::CURRENT_CANONICAL, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
-        $sourceTransferEvent = self::history(100, 504, 3, $sourceIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
-        $targetTransferEvent = self::history(300, 505, 1, $targetIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
+        $sourceReplacementEvent = self::history($sourceId, 506, 2, $sourceIdentity, HistoryEventTypeEnum::CHANGED, $replacement, RegistryRoleEnum::CURRENT_CANONICAL, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
+        $sourceTransferEvent = self::history($sourceId, 504, 3, $sourceIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $hello, RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $targetIdentity);
+        $targetTransferEvent = self::history($targetId, 505, 1, $targetIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $hello, RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $sourceIdentity);
         $transferredClaim = $targetAfter->currentClaim;
         $replacementClaim = $sourceAfter->currentClaim;
         if ($transferredClaim === null || $replacementClaim === null) {
@@ -248,11 +250,39 @@ final class ContractFixtures
         );
     }
 
+    /** Builds a transfer that leaves both current canonical claims in place. */
+    public static function nonCurrentTransfer(RegistryRoleEnum $role): AtomicTransferResultDTO
+    {
+        $source = self::identity(10, 'transfer-unit');
+        $target = self::identity(20, 'transfer-unit');
+        $sourceBefore = self::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 1);
+        $sourceAfter = self::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 2);
+        $targetBefore = self::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 1);
+        $targetAfter = self::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 2);
+        $moved = self::slug('moved');
+        $transferred = self::claim($target, $moved, 999, $role);
+        $sourceEvent = self::history(100, 501, 2, $source, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $moved, $role, counterparty: $target);
+        $targetEvent = self::history(300, 502, 2, $target, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $moved, $role, counterparty: $source);
+
+        return new AtomicTransferResultDTO(
+            OperationTypeEnum::ATOMIC_TRANSFER,
+            null,
+            false,
+            new BindingStateResultDTO($sourceBefore, $sourceAfter, true, 2, [$sourceEvent]),
+            new BindingStateResultDTO($targetBefore, $targetAfter, true, 2, [$targetEvent]),
+            $transferred,
+            null,
+            2,
+            2,
+            [$sourceEvent, $targetEvent],
+        );
+    }
+
     /** Builds a successful current-claim adoption result with its adoption history event. */
-    public static function adoption(): AdoptionResultDTO
+    public static function adoption(int $bindingId = 400): AdoptionResultDTO
     {
         $identity = self::identity(4);
-        $after = self::binding($identity, 400, 'adopted', 401);
+        $after = self::binding($identity, $bindingId, 'adopted', 401);
         $slug = self::slug('adopted');
         $adoptedClaim = $after->currentClaim;
         if ($adoptedClaim === null) {
@@ -265,7 +295,7 @@ final class ContractFixtures
             null,
             $after,
             $adoptedClaim,
-            self::history(400, 600, 1, $identity, HistoryEventTypeEnum::ADOPTED_CURRENT, $slug, RegistryRoleEnum::CURRENT_CANONICAL, null, null, self::date()),
+            self::history($bindingId, 600, 1, $identity, HistoryEventTypeEnum::ADOPTED_CURRENT, $slug, RegistryRoleEnum::CURRENT_CANONICAL, null, null, self::date()),
         );
     }
 }

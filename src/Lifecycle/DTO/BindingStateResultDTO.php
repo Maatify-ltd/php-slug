@@ -5,13 +5,17 @@ declare(strict_types=1);
 namespace Maatify\Slug\Lifecycle\DTO;
 
 use JsonSerializable;
-use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
-use Maatify\Slug\Lifecycle\DTO\BindingDTO;
+use Maatify\Slug\Exception\SlugInvalidArgumentException;
 
 /** Immutable mutation result containing before/after state and ordered history events. */
 final readonly class BindingStateResultDTO implements JsonSerializable
 {
-    /** @param list<HistoryEventDTO> $historyEvents */
+    /**
+     * A mutated participant advances exactly one revision and records History.
+     * An unchanged participant retains its complete before state and records no History.
+     *
+     * @param list<HistoryEventDTO> $historyEvents
+     */
     public function __construct(
         public ?BindingDTO $before,
         public BindingDTO $after,
@@ -20,28 +24,25 @@ final readonly class BindingStateResultDTO implements JsonSerializable
         public array $historyEvents,
     ) {
         if ($revision < 0) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('revision must be non-negative.');
+            throw new SlugInvalidArgumentException('revision must be non-negative.');
         }
-        self::orderedHistory($historyEvents, 'historyEvents');
-    }
+        if ($revision !== $after->state->revision) {
+            throw new SlugInvalidArgumentException('Binding result revision must match the after state.');
+        }
+        $after->assertResultEvidence($before, $historyEvents);
+        if ($mutated) {
+            if ($historyEvents === [] || $revision - ($before?->state->revision ?? 0) !== 1) {
+                throw new SlugInvalidArgumentException('A mutated participant requires History and one revision increment.');
+            }
+            return;
+        }
 
-    /** @param array<int, mixed> $items */
-    private static function orderedHistory(array $items, string $field): void
-    {
-        if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
-        }
-        $previousSequence = null;
-        $previousId = null;
-        foreach ($items as $item) {
-            if (! is_object($item) || ! property_exists($item, 'sequenceNo') || ! property_exists($item, 'id') || ! is_int($item->sequenceNo) || ! is_int($item->id)) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
-            }
-            if ($previousSequence !== null && ($item->sequenceNo < $previousSequence || ($item->sequenceNo === $previousSequence && $item->id <= $previousId))) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be ordered by sequence and id.', $field));
-            }
-            $previousSequence = $item->sequenceNo;
-            $previousId = $item->id;
+        $flags = JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR;
+        if (
+            $before === null || $historyEvents !== []
+            || ($before !== $after && json_encode($before, $flags) !== json_encode($after, $flags))
+        ) {
+            throw new SlugInvalidArgumentException('An unchanged participant requires identical before and after states and no History.');
         }
     }
 

@@ -7,12 +7,13 @@ namespace Maatify\Slug\Lifecycle\DTO;
 use DateTimeImmutable;
 use JsonSerializable;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Exception\SlugInvalidArgumentException;
 
 /** Immutable binding snapshot with identity, lifecycle state, and current claim. */
 final readonly class BindingDTO implements JsonSerializable
 {
-    /** Enforces consistency between binding status, current claim, and current slug. */
+    /** Requires a live Binding's current canonical claim to match its identity and current slug. */
     public function __construct(
         public int $id,
         public BindingIdentityDTO $identity,
@@ -32,6 +33,48 @@ final readonly class BindingDTO implements JsonSerializable
         }
         if ($currentClaim !== null && $currentClaim->slug->value !== $state->currentSlug?->value) {
             throw new SlugInvalidArgumentException('Binding current claim must match current slug.');
+        }
+        if ($currentClaim !== null && ($currentClaim->role !== RegistryRoleEnum::CURRENT_CANONICAL || ! $identity->equals($currentClaim->binding))) {
+            throw new SlugInvalidArgumentException('Binding current claim must be canonical and owned by that Binding.');
+        }
+    }
+
+    /**
+     * Validates the earlier state and the newly recorded positions for this Binding.
+     *
+     * @param array<int, mixed> $historyEvents
+     * @param non-negative-int $trailingEvents Events carried only by the enclosing result.
+     * @internal
+     */
+    public function assertResultEvidence(?self $before, array $historyEvents, int $trailingEvents = 0): void
+    {
+        if ($before !== null && ($before->id !== $this->id || ! $this->identity->equals($before->identity))) {
+            throw new SlugInvalidArgumentException('Result before and after states must refer to the same Binding.');
+        }
+        if (! array_is_list($historyEvents)) {
+            throw new SlugInvalidArgumentException('historyEvents must be a list.');
+        }
+        $previousSequence = $before?->state->historySequence ?? 0;
+        if ($this->state->historySequence - $previousSequence - $trailingEvents !== count($historyEvents)) {
+            throw new SlugInvalidArgumentException('History event count must match the recorded Binding sequence range.');
+        }
+        $scope = $this->identity->scopeProfile->scope->jsonSerialize();
+        $entity = $this->identity->entity->jsonSerialize();
+        foreach ($historyEvents as $event) {
+            if (! $event instanceof HistoryEventDTO) {
+                throw new SlugInvalidArgumentException('historyEvents contains an invalid history event.');
+            }
+            if (
+                $event->bindingId !== $this->id
+                || $event->scopeSnapshot->jsonSerialize() !== $scope
+                || $event->entitySnapshot->jsonSerialize() !== $entity
+            ) {
+                throw new SlugInvalidArgumentException('History events must refer to the result Binding.');
+            }
+            $previousSequence++;
+            if ($event->sequenceNo !== $previousSequence) {
+                throw new SlugInvalidArgumentException('History events must cover consecutive Binding sequence positions.');
+            }
         }
     }
 

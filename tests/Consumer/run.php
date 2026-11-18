@@ -135,7 +135,7 @@ function dropPackageSchema(PDO $pdo): void
 /** Confirms consumer cleanup removed every package-owned table. */
 function assertNoPackageTables(PDO $pdo): void
 {
-    $statement = $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%'");
+    $statement = $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'");
     if ($statement === false || (int) $statement->fetchColumn() !== 0) {
         throw new RuntimeException('Consumer Harness cleanup left package tables behind.');
     }
@@ -157,7 +157,7 @@ function writeConsumerComposerJson(string $consumerRoot, string $packageRoot): v
             ],
         ]],
         'require' => [
-            'maatify/php-persistence' => '1.0.0-rc.1@RC',
+            'maatify/php-persistence' => '1.0.0-rc.2@RC',
             'maatify/php-slug' => 'dev-slug-consumer@dev',
         ],
         'minimum-stability' => 'stable',
@@ -183,20 +183,22 @@ function assertPersistenceInstallation(string $consumerRoot): void
     }
     $packages = array_column($installed['packages'], null, 'name');
     $persistence = $packages['maatify/php-persistence'] ?? null;
-    $reference = '34c3b874525d36ae064c162cdd553bc75d18772b';
+    $reference = '71dc61548e48fd053376db69149a00bc87069b70';
     if (
         isset($packages['maatify/persistence'])
         || ! is_array($persistence)
         || ! is_array($persistence['source'] ?? null)
         || ! is_array($persistence['dist'] ?? null)
-        || ($persistence['version_normalized'] ?? null) !== '1.0.0.0-RC1'
+        || ($persistence['version_normalized'] ?? null) !== '1.0.0.0-RC2'
         || ($persistence['source']['reference'] ?? null) !== $reference
         || ($persistence['dist']['reference'] ?? null) !== $reference
+        || ($persistence['dist']['type'] ?? null) !== 'zip'
+        || ($persistence['dist']['url'] ?? null) !== 'https://api.github.com/repos/Maatify-ltd/php-persistence/zipball/' . $reference
         || ($persistence['installation-source'] ?? null) !== 'dist'
     ) {
         throw new RuntimeException('The consumer must install the pinned php-persistence RC from dist without the legacy package.');
     }
-    echo "CONSUMER_PERSISTENCE_DIST=1.0.0-rc.1@34c3b874 PASS\n";
+    echo "CONSUMER_PERSISTENCE_DIST=1.0.0-rc.2@71dc615 PASS\n";
 }
 
 /** Writes the standalone consumer workflow executed against the installed package. */

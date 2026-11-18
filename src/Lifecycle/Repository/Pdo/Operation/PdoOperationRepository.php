@@ -79,7 +79,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
                     $this->assertReservationMatches($operation, $participants, $operationKey, $operationType, $requestFingerprint, $resultType, $resultSchemaVersion);
                     $this->assertCommittedReplayEvidence($operation);
 
-                    return new OperationReservation($operation, false);
+                    return new OperationReservation($operation, false, $participants);
                 }
             }
 
@@ -112,14 +112,14 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
                 throw new SlugPersistenceInvariantException('Operation disappeared after reservation.');
             }
 
-            return new OperationReservation($operation, true);
+            return new OperationReservation($operation, true, $participants);
         });
 
         if ($result instanceof OperationRecord) {
             $this->assertReservationMatches($result, $participants, $operationKey, $operationType, $requestFingerprint, $resultType, $resultSchemaVersion);
             $this->assertCommittedReplayEvidence($result);
 
-            return new OperationReservation($result, false);
+            return new OperationReservation($result, false, $participants);
         }
         return $result;
     }
@@ -194,7 +194,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugPersistenceInvariantException('Only a complete COMMITTED operation can be replayed.');
         }
 
-        return ResultSnapshotStorage::decodeOperation($operation, $profiles);
+        return ResultSnapshotStorage::decodeOperation($operation, $profiles, $this->participantsForOperation($operation->id, false));
     }
 
     /** @param list<OperationParticipant> $participants */
@@ -248,7 +248,7 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
             throw new SlugIdempotencyConflictException('Idempotency evidence does not match the requested operation.');
         }
 
-        $existingParticipants = $this->participantsForOperation($operation->id);
+        $existingParticipants = $this->participantsForOperation($operation->id, true);
         $expected = array_map(static fn(OperationParticipant $participant): string => $participant->role . ':' . $participant->bindingId . ':' . $participant->idempotencyKey, $participants);
         $actual = array_map(static fn(OperationParticipant $participant): string => $participant->role . ':' . $participant->bindingId . ':' . $participant->idempotencyKey, $existingParticipants);
         sort($expected);
@@ -407,15 +407,17 @@ final readonly class PdoOperationRepository implements OperationPersistenceInter
     }
 
     /** @return list<OperationParticipant> */
-    private function participantsForOperation(int $operationId): array
+    private function participantsForOperation(int $operationId, bool $forShare): array
     {
-        $statement = $this->pdo->prepare('SELECT binding_id, idempotency_key, participant_role FROM maa_slug_operation_bindings WHERE operation_id = :operation_id ORDER BY participant_role ASC, binding_id ASC LOCK IN SHARE MODE');
+        $sql = 'SELECT binding_id, idempotency_key, participant_role FROM maa_slug_operation_bindings WHERE operation_id = :operation_id ORDER BY participant_role ASC, binding_id ASC';
+        $statement = $this->pdo->prepare($sql . ($forShare ? ' LOCK IN SHARE MODE' : ''));
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to prepare the operation participant read.');
         }
         $statement->execute(['operation_id' => $operationId]);
         /** @var list<array<string, mixed>> $rawRows */
         $rawRows = $statement->fetchAll(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
         $rows = PdoRowHydrator::many($rawRows);
 
         return array_map(static fn(array $row): OperationParticipant => new OperationParticipant(

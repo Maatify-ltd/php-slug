@@ -1,0 +1,847 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Maatify\Slug\Tests\System\Resolution;
+
+use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
+use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
+use Maatify\Slug\Canonicalization\Factory\SlugProfileRegistryFactory;
+use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
+use Closure;
+use Maatify\Slug\Facade\SlugEngine;
+use Maatify\Slug\Factory\SlugEngineFactory;
+use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
+use Maatify\Slug\Lifecycle\Command\AdoptAliasCommand;
+use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
+use Maatify\Slug\Lifecycle\Command\AtomicTransferCommand;
+use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
+use Maatify\Slug\Lifecycle\Command\PromoteAliasToCurrentCommand;
+use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
+use Maatify\Slug\Lifecycle\Command\ReleaseClaimCommand;
+use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
+use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
+use Maatify\Slug\Lifecycle\DTO\AdoptionResultDTO;
+use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
+use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
+use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeTransitionClaimIntentDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeTransitionResultDTO;
+use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
+use Maatify\Slug\Lifecycle\Enum\ClaimIntentModeEnum;
+use Maatify\Slug\Lifecycle\Enum\ScopeTransitionModeEnum;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
+use Maatify\Slug\Lifecycle\Management\Criteria\BindingSearchCriteria;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
+use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
+use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
+use Maatify\Slug\Tests\Integration\Schema\MySqlIntegrationTestCase;
+use Maatify\Slug\Tests\Unit\Allocation\TestReservedSlugPolicy;
+use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
+
+/** Exercises the persisted contract from the public facade with deliberately incompatible fixtures. */
+final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
+{
+    #[DataProvider('cacheStates')]
+    public function testClientCharsetIsRejectedBeforeWritingAndHostCanRollBack(bool $warm): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('café');
+        if ($warm) {
+            $engine->ensureScope($identity->scopeProfile);
+        }
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('SET SESSION character_set_client = latin1');
+            try {
+                $engine->assignExact(new AssignExactCommand($identity, 'hello-entity', null, new AuditContextDTO()));
+                self::fail('An incompatible client charset was admitted.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('character_set_client', $exception->getMessage());
+                self::assertSame('latin1', $this->scalar('SELECT @@SESSION.character_set_client'));
+                $this->assertHostWorkIsIntact();
+                self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM maa_slug_bindings'));
+            }
+        } finally {
+            $this->pdo->exec('SET SESSION character_set_client = utf8mb4');
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+        $created = $engine->assignExact(new AssignExactCommand($identity, 'hello-entity', null, new AuditContextDTO()));
+        self::assertSame('café', $created->after->identity->entity->entityKey);
+        self::assertSame('hello-entity', $engine->getCurrent(new CurrentSlugCriteria($identity))?->claim->slug->value);
+    }
+
+    #[DataProvider('cacheStates')]
+    public function testResultsCharsetIsRejectedOnReadWithoutChangingHostSession(bool $warm): void
+    {
+        $identity = $this->identity('reader');
+        $criteria = new CurrentSlugCriteria($identity);
+        $this->engine()->assignExact(new AssignExactCommand($identity, 'مرحبا', null, new AuditContextDTO()));
+        $reader = $this->engine();
+        if ($warm) {
+            self::assertSame('مرحبا', $reader->getCurrent($criteria)?->claim->slug->value);
+        }
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('SET SESSION character_set_results = latin1');
+            try {
+                $reader->getCurrent($criteria);
+                self::fail('An incompatible results charset was admitted.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('character_set_results', $exception->getMessage());
+                self::assertSame('latin1', $this->scalar('SELECT @@SESSION.character_set_results'));
+                $this->assertHostWorkIsIntact();
+            }
+            $this->pdo->exec('SET SESSION character_set_results = NULL');
+            self::assertSame('مرحبا', $reader->getCurrent($criteria)?->claim->slug->value);
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function cacheStates(): iterable
+    {
+        yield 'cold' => [false];
+        yield 'warm' => [true];
+    }
+
+    #[DataProvider('cacheStates')]
+    public function testDisabledAutocommitRequiresAnActiveHostTransaction(bool $warm): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('autocommit');
+        $command = new AssignExactCommand($identity, 'hello', null, new AuditContextDTO());
+        if ($warm) {
+            $engine->ensureScope($identity->scopeProfile);
+        }
+        $this->pdo->exec('CREATE TEMPORARY TABLE contract_host_marker (id INT PRIMARY KEY) ENGINE=InnoDB');
+        $this->pdo->exec('SET SESSION autocommit = 0');
+        try {
+            self::assertFalse($this->pdo->inTransaction());
+            try {
+                $engine->assignExact($command);
+                self::fail('The mutation ran with autocommit disabled and no active Host transaction.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('autocommit', $exception->getMessage());
+                self::assertFalse($this->pdo->inTransaction());
+            }
+            self::assertTrue($this->pdo->beginTransaction());
+            $this->pdo->exec('INSERT INTO contract_host_marker VALUES (1)');
+            self::assertSame('hello', $engine->assignExact($command)->currentSlug?->value);
+            $this->assertHostWorkIsIntact();
+            $this->pdo->rollBack();
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $this->pdo->exec('SET SESSION autocommit = 1');
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+        self::assertNull($engine->getCurrent(new CurrentSlugCriteria($identity)));
+    }
+
+    #[DataProvider('nonNaturalCaseModes')]
+    public function testNonNaturalColumnCaseFailsWithAnActionableCompatibilityError(int $mode): void
+    {
+        $this->pdo->setAttribute(PDO::ATTR_CASE, $mode);
+        $this->expectException(SlugRuntimeCompatibilityException::class);
+        $this->expectExceptionMessage('PDO::CASE_NATURAL');
+        $this->engine()->getCurrent(new CurrentSlugCriteria($this->identity('reader')));
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function nonNaturalCaseModes(): iterable
+    {
+        yield 'lower' => [PDO::CASE_LOWER];
+        yield 'upper' => [PDO::CASE_UPPER];
+    }
+
+    #[DataProvider('databaseSwitchPaths')]
+    public function testWarmEngineChecksTheSelectedDatabaseWithoutTakingOverHostWork(bool $write): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('existing');
+        $criteria = new CurrentSlugCriteria($identity);
+        $engine->assignExact(new AssignExactCommand($identity, 'hello', null, new AuditContextDTO()));
+        $original = $this->scalar('SELECT DATABASE()');
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('USE information_schema');
+            try {
+                if ($write) {
+                    $engine->ensureScope($identity->scopeProfile);
+                } else {
+                    $engine->getCurrent($criteria);
+                }
+                self::fail('The engine reused schema verification from a different database.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('table set', $exception->getMessage());
+                self::assertSame('information_schema', $this->scalar('SELECT DATABASE()'));
+            } finally {
+                $this->pdo->exec(sprintf('USE `%s`', str_replace('`', '``', $original)));
+            }
+            $this->assertHostWorkIsIntact();
+            self::assertSame('hello', $engine->getCurrent($criteria)?->claim->slug->value);
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function databaseSwitchPaths(): iterable
+    {
+        yield 'read' => [false];
+        yield 'write' => [true];
+    }
+
+    /** @param list<string> $ddl */
+    #[DataProvider('schemaChanges')]
+    public function testSchemaVerifierAndFirstWriteRejectPhysicalDrift(array $ddl, string $message): void
+    {
+        foreach ($ddl as $statement) {
+            $this->pdo->exec($statement);
+        }
+        try {
+            (new PdoSchemaVerifier($this->pdo))->assertInstalled();
+            self::fail('Schema verification admitted an incompatible definition.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString($message, $exception->getMessage());
+        }
+
+        $this->beginHostWork();
+        try {
+            $this->engine()->assignExact(new AssignExactCommand($this->identity('writer'), 'hello', null, new AuditContextDTO(idempotencyKey: 'physical-drift')));
+            self::fail('The first write admitted an incompatible schema.');
+        } catch (SlugRuntimeCompatibilityException $exception) {
+            $cause = $exception->getPrevious();
+            self::assertInstanceOf(SlugPersistenceInvariantException::class, $cause);
+            self::assertStringContainsString($message, $cause->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM maa_slug_bindings'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+    }
+
+    /** @return iterable<string, array{list<string>, string}> */
+    public static function schemaChanges(): iterable
+    {
+        yield 'non-unique Registry index' => [
+            ['ALTER TABLE maa_slug_registry DROP INDEX uk_registry_scope_slug, ADD INDEX uk_registry_scope_slug (scope_id, slug)'],
+            'uk_registry_scope_slug',
+        ];
+        yield 'wrong Registry index column order' => [
+            ['ALTER TABLE maa_slug_registry DROP INDEX uk_registry_scope_slug, ADD UNIQUE INDEX uk_registry_scope_slug (slug, scope_id)'],
+            'uk_registry_scope_slug',
+        ];
+        $changeForeignKey = [
+            'ALTER TABLE maa_slug_history DROP FOREIGN KEY fk_history_operation',
+            'ALTER TABLE maa_slug_history ADD CONSTRAINT fk_history_operation FOREIGN KEY (operation_id) REFERENCES maa_slug_operations (id) ON DELETE CASCADE',
+        ];
+        yield 'foreign key with an incompatible delete rule' => [$changeForeignKey, 'fk_history_operation'];
+        yield 'missing required result snapshot' => [
+            ['ALTER TABLE maa_slug_operations DROP COLUMN result_snapshot'],
+            'result_snapshot',
+        ];
+        yield 'unexpected column without an insert default' => [
+            ["ALTER TABLE maa_slug_operations ADD COLUMN required_marker INT NOT NULL COMMENT 'Required fixture value without a default'"],
+            'required_marker',
+        ];
+        yield 'generated column' => [
+            ["ALTER TABLE maa_slug_operations ADD COLUMN generated_marker INT GENERATED ALWAYS AS (6 + 1) STORED COMMENT 'Generated fixture value'"],
+            'generated columns',
+        ];
+    }
+
+    #[DataProvider('columnDefaults')]
+    public function testExtraColumnsWithOptionalInsertValuesRemainCompatible(string $default): void
+    {
+        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN optional_marker INT NULL COMMENT 'Optional fixture value'");
+        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN defaulted_marker INT NOT NULL DEFAULT $default COMMENT 'Defaulted fixture value'");
+        (new PdoSchemaVerifier($this->pdo))->assertInstalled();
+        $command = new AssignExactCommand($this->identity('compatible'), 'hello', null, new AuditContextDTO(idempotencyKey: 'extra-columns'));
+
+        self::assertSame('hello', $this->engine()->assignExact($command)->currentSlug?->value);
+        self::assertSame('7', $this->scalar('SELECT defaulted_marker FROM maa_slug_operations'));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function columnDefaults(): iterable
+    {
+        yield 'literal' => ['7'];
+        yield 'expression' => ['(6 + 1)'];
+    }
+
+    public function testSearchBindingsRejectsCurrentClaimOwnedByAnotherBinding(): void
+    {
+        $engine = $this->engine();
+        $first = $this->identity('one');
+        $firstResult = $engine->assignExact(new AssignExactCommand($first, 'first-book', null, new AuditContextDTO()));
+        $secondResult = $engine->assignExact(new AssignExactCommand($this->identity('two'), 'second-book', null, new AuditContextDTO()));
+        self::assertNotNull($secondResult->after->currentClaim);
+        $update = $this->pdo->prepare('UPDATE maa_slug_bindings SET current_registry_id = :claim WHERE id = :binding');
+        $update->execute(['claim' => $secondResult->after->currentClaim->id, 'binding' => $firstResult->after->id]);
+        $this->beginHostWork();
+        try {
+            $criteria = new BindingSearchCriteria($first->scopeProfile, new PageRequest(1, 20));
+            $engine->searchBindings($criteria);
+            self::fail('Management returned a foreign current claim.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('current pointer', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+        } finally {
+            $this->pdo->rollBack();
+        }
+    }
+
+    #[DataProvider('invalidBindingStates')]
+    public function testSearchBindingsRejectsInvalidRegistryState(string $change, string $message): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('search-owner');
+        $binding = $engine->assignExact(new AssignExactCommand($identity, 'first-book', null, new AuditContextDTO()))->after;
+        $criteria = new BindingSearchCriteria($identity->scopeProfile, new PageRequest(1, 20));
+        self::assertCount(1, $engine->searchBindings($criteria)->data);
+        $this->beginHostWork();
+        try {
+            $update = $this->pdo->prepare($change);
+            $update->execute(['binding' => $binding->id]);
+            try {
+                $engine->searchBindings($criteria);
+                self::fail('Management returned a Binding with inconsistent Registry state.');
+            } catch (SlugPersistenceInvariantException $exception) {
+                self::assertStringContainsString($message, $exception->getMessage());
+                $this->assertHostWorkIsIntact();
+            }
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('first-book', $engine->searchBindings($criteria)->data[0]->currentClaim?->slug->value);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function invalidBindingStates(): iterable
+    {
+        yield 'released with live claims' => [
+            "UPDATE maa_slug_bindings SET status = 'RELEASED', current_registry_id = NULL WHERE id = :binding",
+            'Released Binding',
+        ];
+        yield 'active with two current claims' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'CURRENT_CANONICAL', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'current pointer',
+        ];
+        yield 'active with a non-current claim of unknown role' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'UNRECOGNIZED', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'claim role',
+        ];
+        yield 'active with a padded non-current role' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'ACTIVE_ALIAS ', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'claim role',
+        ];
+    }
+
+    public function testSearchBindingsRejectsReleasedOwnershipInAnotherScope(): void
+    {
+        $engine = $this->engine();
+        $owner = $this->identity('released-owner');
+        $engine->assignExact(new AssignExactCommand($owner, 'first-book', null, new AuditContextDTO()));
+        $released = $engine->releaseAllOwnership(new ReleaseAllOwnershipCommand($owner, 1, new AuditContextDTO()));
+        $otherScope = $engine->ensureScope(new ScopeProfileRequestDTO(new SlugScope('other-scope', null, null), new SlugProfileKey('unicode-v1')));
+        $criteria = new BindingSearchCriteria($owner->scopeProfile, new PageRequest(1, 20));
+
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('SET SESSION foreign_key_checks = 0');
+            try {
+                $insert = $this->pdo->prepare(
+                    'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+                    . "VALUES (:scope, :binding, 'foreign-claim', 'ACTIVE_ALIAS', NOW(6), NOW(6))",
+                );
+                $insert->execute(['scope' => $otherScope->id, 'binding' => $released->after->id]);
+            } finally {
+                $this->pdo->exec('SET SESSION foreign_key_checks = 1');
+            }
+
+            try {
+                $engine->searchBindings($criteria);
+                self::fail('Management returned a released Binding that still owns a claim in another Scope.');
+            } catch (SlugPersistenceInvariantException $exception) {
+                self::assertStringContainsString('Released Binding', $exception->getMessage());
+                $this->assertHostWorkIsIntact();
+            }
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertCount(1, $engine->searchBindings($criteria)->data);
+        self::assertSame('0', $this->scalar("SELECT COUNT(*) FROM maa_slug_registry WHERE slug = 'foreign-claim'"));
+    }
+
+    #[DataProvider('inconsistentReplayFields')]
+    public function testReplayRejectsAnInconsistentMutationSnapshot(string $field): void
+    {
+        $engine = $this->engine();
+        $command = new AssignExactCommand($this->identity('replay-owner'), 'replay-book', null, new AuditContextDTO(idempotencyKey: 'binding-owner'));
+        $normal = $engine->assignExact($command);
+        self::assertTrue($engine->assignExact($command)->replayed);
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $normal->operationKey]);
+        $snapshotJson = $read->fetchColumn();
+        self::assertIsString($snapshotJson);
+        /** @var array{result: array{revision: int, current_slug: string, change_type: string, affected_claims: list<array{id: int, slug: string}>, history_events: list<array{event_type: string}>, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
+        $snapshot = json_decode($snapshotJson, true, flags: JSON_THROW_ON_ERROR);
+        match ($field) {
+            'owner' => $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner',
+            'revision' => $snapshot['result']['revision'] += 10,
+            'slug' => $snapshot['result']['current_slug'] = 'another-book',
+            'history' => $snapshot['result']['history_events'] = [],
+            'change-type' => $snapshot['result']['change_type'] = 'RELEASED_ALL',
+            'history-type' => $snapshot['result']['history_events'][0]['event_type'] = 'ALIAS_ADDED',
+            'empty-claims' => $snapshot['result']['affected_claims'] = [],
+            'different-current-claim' => $snapshot['result']['affected_claims'][0]['slug'] = 'unrelated-slug',
+            'extra-current-claim' => $snapshot['result']['affected_claims'][] = [
+                ...$snapshot['result']['affected_claims'][0],
+                'id' => $snapshot['result']['affected_claims'][0]['id'] + 1,
+                'slug' => 'another-slug',
+            ],
+            default => throw new \LogicException('Unknown replay fixture field.'),
+        };
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute(['snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'operation' => $normal->operationKey]);
+
+        $this->beginHostWork();
+        try {
+            $engine->assignExact($command);
+            self::fail('Replay admitted an inconsistent mutation snapshot.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function inconsistentReplayFields(): iterable
+    {
+        yield 'foreign current claim owner' => ['owner'];
+        yield 'revision disagrees with the after state' => ['revision'];
+        yield 'current slug disagrees with the after state' => ['slug'];
+        yield 'newly recorded History omitted from replay' => ['history'];
+        yield 'assignment reports release all on replay' => ['change-type'];
+        yield 'assignment reports alias history on replay' => ['history-type'];
+        yield 'assignment omits the current claim' => ['empty-claims'];
+        yield 'assignment reports a different current claim' => ['different-current-claim'];
+        yield 'assignment reports more than one current claim' => ['extra-current-claim'];
+    }
+
+    /**
+     * Exercises operation-specific evidence through persisted facade replays.
+     *
+     * @param array<string, int|bool|string|null> $fields Dotted paths inside the stored result.
+     * @param (Closure(array<array-key, mixed>): array<array-key, mixed>)|null $rewrite Rewrites linked result fields when they must change together.
+     */
+    #[DataProvider('inconsistentLifecycleResults')]
+    public function testReplayRejectsInconsistentLifecycleResults(string $path, array $fields, ?Closure $rewrite = null): void
+    {
+        $execute = $this->prepareLifecycleReplay($path);
+        $normal = $execute();
+        self::assertFalse($normal->replayed);
+        $replay = $execute();
+        self::assertTrue($replay->replayed);
+        self::assertSame(json_encode($normal->withReplayed(true), JSON_THROW_ON_ERROR), json_encode($replay, JSON_THROW_ON_ERROR));
+
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $normal->operationKey]);
+        $original = $read->fetchColumn();
+        self::assertIsString($original);
+        $read->closeCursor();
+        $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($snapshot);
+        foreach ($fields as $field => $value) {
+            $snapshot = self::replaceReplayField($snapshot, explode('.', 'result.' . $field), $value);
+        }
+        if ($rewrite !== null) {
+            self::assertIsArray($snapshot['result']);
+            $snapshot['result'] = $rewrite($snapshot['result']);
+        }
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
+            'operation' => $normal->operationKey,
+        ]);
+
+        $historyCount = $this->scalar('SELECT COUNT(*) FROM maa_slug_history');
+        $this->beginHostWork();
+        try {
+            $execute();
+            self::fail('Replay admitted inconsistent lifecycle evidence.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame($historyCount, $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** @return iterable<string, array{string, array<string, int|bool|string|null>, 2?: Closure(array<array-key, mixed>): array<array-key, mixed>}> */
+    public static function inconsistentLifecycleResults(): iterable
+    {
+        yield 'PARALLEL reports a released historical source without a current claim' => ['parallel', [
+            'source_before.state.status' => 'RELEASED',
+            'source_after.state.status' => 'RELEASED',
+            'source_result.before.state.status' => 'RELEASED',
+            'source_result.after.state.status' => 'RELEASED',
+            'source_before.state.current_slug' => null,
+            'source_after.state.current_slug' => null,
+            'source_result.before.state.current_slug' => null,
+            'source_result.after.state.current_slug' => null,
+            'source_before.current_claim' => null,
+            'source_after.current_claim' => null,
+            'source_result.before.current_claim' => null,
+            'source_result.after.current_claim' => null,
+            'source_claim' => null,
+        ]];
+        yield 'MOVE request replays an internally consistent PARALLEL result' => ['move', [], self::rewriteMoveAsParallel(...)];
+        yield 'change reports the same old and new Registry key' => ['change', [
+            'before.state.current_slug' => 'changed-slug',
+            'before.current_claim.slug' => 'changed-slug',
+            'previous_slug' => 'changed-slug',
+            'history_events.0.previous_slug_snapshot' => 'changed-slug',
+        ]];
+        yield 'change omits the demoted former current claim' => ['change', [], self::omitFormerCurrentClaim(...)];
+        yield 'release all records the same claim key twice' => ['release-all', [], self::repeatReleasedClaim(...)];
+        yield 'released claim remains in affected claims' => ['release', ['affected_claims.1.slug' => 'alias-slug']];
+        yield 'alias duplicates the current slug' => ['add', [
+            'affected_claims.1.slug' => 'source-slug', 'history_events.0.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'adopted alias duplicates the current slug' => ['adopt', [
+            'adopted_claim.slug' => 'source-slug', 'history_event.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'transferred alias duplicates the source current slug' => ['transfer', [
+            'transferred_claim.slug' => 'source-slug',
+            'source_result.history_events.0.slug_snapshot' => 'source-slug',
+            'target_result.history_events.0.slug_snapshot' => 'source-slug',
+            'history_events.0.slug_snapshot' => 'source-slug', 'history_events.1.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'transfer reports a target in another scope' => ['transfer', [
+            'target_result.before.identity.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.after.identity.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.before.current_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.after.current_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'transferred_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'source_result.history_events.0.related_scope.namespace' => 'another-scope',
+            'history_events.0.related_scope.namespace' => 'another-scope',
+            'target_result.history_events.0.scope_snapshot.namespace' => 'another-scope',
+            'history_events.1.scope_snapshot.namespace' => 'another-scope',
+        ]];
+        yield 'MOVE reports a different target entity' => ['move', [
+            'target_result.after.identity.entity.entity_key' => 'wrong-entity',
+            'target_after.identity.entity.entity_key' => 'wrong-entity',
+            'target_result.after.current_claim.binding.entity.entity_key' => 'wrong-entity',
+            'target_after.current_claim.binding.entity.entity_key' => 'wrong-entity',
+            'target_result.history_events.0.entity_snapshot.entity_key' => 'wrong-entity',
+            'history_events.1.entity_snapshot.entity_key' => 'wrong-entity',
+            'source_result.history_events.0.related_entity.entity_key' => 'wrong-entity',
+            'history_events.0.related_entity.entity_key' => 'wrong-entity',
+        ]];
+        yield 'transfer-out history names a different target entity' => ['transfer', [
+            'source_result.history_events.0.related_entity.entity_key' => 'wrong-recipient',
+            'history_events.0.related_entity.entity_key' => 'wrong-recipient',
+        ]];
+        yield 'MOVE history names a different destination scope' => ['move', [
+            'source_result.history_events.0.related_scope.namespace' => 'wrong-destination',
+            'history_events.0.related_scope.namespace' => 'wrong-destination',
+        ]];
+        yield 'alias addition records a slug absent from its claims' => ['add', ['history_events.0.slug_snapshot' => 'another-slug']];
+        yield 'alias promotion records a slug different from the new current claim' => ['promote', ['history_events.0.slug_snapshot' => 'another-slug']];
+        yield 'transfer reports an unchanged source' => ['transfer', ['source_result.mutated' => false]];
+        yield 'transfer reports an unchanged target' => ['transfer', ['target_result.mutated' => false]];
+        yield 'MOVE replaces the source current claim while keeping the slug' => ['move', [
+            'source_result.after.current_claim.id' => 999,
+            'source_after.current_claim.id' => 999,
+        ]];
+        yield 'MOVE creates the target at an invalid initial revision' => ['move', [
+            'target_result.after.state.revision' => 9, 'target_after.state.revision' => 9,
+            'target_result.revision' => 9, 'target_revision' => 9,
+        ]];
+        yield 'MOVE increments the source revision multiple times' => ['move', [
+            'source_result.after.state.revision' => 9, 'source_after.state.revision' => 9,
+            'source_result.revision' => 9, 'source_revision' => 9,
+        ]];
+    }
+
+    public function testParallelReplaysItsOriginalSourceAfterLiveRelease(): void
+    {
+        $execute = $this->prepareLifecycleReplay('parallel');
+        $first = $execute();
+        self::assertInstanceOf(ScopeTransitionResultDTO::class, $first);
+        $this->engine()->releaseAllOwnership(new ReleaseAllOwnershipCommand($this->identity('source'), 1, new AuditContextDTO()));
+
+        $this->beginHostWork();
+        try {
+            $replay = $execute();
+            self::assertSame(json_encode($first->withReplayed(true), JSON_THROW_ON_ERROR), json_encode($replay, JSON_THROW_ON_ERROR));
+            $this->assertHostWorkIsIntact();
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /**
+     * Substitutes a valid PARALLEL outcome while leaving the stored MOVE request unchanged.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function rewriteMoveAsParallel(array $result): array
+    {
+        self::assertIsArray($result['source_result']);
+        self::assertIsArray($result['source_before']);
+        self::assertIsArray($result['source_before']['state']);
+        self::assertIsArray($result['target_result']);
+        $sourceRevision = $result['source_before']['state']['revision'];
+        $result['mode'] = 'PARALLEL';
+        $result['source_after'] = $result['source_before'];
+        $result['source_revision'] = $sourceRevision;
+        $result['source_result']['after'] = $result['source_before'];
+        $result['source_result']['mutated'] = false;
+        $result['source_result']['revision'] = $sourceRevision;
+        $result['source_result']['history_events'] = [];
+        $result['history_events'] = $result['target_result']['history_events'];
+
+        return $result;
+    }
+
+    /**
+     * Leaves the new current claim and removes the former claim from the result.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function omitFormerCurrentClaim(array $result): array
+    {
+        self::assertIsArray($result['affected_claims']);
+        self::assertCount(2, $result['affected_claims']);
+        $result['affected_claims'] = array_slice($result['affected_claims'], 1);
+        return $result;
+    }
+
+    /**
+     * Gives the event for the second alias the slug of the first alias.
+     *
+     * @param array<array-key, mixed> $result
+     * @return array<array-key, mixed>
+     */
+    private static function repeatReleasedClaim(array $result): array
+    {
+        self::assertIsArray($result['history_events']);
+        foreach ($result['history_events'] as $index => $event) {
+            self::assertIsArray($event);
+            if ($event['slug_snapshot'] === 'second-alias') {
+                $event['slug_snapshot'] = 'alias-slug';
+                $result['history_events'][$index] = $event;
+                return $result;
+            }
+        }
+        self::fail('The release fixture must contain the second alias.');
+    }
+
+    /** @return Closure(): (SlugMutationResultDTO|AdoptionResultDTO|AtomicTransferResultDTO|ScopeTransitionResultDTO) */
+    private function prepareLifecycleReplay(string $path): Closure
+    {
+        $engine = $this->engine();
+        $source = $this->identity('source');
+        $engine->assignExact(new AssignExactCommand($source, 'source-slug', null, new AuditContextDTO()));
+        $audit = new AuditContextDTO(idempotencyKey: 'replay-contract');
+        if ($path === 'add') {
+            $command = new AddAliasCommand($source, 'alias-slug', 1, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->addAlias($command);
+        }
+        if ($path === 'adopt') {
+            $command = new AdoptAliasCommand($source, 'adopted-slug', null, 1, $audit);
+            return static fn(): AdoptionResultDTO => $engine->adoptAlias($command);
+        }
+        if ($path === 'change') {
+            $command = new ChangeExactCommand($source, 'changed-slug', 1, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->changeExact($command);
+        }
+        if ($path === 'move' || $path === 'parallel') {
+            $targetScope = new ScopeProfileRequestDTO(new SlugScope('destination', null, null), $source->scopeProfile->expectedProfileKey);
+            $move = new TransitionScopeCommand(
+                $source,
+                $targetScope,
+                $path === 'move' ? ScopeTransitionModeEnum::MOVE : ScopeTransitionModeEnum::PARALLEL,
+                new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'destination-slug'),
+                1,
+                $audit,
+            );
+            return static fn(): ScopeTransitionResultDTO => $engine->transitionScope($move);
+        }
+
+        $engine->addAlias(new AddAliasCommand($source, 'alias-slug', 1, new AuditContextDTO()));
+        if ($path === 'release-all') {
+            $engine->addAlias(new AddAliasCommand($source, 'second-alias', 2, new AuditContextDTO()));
+            $command = new ReleaseAllOwnershipCommand($source, 3, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->releaseAllOwnership($command);
+        }
+        if ($path === 'release') {
+            $engine->addAlias(new AddAliasCommand($source, 'retained-alias', 2, new AuditContextDTO()));
+            $command = new ReleaseClaimCommand($source, 'alias-slug', 3, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->releaseClaim($command);
+        }
+        if ($path === 'promote') {
+            $promote = new PromoteAliasToCurrentCommand($source, 'alias-slug', 2, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->promoteAliasToCurrent($promote);
+        }
+
+        $target = $this->identity('target');
+        $engine->assignExact(new AssignExactCommand($target, 'target-slug', null, new AuditContextDTO()));
+        $transfer = new AtomicTransferCommand($source, $target, 'alias-slug', null, 2, 1, $audit);
+        return static fn(): AtomicTransferResultDTO => $engine->atomicTransfer($transfer);
+    }
+
+    /**
+     * Replaces only the selected snapshot field so all surrounding stored evidence remains canonical.
+     *
+     * @param array<array-key, mixed> $snapshot
+     * @param non-empty-list<string> $path
+     * @return array<array-key, mixed>
+     */
+    private static function replaceReplayField(array $snapshot, array $path, int|bool|string|null $value): array
+    {
+        $key = array_shift($path);
+        self::assertArrayHasKey($key, $snapshot);
+        if ($path === []) {
+            $snapshot[$key] = $value;
+        } else {
+            $child = $snapshot[$key];
+            self::assertIsArray($child);
+            $snapshot[$key] = self::replaceReplayField($child, $path, $value);
+        }
+        return $snapshot;
+    }
+
+    public function testReplayRejectsAnOtherwiseValidSnapshotFromAnotherParticipant(): void
+    {
+        $engine = $this->engine();
+        $first = new AssignExactCommand($this->identity('first'), 'first-slug', null, new AuditContextDTO(idempotencyKey: 'first-operation'));
+        $second = new AssignExactCommand($this->identity('second'), 'second-slug', null, new AuditContextDTO(idempotencyKey: 'second-operation'));
+        $firstResult = $engine->assignExact($first);
+        $secondResult = $engine->assignExact($second);
+        self::assertNotNull($firstResult->operationKey);
+        self::assertNotNull($secondResult->operationKey);
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $secondResult->operationKey]);
+        $snapshot = $read->fetchColumn();
+        self::assertIsString($snapshot);
+        $read->closeCursor();
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => str_replace($secondResult->operationKey, $firstResult->operationKey, $snapshot),
+            'operation' => $firstResult->operationKey,
+        ]);
+        $this->beginHostWork();
+        try {
+            $engine->assignExact($first);
+            self::fail('Replay returned a snapshot for another participant.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('participants', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('2', $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+    }
+
+    public function testReplayRejectsBeforeStateFromAnotherBindingWithoutEndingHostWork(): void
+    {
+        $engine = $this->engine();
+        $owner = $this->identity('first');
+        $engine->assignExact(new AssignExactCommand($owner, 'first-slug', null, new AuditContextDTO()));
+        $other = $engine->assignExact(new AssignExactCommand($this->identity('second'), 'second-slug', null, new AuditContextDTO()));
+        $command = new ChangeExactCommand($owner, 'changed-slug', 1, new AuditContextDTO(idempotencyKey: 'change-fixture'));
+        $change = $engine->changeExact($command);
+        self::assertSame($change->before?->id, $engine->changeExact($command)->before?->id);
+
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $change->operationKey]);
+        $original = $read->fetchColumn();
+        self::assertIsString($original);
+        $read->closeCursor();
+        /** @var array{result: array{before: mixed}} $snapshot */
+        $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
+        $snapshot['result']['before'] = $other->after;
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
+            'operation' => $change->operationKey,
+        ]);
+
+        $this->beginHostWork();
+        try {
+            $engine->changeExact($command);
+            self::fail('Replay admitted a before state from another Binding.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('3', $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** Starts a Host transaction with pending work unrelated to the library. */
+    private function beginHostWork(): void
+    {
+        $this->pdo->exec('CREATE TEMPORARY TABLE contract_host_marker (id INT PRIMARY KEY) ENGINE=InnoDB');
+        $this->pdo->beginTransaction();
+        $this->pdo->exec('INSERT INTO contract_host_marker VALUES (1)');
+    }
+
+    /** Verifies that Slug did not finish the Host transaction or roll back its pending work. */
+    private function assertHostWorkIsIntact(): void
+    {
+        self::assertTrue($this->pdo->inTransaction());
+        self::assertSame('1', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    private function scalar(string $sql): string
+    {
+        $statement = $this->pdo->query($sql);
+        self::assertNotFalse($statement);
+        $value = $statement->fetchColumn();
+        self::assertTrue(is_string($value) || is_int($value));
+
+        return (string) $value;
+    }
+
+    private function identity(string $entityKey): BindingIdentityDTO
+    {
+        return new BindingIdentityDTO(
+            new ScopeProfileRequestDTO(new SlugScope('contract', null, null), new SlugProfileKey('unicode-v1')),
+            new EntityReference('record', $entityKey),
+        );
+    }
+
+    private function engine(): SlugEngine
+    {
+        return SlugEngineFactory::create($this->pdo, SlugProfileRegistryFactory::createBuiltIn(), new TestReservedSlugPolicy(), $this->clock());
+    }
+}

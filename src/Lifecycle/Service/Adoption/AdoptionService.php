@@ -163,7 +163,7 @@ final readonly class AdoptionService
 
             $reservation = $this->reserve($operation, $fingerprint, $record->id, $audit);
             if ($reservation !== null && ! $reservation->created) {
-                $replayed = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
+                $replayed = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
                 if (! $replayed instanceof AdoptionResultDTO) {
                     throw new SlugPersistenceInvariantException('Adoption operation contains a non-adoption snapshot.');
                 }

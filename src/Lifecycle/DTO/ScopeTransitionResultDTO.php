@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Maatify\Slug\Lifecycle\DTO;
 
 use JsonSerializable;
+use Maatify\Slug\Exception\SlugInvalidArgumentException;
+use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
+use Maatify\Slug\Lifecycle\Enum\HistoryEventTypeEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\Enum\ScopeTransitionModeEnum;
@@ -38,18 +42,82 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         public array $historyEvents,
     ) {
         if ($operationType !== OperationTypeEnum::TRANSITION_SCOPE) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transition result requires TRANSITION_SCOPE.');
+            throw new SlugInvalidArgumentException('Transition result requires TRANSITION_SCOPE.');
         }
         if ($operationKey !== null && preg_match('/\A[a-f0-9]{32}\z/', $operationKey) !== 1) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
+            throw new SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
         }
         if ($sourceRevision < 0) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('sourceRevision must be non-negative.');
+            throw new SlugInvalidArgumentException('sourceRevision must be non-negative.');
         }
         if ($targetRevision < 0) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('targetRevision must be non-negative.');
+            throw new SlugInvalidArgumentException('targetRevision must be non-negative.');
+        }
+        if (
+            $sourceRevision !== $sourceAfter->state->revision || $sourceRevision !== $sourceResult->revision
+            || $targetRevision !== $targetAfter->state->revision || $targetRevision !== $targetResult->revision
+        ) {
+            throw new SlugInvalidArgumentException('Transition revisions must match the participants and their after states.');
+        }
+        if (
+            $sourceBefore?->currentClaim === null || ! $targetCreated
+            || $targetBefore !== null || $targetAfter->state->status !== BindingStatusEnum::ACTIVE
+        ) {
+            throw new SlugInvalidArgumentException('A transition requires a source with a current claim and a newly created active target.');
+        }
+        if (
+            $sourceAfter->id === $targetAfter->id || $sourceAfter->identity->sharesScope($targetAfter->identity)
+            || ! $sourceAfter->identity->sharesEntity($targetAfter->identity)
+        ) {
+            throw new SlugInvalidArgumentException('A transition must carry the same entity to a different Scope and Binding.');
         }
         self::participantHistory($historyEvents, [$sourceAfter->id, $targetAfter->id], 'historyEvents');
+        if ($sourceClaim?->value !== $sourceBefore->state->currentSlug?->value || $targetClaim?->value !== $targetAfter->state->currentSlug?->value) {
+            throw new SlugInvalidArgumentException('Transition claims must match the source before and target after states.');
+        }
+        $outer = [$sourceBefore, $sourceAfter, $targetBefore, $targetAfter, $historyEvents];
+        $participants = [
+            $sourceResult->before,
+            $sourceResult->after,
+            $targetResult->before,
+            $targetResult->after,
+            [...$sourceResult->historyEvents, ...$targetResult->historyEvents],
+        ];
+        $flags = JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR;
+        if ($outer !== $participants && json_encode($outer, $flags) !== json_encode($participants, $flags)) {
+            throw new SlugInvalidArgumentException('Transition state and history must agree with the participant results.');
+        }
+
+        if (! self::recordsTransitionClaim($targetResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, $targetClaim, $sourceAfter->identity)) {
+            throw new SlugInvalidArgumentException('The transition target must record its activation and identify the source.');
+        }
+        if ($mode === ScopeTransitionModeEnum::MOVE) {
+            if (
+                $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
+                || ! $sourceBefore->currentClaim->matches($sourceAfter->currentClaim)
+                || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim, $targetAfter->identity)
+            ) {
+                throw new SlugInvalidArgumentException('A move must retain the source claim and record the deactivation and destination.');
+            }
+        } elseif ($sourceResult->mutated) {
+            throw new SlugInvalidArgumentException('A parallel transition must leave the source unchanged.');
+        }
+    }
+
+    /** Checks the canonical claim event and its counterpart for a participant changed by the transition. */
+    private static function recordsTransitionClaim(
+        BindingStateResultDTO $participant,
+        HistoryEventTypeEnum $eventType,
+        ?Slug $claim,
+        BindingIdentityDTO $counterparty,
+    ): bool {
+        $event = $participant->historyEvents[0] ?? null;
+
+        return $participant->mutated && count($participant->historyEvents) === 1
+            && $event?->eventType === $eventType
+            && $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL
+            && $event->slugSnapshot?->value === $claim?->value
+            && $event->identifiesCounterparty($counterparty);
     }
 
     /**
@@ -59,24 +127,24 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
     private static function participantHistory(array $items, array $bindingIds, string $field): void
     {
         if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
+            throw new SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
         }
         $lastParticipant = -1;
         $lastSequence = [];
         $lastId = [];
         foreach ($items as $item) {
-            if (! is_object($item) || ! property_exists($item, 'bindingId') || ! property_exists($item, 'sequenceNo') || ! property_exists($item, 'id') || ! is_int($item->bindingId) || ! is_int($item->sequenceNo) || ! is_int($item->id)) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
+            if (! $item instanceof HistoryEventDTO) {
+                throw new SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
             }
             $participant = array_search($item->bindingId, $bindingIds, true);
             if ($participant === false || $participant < $lastParticipant) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s has invalid participant ordering.', $field));
+                throw new SlugInvalidArgumentException(sprintf('%s has invalid participant ordering.', $field));
             }
             if ($participant > $lastParticipant) {
                 $lastParticipant = $participant;
             }
             if (isset($lastSequence[$item->bindingId]) && ($item->sequenceNo < $lastSequence[$item->bindingId] || ($item->sequenceNo === $lastSequence[$item->bindingId] && $item->id <= $lastId[$item->bindingId]))) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be ordered within each participant.', $field));
+                throw new SlugInvalidArgumentException(sprintf('%s must be ordered within each participant.', $field));
             }
             $lastSequence[$item->bindingId] = $item->sequenceNo;
             $lastId[$item->bindingId] = $item->id;

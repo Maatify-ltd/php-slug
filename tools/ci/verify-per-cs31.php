@@ -15,6 +15,10 @@ final class PerCs31Verifier
     /** @var array<string, array<int, array{case: string, comment: string}>> */
     private array $fallthroughApprovals = [];
 
+    /**
+     * Checks the repository PHP sources against the supplemental rules and the root approval file.
+     * Returns 1 after reporting a violation or invalid approval data, and 0 when the sources pass.
+     */
     public function run(string $root): int
     {
         $files = $this->phpFiles($root);
@@ -37,7 +41,14 @@ final class PerCs31Verifier
         return 0;
     }
 
-    /** @param list<string> $files */
+    /**
+     * Checks the supplied PHP files and returns the diagnostics for this invocation.
+     * A null or missing approval file means no recorded fall-through approvals.
+     * Unreadable or malformed approval data stops verification with an exception.
+     *
+     * @param list<string> $files PHP source paths to inspect.
+     * @return list<string> Diagnostics, or an empty list on success.
+     */
     public function verifyFiles(array $files, ?string $approvalFile = null): array
     {
         $this->errors = [];
@@ -970,7 +981,13 @@ final class PerCs31Verifier
         ));
     }
 
-    /** @param list<array{0:int,1:string,2:int}|string> $tokens */
+    /**
+     * Checks top-level comment groups within a case for intentional continuation.
+     * Recognized contradictions and uncertainty take precedence over an affirmative marker.
+     * An approval must match the captured comment, and attributed case literals are treated as data.
+     *
+     * @param list<array{0:int,1:string,2:int}|string> $tokens
+     */
     private function hasFallThroughComment(array $tokens, int $start, int $end, ?string $approvedComment): bool
     {
         $nesting = [];
@@ -1095,6 +1112,7 @@ final class PerCs31Verifier
         ) ?? $comment;
     }
 
+    /** Checks uncertainty in clauses about control flow so unrelated prose does not veto a marker. */
     private static function hasUncertainFallthroughClause(string $comment): bool
     {
         $clauses = preg_split('~(?<=[.!?؟])\s+~u', $comment) ?: [$comment];
@@ -1116,6 +1134,7 @@ final class PerCs31Verifier
         return false;
     }
 
+    /** Recognizes explicit termination and negative continuation directives in a fall-through comment. */
     private static function opposesFallthrough(string $comment): bool
     {
         $target = '(?:the\s+)?(?:next|following)\s+case';
@@ -1268,6 +1287,7 @@ final class PerCs31Verifier
         return false;
     }
 
+    /** Treats hedges and questions about continuation as insufficient evidence of intent. */
     private static function isUncertainFallthrough(string $comment): bool
     {
         $action = '(?:falls?[- ]?through|omit|skip|leave\s+out|continue|proceed)';
@@ -1285,6 +1305,7 @@ final class PerCs31Verifier
         ) === 1;
     }
 
+    /** Exempts a quoted question-mark token while retaining question punctuation in longer quoted prose. */
     private static function hasQuestionMarkOutsideQuotedToken(string $comment): bool
     {
         if (!str_contains($comment, '?') && !str_contains($comment, '؟')) {
@@ -1300,6 +1321,7 @@ final class PerCs31Verifier
         return $withoutTokens === null || str_contains($withoutTokens, '?') || str_contains($withoutTokens, '؟');
     }
 
+    /** Recognizes supported affirmative continuation markers after other checks assess contradictions. */
     private static function declaresFallthrough(string $comment): bool
     {
         $intent = '(?:intentionally|deliberately|purposely)';

@@ -58,7 +58,7 @@ The package has no Host foreign keys, Host table joins, or Host repository depen
 Once RC.3 is published through Packagist, install the exact versions with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ```
 
 The two explicit `@RC` allowances let the project keep `minimum-stability` set to `stable`. The examples below describe RC.3. For RC.2, see its [tagged Composer manifest](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/composer.json).
@@ -118,12 +118,12 @@ The following requirements are implemented in the repository:
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
 | MariaDB | Server `12.3.2` for focused PDO and snapshot verification, with the session requirement in [§9](#9-persistence-transactions-and-concurrency) |
-| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
+| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.2` (temporary RC dependency) |
 | Evidence tools | `phpstan/phpstan ^2.1`, `phpunit/phpunit ^11.5`, `friendsofphp/php-cs-fixer ^3.94` in `require-dev` |
 
 Newer PHP 8 minors admitted by Composer require minor-specific security and compatibility evidence before they can be listed as supported.
 
-The implementation uses `ext-intl` for NFC and ICU lowercasing or transliteration and uses `ext-mbstring` only for code-point length. Built-in runtime admission verifies the required normalization and transliteration behavior and fails closed with `SlugRuntimeCompatibilityException` when a capability is unavailable or incompatible. ICU and Unicode versions are diagnostics only, not consumer support boundaries.
+The implementation uses `ext-intl` for NFC and ICU lowercasing or transliteration and uses `ext-mbstring` for code-point length and truncation. Built-in runtime admission verifies the required normalization and transliteration behavior and fails closed with `SlugRuntimeCompatibilityException` when a capability is unavailable or incompatible. ICU and Unicode versions are diagnostics only, not consumer support boundaries.
 
 ## 5. Identity and Text
 
@@ -166,6 +166,8 @@ Before any lossy transformation, invalid UTF-8, NUL, `Cc`, `Cs`, `Cf`, `/`, `\\`
 The maximum is 160 Unicode code points after canonicalization. An exact claim or lookup exceeding the limit is rejected. Generated allocation uses the base and then only `-2` through `-1000`; it accounts for the suffix before code-point truncation, removes a trailing hyphen, and raises `SlugAllocationExhaustedException` when exhausted.
 
 Custom profiles own their canonical grammar. Generated allocation preserves a valid custom base without imposing built-in punctuation rules. It prepares bounded suffixes before taking mutation locks and skips suffixes rejected by `assertCanonicalSlug()` with `InvalidArgumentException` or `SlugValidationException`. Other exceptions propagate. A profile that permits no numeric suffix can still allocate its free base; an occupied or reserved base with no accepted alternative exhausts normally. The [custom-profile example](examples/custom-profile.php) demonstrates input safety, generation truncation, and exact-claim/lookup length checks without depending on internal helpers.
+
+Persisted claim identity follows Registry collation equality, including when a custom profile permits byte-distinct representations that compare equal in the database. Lifecycle operations identify an existing claim by its locked Registry ID and retain its stored slug bytes in results, history, and replay; they do not trim or rewrite the profile's representation. Same-Binding role rules and no-op behavior apply to that identity, while a database-equivalent transfer replacement cannot reuse the claim being moved. Request fingerprints retain their existing input semantics; matching an existing claim does not rewrite fingerprint inputs.
 
 `namespace` matches `^[a-z][a-z0-9-]{0,62}$`. `localeKey`, `contextKey`, `entityType`, and `entityKey` are opaque, valid UTF-8, and exact, without trimming, normalization, or case folding. A `null` locale or context is the exact empty dimension only; it is not a wildcard or fallback. `profileKey` is immutable Scope configuration and is not a uniqueness dimension.
 
@@ -370,6 +372,10 @@ AtomicTransferResultDTO: OperationTypeEnum $operationType, ?string $operationKey
 AdoptionResultDTO: OperationTypeEnum $operationType, ?string $operationKey, bool $replayed, ?BindingDTO $before, BindingDTO $after, RegistryClaimDTO $adoptedClaim, HistoryEventDTO $historyEvent
 ```
 
+`CurrentSlugDTO` requires a non-negative revision equal to the Binding state revision and a Claim that matches the Binding's current canonical Claim snapshot. The constructor accepts a separately constructed Claim with the same ID, Binding identity, slug text, canonical role, and timestamp instants. It throws `SlugInvalidArgumentException` for an invalid revision, a missing current Claim, or a Claim that differs from that snapshot.
+
+`BindingDTO` requires the current Claim of an active or inactive Binding to be canonical, to belong to that Binding, and to match the current slug. `AliasDTO` accepts only active and retired alias Claims, with `resolvableAsAlias` true for an active alias and false for a retired alias. Mutation result claim and history lists accept objects of their declared DTO types. Violations raise `SlugInvalidArgumentException`.
+
 `ScopeProfileRequestDTO` carries `SlugScope $scope` and `SlugProfileKey $expectedProfileKey`; `BindingIdentityDTO` carries `ScopeProfileRequestDTO $scopeProfile` and `EntityReference $entity`. Intent DTOs carry `ClaimIntentModeEnum $mode` and `string $value`. `AuditContextDTO` has optional `?string $actorKey`, `?string $reason`, `?string $correlationKey`, and `?string $idempotencyKey`. `HistoryEventDTO` and its role-snapshot fields follow the applicability defined by the current lifecycle implementation.
 
 ## 7. Ownership and Lifecycle
@@ -413,17 +419,28 @@ Result Snapshot JSON v1 has only four discriminators:
 
 Only a current `atomicTransfer` result may contain nested `sourceReplacementResult`; its `operationKey` and `replayed` values equal those of the outer result. A top-level `mutation` cannot use `ATOMIC_TRANSFER`.
 
+The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. A transition's outer states and history must agree with its participant results, and its source and target claims must match the source before and target after states. Each before state and its history must identify the corresponding after Binding. Mutation claims, transferred claims, and adoption claims must belong to the corresponding Binding.
+
+A mutated transition or transfer participant records History and advances one revision. A newly created participant starts at revision 1. An unchanged participant retains its before state and records no History. A MOVE retains the source current Claim, and a PARALLEL transition leaves the source state unchanged. A transition event records the corresponding canonical claim slug and role. Each mutation outcome must match its operation, Binding state change, and History event types. The affected claim list includes the exact current Claim from the after state when present. Alias History identifies the resulting Claim and role in that list. Only change and alias addition may return a no-op, with unchanged Binding state and empty History. Current adoption activates a new or released Binding. Current transfer activates a released target and replaces the source's current Claim. Non-current adoption and transfer preserve the status and current Claim of each affected Binding.
+
+A transfer uses distinct Bindings with the same Scope and profile. A transition keeps the same Host entity across distinct Scopes. Its recorded source must have a current Claim, and the replay mode must match the request. The recorded source remains valid after later changes to that Binding. Transfer and transition History identifies the counterpart Scope and entity.
+
+Within a result, Registry claim keys are compared using the package's utf8mb4_bin PAD SPACE equality, preserving the recorded slug bytes. A current-claim replacement uses a distinct Registry key. An ordinary replacement retains the former current Claim as historical. A transfer moves it to the target. The final claim list excludes a released key, and release-all History records each released key once. A non-current adoption or transfer cannot duplicate a current claim in the same Scope.
+
+History lists cover the sequence positions created by the operation. The nested transfer replacement covers its own History, and the enclosing transfer also covers its transfer-out event. Replay also verifies the snapshot's Binding IDs and roles against the stored operation participants. A mismatch raises `SlugPersistenceInvariantException`.
+
 ## 9. Persistence, Transactions, and Concurrency
 
 The persisted path uses direct PDO inside package infrastructure only:
 
-- `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION` and `PDO::ATTR_EMULATE_PREPARES = false`.
+- `PDO::ATTR_ERRMODE = PDO::ERRMODE_EXCEPTION`, `PDO::ATTR_EMULATE_PREPARES = false`, and `PDO::ATTR_CASE = PDO::CASE_NATURAL`.
 - PDO queries can be buffered or unbuffered. The package releases its own results before reusing the connection. The Host closes any unbuffered result it owns before calling Slug.
-- Connection charset is `utf8mb4`; timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
+- The Host keeps `character_set_client` and `character_set_connection` on `utf8mb4`. Use `utf8mb4` or `NULL` for `character_set_results` so result data is not converted to a narrower charset. The package checks these settings on the active PDO session. Timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
 - MySQL and compatible MariaDB sessions use the same PDO adapter and schema. On MariaDB servers that expose `innodb_snapshot_isolation`, lifecycle writes require `OFF` on the injected PDO before beginning a Host write transaction. Non-locking reads work with either setting. The package leaves session settings under Host control.
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
-- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. The first mutation separately verifies transaction/savepoint and write capabilities with rollback-protected probes; successful reads do not bypass these checks.
-- For mutations, the package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
+- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. Before the first mutation the package verifies the required column definitions, index keys and foreign-key topology, then verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Additional columns in package tables must allow inserts that omit them. A compatible default expression can supply an omitted value. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
+- Keep `autocommit=ON` when calling persisted operations without an active Host transaction. A session with `autocommit=OFF` requires an active Host transaction before calling Slug. Otherwise the package raises `SlugRuntimeCompatibilityException` before accessing Slug tables. For mutations without an outer transaction, the package owns the transaction. The Host controls commit and rollback of any transaction it opened.
+- Schema and write capability checks apply to the database selected on the Host PDO session. Selecting another database invalidates both checks. The next persisted call verifies the selected database, and its first mutation verifies write capabilities before acquiring lifecycle row locks. The Host selects the database between calls.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
 - First-create races on Binding and Scope are reread under lock in the defined paths. There is no savepoint for an attempted `INSERT` and no automatic deadlock retry.
@@ -445,6 +462,8 @@ Management queries separate the live Registry from History:
 listAliases, getHistory, inspectRegistry, searchScopes, searchHistory,
 searchBindings, searchRegistry
 ```
+
+For each Binding in its result page, `searchBindings()` checks Registry ownership, Scope, and role values. It raises `SlugPersistenceInvariantException` when these checks fail. A `RELEASED` Binding must have no Claims or current pointer. An `ACTIVE` or `INACTIVE` Binding must point to its only current canonical Claim.
 
 Use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` for paging requests and `Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum` where a sort direction enum is used.
 
@@ -747,9 +766,11 @@ SlugUnsupportedDriverException, SlugPersistenceInvariantException
 
 The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
 
-Before acquiring the Scope lock, a lifecycle mutation throws `SlugRuntimeCompatibilityException` if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`.
+Persisted queries, including `resolve()` when it consults persisted state, and lifecycle mutations throw `SlugRuntimeCompatibilityException` during schema verification if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`. For mutations, this verification precedes the Scope lock.
 
-On a server that exposes `innodb_snapshot_isolation`, the same exception reports an unsupported session setting before package mutation, including after the engine has verified the installed schema. A PDO failure while reading the setting propagates unchanged.
+Mutations throw `SlugRuntimeCompatibilityException` before taking the Scope lock if `foreign_key_checks` is disabled or if an exposed `innodb_snapshot_isolation` setting is enabled. These checks run even after successful schema verification. The settings stay under Host control, and a PDO failure while reading either setting propagates unchanged.
+
+Incompatible PDO column case, session charset, or a disabled `autocommit` setting without an active Host transaction also raises `SlugRuntimeCompatibilityException`. The first mutation reports an incompatible physical write schema through that exception, retaining the schema invariant failure as its cause. A current pointer referencing another Binding's Claim or a replay snapshot with inconsistent operation or participant evidence raises `SlugPersistenceInvariantException`.
 
 ## 13. Release State
 

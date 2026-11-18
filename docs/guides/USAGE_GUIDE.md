@@ -23,7 +23,7 @@ At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available thro
 Once RC.3 is published to Packagist, install it with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ```
 
 Keep the project's `minimum-stability` set to `stable`. For the RC.2 migration and pagination changes, see [Installation in the README](../../README.md#installation). If you use RC.2, follow its [versioned usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
@@ -61,9 +61,13 @@ $engine = SlugEngineFactory::create(
 );
 ```
 
-The Host creates the `PDO` connection and applies the package schema in its environment. [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) demonstrates construction and cleanup through the canonical Integration environment.
+The Host creates the `PDO` connection and applies the [ordered schema](../../schema/mysql/README.md#installation-and-upgrade), including the completed Schema 003 migration, before using persisted reads or writes. [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) demonstrates construction and cleanup through the canonical Integration environment.
 
-Public queries can use a SELECT-only account or an existing Host READ ONLY transaction. Query verification does not write or open a transaction. Mutations require write privileges and separately verify write capabilities before the first write; the package preserves any outer transaction.
+Set `charset=utf8mb4` in the PDO DSN, keep `PDO::ATTR_CASE` at `PDO::CASE_NATURAL`, enable `PDO::ERRMODE_EXCEPTION`, and disable emulated prepares. Keep the client and connection charsets on `utf8mb4` and the results charset on `utf8mb4` or `NULL`.
+
+Public queries, including `resolve()` when it reads persisted state, can use a SELECT-only account or an existing Host READ ONLY transaction. Query verification does not write or open a transaction.
+
+For mutations, keep `foreign_key_checks=ON` on the Host PDO session and grant write privileges. The package checks write capabilities separately and preserves any outer transaction. Keep `autocommit=ON` for persisted calls outside a Host transaction. With `autocommit=OFF`, the Host must begin a transaction before calling Slug.
 
 On MariaDB, if the server exposes `innodb_snapshot_isolation`, set it to `OFF` on the PDO session before opening a transaction that writes Slug state. Non-locking reads work with either setting. See the [PDO and transaction contract](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 

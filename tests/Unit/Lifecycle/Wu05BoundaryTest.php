@@ -263,7 +263,7 @@ final class Wu05BoundaryTest extends TestCase
         self::assertSame(ChangeTypeEnum::RESTORED, $restored->sourceReplacementResult?->changeType);
 
         foreach ([RegistryRoleEnum::HISTORICAL_CANONICAL, RegistryRoleEnum::ACTIVE_ALIAS, RegistryRoleEnum::RETIRED_ALIAS] as $role) {
-            $nonCurrent = $this->nonCurrentTransfer($role);
+            $nonCurrent = ContractFixtures::nonCurrentTransfer($role);
             self::assertSame($role, $nonCurrent->transferredClaim->role);
             self::assertNull($nonCurrent->sourceReplacementResult);
             self::assertSame(BindingStatusEnum::ACTIVE, $nonCurrent->targetResult->before?->state->status);
@@ -321,33 +321,6 @@ final class Wu05BoundaryTest extends TestCase
             2,
             1,
             [$restoredEvent, $sourceTransferEvent, $targetTransferEvent],
-        );
-    }
-
-    private function nonCurrentTransfer(RegistryRoleEnum $role): AtomicTransferResultDTO
-    {
-        $source = ContractFixtures::identity(10, 'transfer-unit');
-        $target = ContractFixtures::identity(20, 'transfer-unit');
-        $sourceBefore = ContractFixtures::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 1);
-        $sourceAfter = ContractFixtures::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 2);
-        $targetBefore = ContractFixtures::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 1);
-        $targetAfter = ContractFixtures::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 2);
-        $moved = ContractFixtures::slug('moved');
-        $transferred = ContractFixtures::claim($target, $moved, 999, $role);
-        $sourceEvent = ContractFixtures::history(100, 501, 2, $source, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $moved, $role);
-        $targetEvent = ContractFixtures::history(300, 502, 2, $target, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $moved, $role);
-
-        return new AtomicTransferResultDTO(
-            OperationTypeEnum::ATOMIC_TRANSFER,
-            null,
-            false,
-            new BindingStateResultDTO($sourceBefore, $sourceAfter, true, 2, [$sourceEvent]),
-            new BindingStateResultDTO($targetBefore, $targetAfter, true, 2, [$targetEvent]),
-            $transferred,
-            null,
-            2,
-            2,
-            [$sourceEvent, $targetEvent],
         );
     }
 

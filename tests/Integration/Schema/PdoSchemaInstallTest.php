@@ -37,13 +37,13 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         self::assertIsArray($row);
         self::assertSame('utf8mb4_bin', $row['COLLATION_NAME']);
 
-        $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' AND (COLUMN_COMMENT IS NULL OR CHAR_LENGTH(TRIM(COLUMN_COMMENT)) < 8)");
+        $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' AND (COLUMN_COMMENT IS NULL OR CHAR_LENGTH(TRIM(COLUMN_COMMENT)) < 8)");
         self::assertNotFalse($statement);
         self::assertSame('0', (string) $statement->fetchColumn(), 'Every package column must carry a meaningful schema comment.');
 
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() "
-            . "AND TABLE_NAME LIKE 'maa\\_slug\\_%' AND INDEX_NAME = 'PRIMARY' ORDER BY BINARY TABLE_NAME, SEQ_IN_INDEX",
+            . "AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' AND INDEX_NAME = 'PRIMARY' ORDER BY BINARY TABLE_NAME, SEQ_IN_INDEX",
         );
         self::assertNotFalse($statement);
         self::assertSame([
@@ -64,7 +64,7 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
             (new PdoSchemaVerifier($this->pdo))->assertInstalled();
 
             $this->dropSchemaForUpgradeProof();
-            $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%'");
+            $statement = $this->pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'");
             self::assertNotFalse($statement);
             self::assertSame('0', (string) $statement->fetchColumn(), 'cleanup iteration ' . $iteration);
         }
@@ -144,7 +144,12 @@ final class PdoSchemaInstallTest extends MySqlIntegrationTestCase
         $binding = new BindingIdentityDTO($scope, new EntityReference('article', 'primary'));
         $criteria = new ResolutionCriteria($scope, 'retained-alias');
         $before = $this->readRows('SELECT * FROM maa_slug_registry ORDER BY id');
-        self::assertSame('current-origin', $engine->resolve($criteria)->currentSlug?->value);
+        try {
+            $engine->resolve($criteria);
+            self::fail('The public read accepted an incomplete Schema 003.');
+        } catch (SlugRuntimeCompatibilityException $exception) {
+            self::assertStringContainsString($reason, $exception->getMessage());
+        }
 
         $this->pdo->beginTransaction();
         try {
@@ -377,7 +382,7 @@ SQL;
     /** Counts fixture package tables in the disposable test database. */
     private function examplePackageTableCount(): int
     {
-        $result = $this->pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(TABLE_NAME, 9) = 'maa_slug_'");
+        $result = $this->pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'");
         self::assertNotFalse($result);
         $count = $result->fetchColumn();
         self::assertIsInt($count);

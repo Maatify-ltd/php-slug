@@ -65,7 +65,7 @@ The requirements and examples below are for RC.3.
 | PHP (Composer) | `>=8.4.27 <8.5.0 \|\| >=8.5.12 <9.0.0` |
 | Database | PDO MySQL; `mysql:8.0.36` is the CI reproducibility target |
 | Extensions | `ext-filter`, `ext-intl`, `ext-mbstring`, `ext-pdo`, `ext-pdo_mysql` |
-| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
+| Direct packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.2` (temporary RC dependency) |
 
 CI verifies PHP 8.4 and 8.5. Composer also admits newer PHP 8 minors within this range. Each newer minor needs its own security and compatibility evidence before it can be listed as supported.
 
@@ -76,7 +76,7 @@ Built-in profiles require the normalization and transliteration capabilities pro
 Once RC.3 is published to Packagist, install the exact target and its Persistence dependency using the following command. Keep your project's `minimum-stability` set to `stable`; the two `@RC` allowances apply to these packages.
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ```
 
 **Upgrading from RC.2.** Stop Slug traffic and apply the additive `003_registry_lock_projection.sql` migration before enabling the RC.3 persisted runtime. Follow the [schema upgrade guide](schema/mysql/README.md#installation-and-upgrade) for the backfill and verification steps. Update any pagination imports from the retired `maatify/persistence` dependency to the [types from `maatify/php-persistence`](SLUG_PACKAGE_REFERENCE.md#10-management-resolution-and-pagination).

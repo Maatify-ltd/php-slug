@@ -183,7 +183,7 @@ assert_no_schema_residue() {
             getenv("SLUG_TEST_DB_PASSWORD"),
             [PDO::ATTR_TIMEOUT => 2, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
         );
-        $count = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 0x6d61615f736c75675f25")->fetchColumn();
+        $count = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 0x6d61615f736c75675f")->fetchColumn();
         if ($count !== 0) {
             fwrite(STDERR, "Package schema residue detected: {$count} table(s).\n");
             exit(1);
@@ -212,8 +212,12 @@ run_workflow() {
         mariadb-snapshot)
             SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION=1 vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
                 tests/System/Lifecycle/HostSnapshotMutationSystemTest.php \
+                tests/System/Lifecycle/CandidateCollationSystemTest.php \
+                tests/System/Lifecycle/SameBindingCollationSystemTest.php \
                 tests/System/Resolution/AvailabilityObservationSystemTest.php \
-                tests/System/Resolution/ReadCapabilitySystemTest.php
+                tests/System/Resolution/ReadCapabilitySystemTest.php \
+                tests/System/Resolution/PersistedAdmissionSystemTest.php \
+                tests/System/Resolution/PersistenceContractSystemTest.php
             ;;
         consumer)
             php tests/Consumer/run.php

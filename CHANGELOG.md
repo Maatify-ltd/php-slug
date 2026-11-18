@@ -12,10 +12,11 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 ### Changed
 
 - The PHP constraint is now `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5.
-- Management pagination replaces `maatify/persistence` with `maatify/php-persistence` at `1.0.0-rc.1`. Update `PageRequest`, `SortDirectionEnum`, and `PageResultDTO` imports.
+- Management pagination replaces `maatify/persistence` with `maatify/php-persistence` at `1.0.0-rc.2`. Update `PageRequest`, `SortDirectionEnum`, and `PageResultDTO` imports.
 
 ### Fixed
 
+- Matched same-Binding lifecycle claims using Registry collation equality across changes, aliases, restoration, release, transfers and their replacements, preserving stored slug bytes, no-op behavior, and Host transaction ownership.
 - Restored NFC after Unicode lowercasing before grammar, length checks, and generated truncation, preserving profile keys and existing valid outputs.
 - Made advisory PDO availability observe the claim and its owner together during concurrent release, purge, reuse, and transfer.
 - Kept public PDO query verification read-only; first mutations still perform the separate rollback-protected write probes.
@@ -28,6 +29,18 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Declared `ext-filter` for runtime integer validation and hardened the persisted lifecycle example against deleting pre-existing Slug tables or views.
 - Made PDO consumer reads consistent across Scope, Binding, and Registry state. Fixed transition, lifecycle mutations, and operation replay when the Host transaction has an older snapshot.
 - Closed capability-probe results before reusing unbuffered PDO connections. MariaDB writes require `innodb_snapshot_isolation=OFF` where available. Non-locking reads work with either setting, and connection failures retain their PDO exception type.
+- Return `SlugNotFoundException` for absent mutation targets regardless of whether their Scope exists. Verify PDO and Schema 003 for persisted resolution, require enforced write constraints, and treat the package table prefix literally.
+- Require the `CurrentSlugDTO` revision and current canonical Claim to match its Binding snapshot. A mismatched Claim raises `SlugInvalidArgumentException`. An equivalent Claim snapshot supplied as a separate object is accepted.
+- Reject PDO session encodings that can change entity identities or result text, and report unsupported column casing as a connection compatibility error.
+- Verify required column definitions, index keys and foreign keys before the first write. Reject foreign current Claims in management reads and replay, and enforce the declared roles and list element types in public result DTOs.
+- Recheck persisted compatibility when the selected database changes. Reject replay revisions and current slugs that disagree with the after state, and reject inconsistent Registry ownership, Scope, and claim roles in `searchBindings()`.
+- Reject persisted calls that could start an implicit transaction when `autocommit` is disabled and the Host has no active transaction. Reject incompatible additional required columns during schema verification.
+- Reject replay snapshots with inconsistent before and after Binding identities, conflicting History, or transition and adoption evidence that disagrees with the operation. Verify participant IDs and roles against persisted operation evidence, current adoption and transfer against the target pointer, and History against the recorded sequence range.
+- Reject mutation outcomes and History that contradict the operation, and reject adoption or transfer snapshots that unexpectedly replace a current Claim or change its Binding status.
+- Validate the current Claim in mutation results and match alias History to the resulting Claim. Enforce transition and transfer participant revisions and keep the same source Claim in a MOVE.
+- Reject contradictory replay evidence for released and duplicate claims, transfer and transition participants, and their counterpart identities in History.
+- Verify the recorded transition source and requested mode during replay. Reject reused keys in current-claim replacements, missing former historical claims after an ordinary replacement, and duplicate release-all History.
+- Accept compatible expression defaults on additional MySQL columns while continuing to reject generated columns.
 - Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 
 ## [1.0.0-rc.2] - 2026-09-25
