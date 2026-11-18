@@ -61,9 +61,11 @@ $engine = SlugEngineFactory::create(
 );
 ```
 
-The Host creates the `PDO` connection and applies the package schema in its environment. [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) demonstrates construction and cleanup through the canonical Integration environment.
+The Host creates the `PDO` connection and applies the [ordered schema](../../schema/mysql/README.md#installation-and-upgrade), including the completed Schema 003 migration, before using persisted reads or writes. [`examples/persisted-lifecycle.php`](../../examples/persisted-lifecycle.php) demonstrates construction and cleanup through the canonical Integration environment.
 
-Public queries can use a SELECT-only account or an existing Host READ ONLY transaction. Query verification does not write or open a transaction. Mutations require write privileges and separately verify write capabilities before the first write; the package preserves any outer transaction.
+Public queries, including `resolve()` when it reads persisted state, can use a SELECT-only account or an existing Host READ ONLY transaction. Query verification does not write or open a transaction.
+
+For mutations, keep `foreign_key_checks=ON` on the Host PDO session and grant write privileges. The package checks write capabilities separately and preserves any outer transaction.
 
 On MariaDB, if the server exposes `innodb_snapshot_isolation`, set it to `OFF` on the PDO session before opening a transaction that writes Slug state. Non-locking reads work with either setting. See the [PDO and transaction contract](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 

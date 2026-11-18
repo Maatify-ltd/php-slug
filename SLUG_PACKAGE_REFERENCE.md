@@ -749,9 +749,9 @@ SlugUnsupportedDriverException, SlugPersistenceInvariantException
 
 The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
 
-Before acquiring the Scope lock, a lifecycle mutation throws `SlugRuntimeCompatibilityException` if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`.
+Persisted queries, including `resolve()` when it consults persisted state, and lifecycle mutations throw `SlugRuntimeCompatibilityException` during schema verification if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`. For mutations, this verification precedes the Scope lock.
 
-On a server that exposes `innodb_snapshot_isolation`, the same exception reports an unsupported session setting before package mutation, including after the engine has verified the installed schema. A PDO failure while reading the setting propagates unchanged.
+Mutations throw `SlugRuntimeCompatibilityException` before taking the Scope lock if `foreign_key_checks` is disabled or if an exposed `innodb_snapshot_isolation` setting is enabled. These checks run even after successful schema verification. The settings stay under Host control, and a PDO failure while reading either setting propagates unchanged.
 
 ## 13. Release State
 

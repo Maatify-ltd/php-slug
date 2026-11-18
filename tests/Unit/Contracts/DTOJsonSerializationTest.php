@@ -6,6 +6,7 @@ namespace Maatify\Slug\Tests\Unit\Contracts;
 
 use Maatify\Slug\Lifecycle\DTO\AliasDTO;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
+use Maatify\Slug\Lifecycle\DTO\BindingDTO;
 use Maatify\Slug\Canonicalization\DTO\CanonicalSlugDTO;
 use Maatify\Slug\Lifecycle\DTO\CurrentSlugDTO;
 use Maatify\Slug\Lifecycle\DTO\OwnershipClaimResultDTO;
@@ -19,6 +20,8 @@ use Maatify\Slug\Lifecycle\Consumer\DTO\SlugResolutionDTO;
 use Maatify\Slug\Lifecycle\DTO\TransferReplacementIntentDTO;
 use Maatify\Slug\Lifecycle\Consumer\Enum\AvailabilityStatusEnum;
 use Maatify\Slug\Lifecycle\Enum\ClaimIntentModeEnum;
+use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\InputFormCanonicalityEnum;
 use Maatify\Slug\Lifecycle\Consumer\Enum\MatchKindEnum;
 use PHPUnit\Framework\TestCase;
@@ -73,6 +76,54 @@ final class DTOJsonSerializationTest extends TestCase
 
         $this->expectException(\Maatify\Slug\Exception\SlugInvalidArgumentException::class);
         new CurrentSlugDTO($binding, $claim, $binding->state->revision + 1);
+    }
+
+    /** @return iterable<string, array{BindingDTO, RegistryClaimDTO}> */
+    public static function nonCurrentClaimCases(): iterable
+    {
+        $identity = ContractFixtures::identity(1);
+        $binding = ContractFixtures::binding($identity, 100);
+        $slug = ContractFixtures::slug('hello');
+        $alias = ContractFixtures::claim($identity, $slug, 200, RegistryRoleEnum::ACTIVE_ALIAS);
+        $foreign = ContractFixtures::claim(ContractFixtures::identity(2), $slug, 200);
+
+        yield 'different claim ID' => [$binding, ContractFixtures::claim($identity, $slug, 201)];
+        yield 'different owner with the same claim ID' => [$binding, $foreign];
+        yield 'alias with the same claim ID' => [$binding, $alias];
+        yield 'stale snapshot of the same claim' => [$binding, new RegistryClaimDTO(
+            200,
+            $identity,
+            $slug,
+            RegistryRoleEnum::CURRENT_CANONICAL,
+            ContractFixtures::date(),
+            ContractFixtures::date()->modify('-1 second'),
+        )];
+        yield 'Binding incorrectly supplies an alias as current' => [
+            ContractFixtures::binding($identity, 100, role: RegistryRoleEnum::ACTIVE_ALIAS),
+            $alias,
+        ];
+        yield 'Binding incorrectly supplies another owner’s claim as current' => [
+            new BindingDTO(100, $identity, $binding->state, $foreign, $binding->createdAt, $binding->updatedAt),
+            $foreign,
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('nonCurrentClaimCases')]
+    public function testCurrentSlugRejectsClaimDifferentFromBindingCurrentClaim(BindingDTO $binding, RegistryClaimDTO $claim): void
+    {
+        $this->expectException(\Maatify\Slug\Exception\SlugInvalidArgumentException::class);
+        new CurrentSlugDTO($binding, $claim, $binding->state->revision);
+    }
+
+    public function testCurrentSlugAcceptsAnEquivalentCurrentClaimSnapshot(): void
+    {
+        $binding = ContractFixtures::binding(ContractFixtures::identity(1), 100);
+        $claim = ContractFixtures::claim(ContractFixtures::identity(1), ContractFixtures::slug('hello'), 200);
+
+        $result = new CurrentSlugDTO($binding, $claim, $binding->state->revision);
+
+        self::assertNotSame($binding->currentClaim, $claim);
+        self::assertSame($claim, $result->claim);
     }
 
     public function testInternalOwnershipClaimResultPreservesItsSerializedFields(): void

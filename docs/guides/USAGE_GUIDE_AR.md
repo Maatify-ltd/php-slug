@@ -62,9 +62,11 @@ $engine = SlugEngineFactory::create(
 );
 ~~~
 
-ينشئ Host اتصال PDO ويطبق schema الحزمة في بيئته. يوضح examples/persisted-lifecycle.php الإنشاء والتنظيف عبر بيئة Integration canonical.
+ينشئ الـHost اتصال `PDO` ويطبّق [ملفات الـSchema بالترتيب](../../schema/mysql/README.md#installation-and-upgrade)، مع إكمال ترحيل Schema 003 قبل أي قراءة أو كتابة تصل للتخزين. يوضح [المثال التنفيذي](../../examples/persisted-lifecycle.php) الإنشاء والتنظيف باستخدام بيئة الـIntegration المعتمدة.
 
-يمكن للقراءات العامة استخدام حساب بصلاحية SELECT فقط أو معاملة READ ONLY مفتوحة يملكها Host. لا ينفذ تحقق القراءة كتابة أو يفتح معاملة. تتطلب عمليات التغيير صلاحيات كتابة وتحققًا مستقلًا قبل أول كتابة، مع بقاء المعاملة الخارجية تحت تحكم Host.
+يمكن للقراءات العامة، ومنها `resolve()` عند قراءة الحالة المخزّنة، استخدام حساب بصلاحية `SELECT` فقط أو معاملة `READ ONLY` مفتوحة يملكها الـHost. لا ينفّذ تحقق القراءة كتابةً ولا يفتح معاملة.
+
+تحتاج عمليات الكتابة إلى صلاحيات كتابة وإبقاء `foreign_key_checks=ON` على جلسة `PDO` الخاصة بالـHost. تتحقق الحزمة من قدرات الكتابة بشكل مستقل، وتبقى المعاملة الخارجية تحت تحكم الـHost.
 
 على MariaDB، إذا كان الخادم يوفّر `innodb_snapshot_isolation`، اضبطه على `OFF` لاتصال PDO قبل فتح معاملة تكتب حالة Slug. القراءات التي لا تأخذ أقفالًا تعمل مع الإعدادين. راجع [عقد PDO والمعاملات](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 
