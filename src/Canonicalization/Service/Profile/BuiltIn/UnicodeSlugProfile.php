@@ -27,7 +27,7 @@ final class UnicodeSlugProfile extends AbstractBuiltinSlugProfile
     public function generateFromSource(string $source): GeneratedSlugDTO
     {
         $this->assertSafe($source, 'source');
-        $value = $this->lower($this->normalize($source, 'source'), 'source');
+        $value = $this->normalize($this->lower($this->normalize($source, 'source'), 'source'), 'source');
         $value = preg_replace('/[^\p{L}\p{M}\p{Nd}-]+/u', '-', $value);
         if ($value === null) {
             throw new SlugCannotBeGeneratedException('Unicode source generation failed.');
@@ -77,11 +77,11 @@ final class UnicodeSlugProfile extends AbstractBuiltinSlugProfile
         CanonicalSlugRules::assertUnicode($candidate);
     }
 
-    /** Applies NFC and lowercase conversion before enforcing Unicode slug syntax. */
+    /** Restores NFC after lowercase conversion before enforcing syntax and length. */
     private function canonicalizeExact(string $value, string $field): string
     {
         $this->assertSafe($value, $field);
-        $canonical = $this->lower($this->normalize($value, $field), $field);
+        $canonical = $this->normalize($this->lower($this->normalize($value, $field), $field), $field);
         CanonicalSlugRules::assertUnicode($canonical, $field);
         return $canonical;
     }

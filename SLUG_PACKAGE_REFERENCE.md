@@ -157,9 +157,9 @@ Each canonicalization operation is idempotent within its scope. `hello!!!` is re
 
 ### 5.3 Profiles, Safety, and Length
 
-`unicode-v1` uses NFC and ICU `Any-Lower`, preserves Arabic, and permits canonical code points from `L/M/Nd` plus the ASCII hyphen. `ascii-v1` uses NFC followed by ICU `Any-Latin; Latin-ASCII` and ASCII lowercase. Locked examples are `آيفون ١٧ برو` → `آيفون-١٧-برو` and `Über Café` → `uber-cafe`.
+`unicode-v1` uses NFC → ICU `Any-Lower` → NFC, preserves Arabic, and permits canonical code points from `L/M/Nd` plus the ASCII hyphen. `ascii-v1` uses NFC followed by ICU `Any-Latin; Latin-ASCII` and ASCII lowercase. The final NFC token determines length and generated truncation. Lowercasing can decompose an NFC input, so NFC is restored before grammar and length checks in generation, claims, and lookup. Locked examples are `آيفون ١٧ برو` → `آيفون-١٧-برو` and `Über Café` → `uber-cafe`.
 
-The current built-in algorithms remain unchanged by the runtime portability remediation. Incompatible profile semantic changes must not be introduced silently under the same key.
+The original runtime portability remediation preserved the built-in algorithms (`DEC-001`). The NFC-closure correctness repair is explicitly recorded in `DEC-008`. Incompatible profile semantic changes must not be introduced silently under the same key.
 
 Before any lossy transformation, invalid UTF-8, NUL, `Cc`, `Cs`, `Cf`, `/`, `\\`, and an empty result are rejected. Mixed scripts are allowed in `unicode-v1` when the remaining rules are satisfied.
 
@@ -422,7 +422,8 @@ The persisted path uses direct PDO inside package infrastructure only:
 - Connection charset is `utf8mb4`; timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
 - MySQL and compatible MariaDB sessions use the same PDO adapter and schema. On MariaDB servers that expose `innodb_snapshot_isolation`, lifecycle writes require `OFF` on the injected PDO before beginning a Host write transaction. Non-locking reads work with either setting. The package leaves session settings under Host control.
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
-- The package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
+- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. The first mutation separately verifies transaction/savepoint and write capabilities with rollback-protected probes; successful reads do not bypass these checks.
+- For mutations, the package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
 - First-create races on Binding and Scope are reread under lock in the defined paths. There is no savepoint for an attempted `INSERT` and no automatic deadlock retry.
@@ -436,7 +437,7 @@ On failure or invariant violation, partial mutation, uncommitted History, and un
 
 `resolve` reads a decoded segment and returns `SlugResolutionDTO` even for `NONE` and `INVALID`. `MatchKindEnum` distinguishes `CURRENT`, `ALIAS`, `HISTORICAL`, `RETIRED_ALIAS`, and `NONE`, and does not return live resolution for `RELEASED`. `INACTIVE` remains matchable; the Host owns the 404, 410, or redirect decision.
 
-When `getBinding()`, `getCurrent()`, or `resolve()` consults persisted state through the PDO factory, it observes the Scope, Binding, and relevant registry state in a single consistent read under `READ COMMITTED` or `REPEATABLE READ` isolation. These reads use the Host's PDO and leave its transaction and isolation settings under its control.
+When `getBinding()`, `getCurrent()`, `resolve()`, or `checkAvailability()` consults persisted state through the PDO factory, it observes the Scope, Binding, and relevant registry state in a single consistent read under `READ COMMITTED` or `REPEATABLE READ` isolation. These reads use the Host's PDO and leave its transaction and isolation settings under its control.
 
 Management queries separate the live Registry from History:
 

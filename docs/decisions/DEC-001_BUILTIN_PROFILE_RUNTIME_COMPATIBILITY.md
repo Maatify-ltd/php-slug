@@ -16,6 +16,10 @@ The package declared PHP `^8.4` and `ext-intl` at the RC.1 decision boundary. Ex
 
 The previous runtime admission rejected built-in profiles unless the host provided exactly ICU 74 and Unicode 15.1. This created host coupling that was not visible in Composer requirements: installation succeeded, then the first supported built-in Public API path failed. The package is reusable and Host-agnostic, so an exact operating-system ICU pin is not an appropriate consumer contract when the required behavior is available.
 
+## Current Applicability
+
+The capability-based runtime decision remains active. [DEC-008](DEC-008_UNICODE_NFC_CLOSURE.md) explicitly refines Unicode NFC closure after lowercase for RC.3; the unchanged-pipeline statements below describe the original RC.1 portability remediation.
+
 ## Decision
 
 `ascii-v1` and `unicode-v1` fix their profile algorithms and observable contracts, not the ICU version installed by the operating system. Built-in profiles use the runtime capabilities declared by `ext-intl`.

@@ -2,9 +2,17 @@
 
 set -euo pipefail
 
+unset CDPATH
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target='1.0.0-rc.3'
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/slug-release-active.XXXXXXXX")"
+temporary_root="${TMPDIR:-/tmp}"
+if [[ "$temporary_root" != /* ]]; then
+    temporary_root="./$temporary_root"
+fi
+temporary_root="$(cd -- "$temporary_root" && pwd -P)"
+export TMPDIR="$temporary_root"
+scratch="$(mktemp -d "$temporary_root/slug-release-active.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 base="$scratch/base"
 
@@ -192,7 +200,8 @@ assert_published_fixture dist 1 'SLUG_PACKAGE_REFERENCE.md must identify exactly
 
 # A synthetic local tag and a Composer probe exercise the actual shell driver without network access.
 git -C "$stale_repo" -c tag.gpgSign=false tag "v$target" "$published_sha"
-mkdir -p "$scratch/relative-run/bin" "$scratch/relative-run/runtime-temp" "$scratch/cdpath/runtime-temp"
+mkdir -p "$scratch/relative-run/bin" "$scratch/relative-run/runtime-temp" "$scratch/cdpath/runtime-temp" \
+    "$scratch/relative-run/-temporary" "$scratch/relative-run/-"
 cat > "$scratch/relative-run/bin/composer" <<'SHELL'
 #!/usr/bin/env bash
 set -eu
@@ -224,7 +233,9 @@ assert_relative_tmpdir() {
 
 assert_relative_tmpdir . ''
 assert_relative_tmpdir runtime-temp "$scratch/cdpath"
-printf '%s\n' 'Published artifact regression fixtures passed (6 cases).'
+assert_relative_tmpdir -temporary "$scratch/cdpath"
+assert_relative_tmpdir - "$scratch/cdpath"
+printf '%s\n' 'Published artifact regression fixtures passed (8 cases).'
 changelog_fixture bracketed 0 "$pass" "## [$target]"
 changelog_fixture empty-unreleased 0 "$pass" '## [Unreleased]' '' "## $target"
 changelog_fixture empty-unreleased-and-bracketed 0 "$pass" '## [Unreleased]' '' "## [$target]"

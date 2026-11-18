@@ -103,7 +103,15 @@ jobs:
         run: bash tools/ci/run-gate.sh latest-tests
       - name: Run the MariaDB snapshot and PDO regression gate
         if: matrix.php == '8.5'
-        run: bash tools/ci/run-gate.sh mariadb-snapshot
+        run: |
+          temp_caller="$(mktemp -d "$RUNNER_TEMP/slug-integration-path.XXXXXXXX")"
+          trap 'rm -rf -- "$temp_caller"' EXIT
+          mkdir "$temp_caller/physical temporary"
+          ln -s 'physical temporary' "$temp_caller/-"
+          (
+            cd "$temp_caller"
+            TMPDIR=- bash "$GITHUB_WORKSPACE/tools/ci/run-integration.sh" mariadb-snapshot
+          )
 
   lowest-tests:
     name: Lowest dependencies on PHP 8.4
@@ -295,6 +303,18 @@ jobs:
         run: bash tools/ci/test-release-artifact-inactive.sh
       - name: Run release archive regression tests
         run: bash tools/ci/test-release-artifact-active.sh
+      - name: Verify TMPDIR resolution at all seven shell entry points
+        run: bash tools/ci/test-tmpdir-entrypoints.sh
+      - name: Verify shell path portability with actual gate commands
+        run: |
+          temp_caller="$(mktemp -d "$RUNNER_TEMP/slug-shell-path.XXXXXXXX")"
+          trap 'rm -rf -- "$temp_caller"' EXIT
+          mkdir "$temp_caller/physical temporary"
+          ln -s 'physical temporary' "$temp_caller/-"
+          (
+            cd "$temp_caller"
+            TMPDIR=- bash "$GITHUB_WORKSPACE/tools/ci/test-shell-paths.sh" "$RELEASE_ARTIFACT_TARGET"
+          )
       - name: Verify the release artifact or inactive state
         run: bash tools/ci/run-gate.sh release-artifact "$RELEASE_ARTIFACT_SHA" "$RELEASE_ARTIFACT_TARGET"
 

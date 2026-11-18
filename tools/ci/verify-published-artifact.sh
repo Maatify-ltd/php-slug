@@ -16,7 +16,12 @@ if [[ "$(git -C "$repo_root" rev-parse --verify "refs/tags/v$target^{commit}")" 
     exit 1
 fi
 
-temp_root="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)"
+temp_root="${TMPDIR:-/tmp}"
+if [[ "$temp_root" != /* ]]; then
+    temp_root="./$temp_root"
+fi
+temp_root="$(cd -- "$temp_root" && pwd -P)"
+export TMPDIR="$temp_root"
 scratch="$(mktemp -d "$temp_root/slug-published-artifact.XXXXXXXX")"
 trap 'status=$?; rm -rf -- "$scratch"; if [[ $status -ne 0 ]]; then echo "PAV=NOT PASS" >&2; fi' EXIT
 mkdir -p "$scratch"/{home,cache,tmp,project}

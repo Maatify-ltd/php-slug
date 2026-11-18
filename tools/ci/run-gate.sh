@@ -2,6 +2,15 @@
 
 set -euo pipefail
 
+unset CDPATH
+if [[ -n "${TMPDIR:-}" ]]; then
+    if [[ "$TMPDIR" != /* ]]; then
+        TMPDIR="./$TMPDIR"
+    fi
+    TMPDIR="$(cd -- "$TMPDIR" && pwd -P)"
+    export TMPDIR
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
@@ -204,6 +213,7 @@ runtime_portability() {
     vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
         tests/Unit/Profile/RuntimeCompatibilityTest.php \
         tests/Unit/Canonicalization/ProfileCanonicalizationTest.php \
+        tests/Unit/Canonicalization/UnicodeNfcClosureTest.php \
         tests/Unit/Validation/ProfileInputValidationTest.php
     php examples/canonicalization.php
 }

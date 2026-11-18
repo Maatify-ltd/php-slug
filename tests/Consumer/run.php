@@ -294,6 +294,13 @@ try {
     expect($lookup instanceof LookupCanonicalizationDTO, 'Lookup canonicalization did not return the public LookupCanonicalizationDTO.');
     expect($lookup->canonicality === InputFormCanonicalityEnum::NON_CANONICAL, 'Lookup canonicalization did not classify non-canonical input.');
 
+    foreach (["J\u{030C}" => "\u{01F0}", "\u{03AA}\u{0301}" => "\u{0390}"] as $source => $expected) {
+        $unicodeKey = new SlugProfileKey('unicode-v1');
+        expect($text->generateFromSource($unicodeKey, $source)->slug->value === $expected, 'Unicode generation did not restore NFC after lowercase.');
+        expect($text->canonicalizeClaim($unicodeKey, $source)->slug->value === $expected, 'Unicode claim did not restore NFC after lowercase.');
+        expect($text->canonicalizeLookup($unicodeKey, $source)->canonicalSlug?->value === $expected, 'Unicode lookup did not restore NFC after lowercase.');
+    }
+
     $scopeProfile = new ScopeProfileRequestDTO(new SlugScope('consumer-harness-' . $run, null, null), $profileKey);
     $identity = new BindingIdentityDTO($scopeProfile, new EntityReference('product', 'consumer-entity-' . $run));
     $engine = SlugEngineFactory::create($pdo, $profiles, new AcceptAllReservedSlugPolicy(), new FrozenClock());
@@ -339,6 +346,22 @@ try {
     expect($scopePage->total === 1 && $scopePage->filtered === 1, 'Scope pagination returned unexpected counts.');
     expect(count($scopePage->data) === 1 && $scopePage->data[0]->scope->namespace === 'consumer-harness-' . $run, 'Scope pagination returned an unexpected row.');
     expect($scopePage->toArray()['pagination']['sort_by'] === 'id', 'Scope pagination changed its default sort key.');
+
+    $readPdo = connectToDatabase($configuration);
+    $readPdo->exec('SET TRANSACTION READ ONLY');
+    $readPdo->beginTransaction();
+    try {
+        $coldReader = SlugEngineFactory::create($readPdo, $profiles, new AcceptAllReservedSlugPolicy(), new FrozenClock());
+        expect($coldReader->getCurrent(new \Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria($identity))?->revision === 2, 'A cold READ ONLY query failed.');
+        expect($readPdo->inTransaction(), 'The package ended the Host read-only transaction.');
+        $availability = $coldReader->checkAvailability(new \Maatify\Slug\Lifecycle\Consumer\Criteria\AvailabilityCriteria($scopeProfile, 'updated-page', $identity));
+        expect($availability->status === \Maatify\Slug\Lifecycle\Consumer\Enum\AvailabilityStatusEnum::OWNED_BY_SAME_BINDING, 'Read-only availability returned an unexpected owner.');
+        expect($availability->owner?->state->revision === 2, 'Read-only availability returned an unexpected owner revision.');
+        expect($readPdo->inTransaction(), 'Availability ended the Host transaction.');
+    } finally {
+        $readPdo->rollBack();
+    }
+    expect(! $readPdo->inTransaction(), 'The Host could not roll back its read-only transaction.');
 
     runConcurrencyProof($pdo, $engine, $profileKey, $run, $configuration);
 } finally {

@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset CDPATH
+
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "Release Artifact Verification requires $1." >&2
@@ -44,7 +46,13 @@ if ! php -r 'exit(class_exists(PharData::class) ? 0 : 1);'; then
     exit 1
 fi
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/slug-release-artifact.XXXXXXXX")"
+temporary_root="${TMPDIR:-/tmp}"
+if [[ "$temporary_root" != /* ]]; then
+    temporary_root="./$temporary_root"
+fi
+temporary_root="$(cd -- "$temporary_root" && pwd -P)"
+export TMPDIR="$temporary_root"
+scratch="$(mktemp -d "$temporary_root/slug-release-artifact.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 checkout="$scratch/checkout"
 export COMPOSER_HOME="$scratch/composer-home"

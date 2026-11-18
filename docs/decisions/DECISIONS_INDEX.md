@@ -6,7 +6,7 @@ It is a discovery registry only. It is not a Decision Record, does not duplicate
 
 ## Current State
 
-The active decisions cover profile compatibility and generated candidates, shared pagination, Registry lock boundaries, PDO session compatibility, and verification of distributed releases.
+The active decisions cover profile compatibility and generated candidates, shared pagination, Registry lock boundaries, PDO session compatibility, read-safe PDO observations, Unicode NFC closure, and verification of distributed releases.
 
 ## Registered Decisions
 
@@ -19,3 +19,5 @@ The active decisions cover profile compatibility and generated candidates, share
 | `DEC-005` | Registry Lock Projection Index | `ACTIVE` | `/` — InnoDB lock boundaries for Registry lifecycle current reads | [DEC-005_REGISTRY_LOCK_PROJECTION_INDEX.md](DEC-005_REGISTRY_LOCK_PROJECTION_INDEX.md) | `SLUG_PACKAGE_REFERENCE.md` §§9, 10.2 and `schema/mysql/README.md` | `DEC-003` | — |
 | `DEC-006` | PDO Session Compatibility | `ACTIVE` | `/` — Unbuffered PDO and transaction snapshot compatibility | [DEC-006_PDO_SESSION_COMPATIBILITY.md](DEC-006_PDO_SESSION_COMPATIBILITY.md) | `SLUG_PACKAGE_REFERENCE.md` §§4, 9, 12 | — | — |
 | `DEC-007` | Custom Profile Generated Candidates | `ACTIVE` | `/` — Profile-owned canonical grammar in bounded generated allocation | [DEC-007_CUSTOM_PROFILE_GENERATED_CANDIDATES.md](DEC-007_CUSTOM_PROFILE_GENERATED_CANDIDATES.md) | `SLUG_PACKAGE_REFERENCE.md` §5.3 | — | — |
+| `DEC-008` | Unicode NFC Closure | `ACTIVE` | `/` — Built-in Unicode normalization after lowercase | [DEC-008_UNICODE_NFC_CLOSURE.md](DEC-008_UNICODE_NFC_CLOSURE.md) | `SLUG_PACKAGE_REFERENCE.md` §5.3 | — | — |
+| `DEC-009` | Read-safe PDO Observation | `ACTIVE` | `/` — Query verification and consistent availability | [DEC-009_READ_SAFE_PDO_OBSERVATION.md](DEC-009_READ_SAFE_PDO_OBSERVATION.md) | `SLUG_PACKAGE_REFERENCE.md` §§9–10 | — | — |
