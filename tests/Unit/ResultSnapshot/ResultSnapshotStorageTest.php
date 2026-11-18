@@ -7,6 +7,8 @@ namespace Maatify\Slug\Tests\Unit\ResultSnapshot;
 use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotEncoder;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
+use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Repository\Operation\ResultSnapshotMetadata;
 use Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotStorage;
@@ -26,6 +28,7 @@ final class ResultSnapshotStorageTest extends TestCase
             'mutation' => ContractFixtures::mutation(),
             'transition' => ContractFixtures::transition(),
             'transfer' => ContractFixtures::transfer(),
+            'alias-transfer' => ContractFixtures::nonCurrentTransfer(RegistryRoleEnum::ACTIVE_ALIAS),
             'adoption' => ContractFixtures::adoption(),
             default => throw new \LogicException('Unknown result fixture.'),
         };
@@ -38,7 +41,7 @@ final class ResultSnapshotStorageTest extends TestCase
             $changed = self::replaceSnapshotValue($changed, ['result', ...$secondPath], $replacement);
         }
         $json = json_encode($changed, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
-        $metadata = new ResultSnapshotMetadata($family, 1, $fixture->operationType, $key, $json);
+        $metadata = new ResultSnapshotMetadata($family === 'alias-transfer' ? 'transfer' : $family, 1, $fixture->operationType, $key, $json);
 
         $this->expectException(\Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException::class);
         $this->expectExceptionMessage('Invalid result snapshot');
@@ -48,6 +51,17 @@ final class ResultSnapshotStorageTest extends TestCase
     /** @return iterable<string, array{string, list<int|string>, mixed, 3?: list<int|string>}> */
     public static function conflictingResultEvidence(): iterable
     {
+        yield 'assignment reports release all' => ['mutation', ['change_type'], 'RELEASED_ALL'];
+        yield 'assignment reports alias history' => ['mutation', ['history_events', 0, 'event_type'], 'ALIAS_ADDED'];
+        yield 'assignment history names another slug' => ['mutation', ['history_events', 0, 'slug_snapshot'], 'unrelated-slug'];
+        yield 'assignment claims it assigned to an inactive state' => ['mutation', ['after', 'state', 'status'], 'INACTIVE'];
+        yield 'current adoption begins with a live Binding' => [
+            'adoption', ['before'], ContractFixtures::binding(ContractFixtures::identity(4), 400, 'existing', 500, BindingStatusEnum::ACTIVE, 0),
+        ];
+        yield 'alias transfer changes the target current claim' => [
+            'alias-transfer', ['target_result', 'after', 'state', 'current_slug'], 'unrelated-current', ['target_result', 'after', 'current_claim', 'slug'],
+        ];
+        yield 'alias transfer changes the source status' => ['alias-transfer', ['source_result', 'after', 'state', 'status'], 'INACTIVE'];
         yield 'transition after state' => ['transition', ['source_result', 'after', 'state', 'status'], 'ACTIVE'];
         yield 'transition destination claim' => ['transition', ['target_claim'], 'different-slug'];
         yield 'transition history omissions' => ['transition', ['history_events'], []];

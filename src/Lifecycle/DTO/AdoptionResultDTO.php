@@ -46,11 +46,22 @@ final readonly class AdoptionResultDTO implements JsonSerializable
         ) {
             throw new SlugInvalidArgumentException('The adopted claim and history event must match the adoption operation.');
         }
-        if (
-            $operationType === OperationTypeEnum::ADOPT_CURRENT
-            && ($after->state->status !== BindingStatusEnum::ACTIVE || ! $adoptedClaim->matches($after->currentClaim))
+        if ($after->state->revision - ($before?->state->revision ?? 0) !== 1) {
+            throw new SlugInvalidArgumentException('Adoption must advance the Binding revision once.');
+        }
+        if ($operationType === OperationTypeEnum::ADOPT_CURRENT) {
+            if (
+                ($before !== null && $before->state->status !== BindingStatusEnum::RELEASED)
+                || $after->state->status !== BindingStatusEnum::ACTIVE
+                || ! $adoptedClaim->matches($after->currentClaim)
+            ) {
+                throw new SlugInvalidArgumentException('Current adoption must activate a new or released Binding with the adopted claim.');
+            }
+        } elseif (
+            $before?->state->status !== $after->state->status
+            || $before->currentClaim?->matches($after->currentClaim) !== true
         ) {
-            throw new SlugInvalidArgumentException('Current adoption must activate the Binding with the adopted claim.');
+            throw new SlugInvalidArgumentException('Non-current adoption must preserve the Binding status and current claim.');
         }
     }
 

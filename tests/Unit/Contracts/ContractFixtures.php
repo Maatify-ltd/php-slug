@@ -249,6 +249,34 @@ final class ContractFixtures
         );
     }
 
+    /** Builds a transfer that leaves both current canonical claims in place. */
+    public static function nonCurrentTransfer(RegistryRoleEnum $role): AtomicTransferResultDTO
+    {
+        $source = self::identity(10, 'transfer-unit');
+        $target = self::identity(20, 'transfer-unit');
+        $sourceBefore = self::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 1);
+        $sourceAfter = self::binding($source, 100, 'source-current', 200, BindingStatusEnum::ACTIVE, 2);
+        $targetBefore = self::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 1);
+        $targetAfter = self::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 2);
+        $moved = self::slug('moved');
+        $transferred = self::claim($target, $moved, 999, $role);
+        $sourceEvent = self::history(100, 501, 2, $source, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $moved, $role);
+        $targetEvent = self::history(300, 502, 2, $target, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $moved, $role);
+
+        return new AtomicTransferResultDTO(
+            OperationTypeEnum::ATOMIC_TRANSFER,
+            null,
+            false,
+            new BindingStateResultDTO($sourceBefore, $sourceAfter, true, 2, [$sourceEvent]),
+            new BindingStateResultDTO($targetBefore, $targetAfter, true, 2, [$targetEvent]),
+            $transferred,
+            null,
+            2,
+            2,
+            [$sourceEvent, $targetEvent],
+        );
+    }
+
     /** Builds a successful current-claim adoption result with its adoption history event. */
     public static function adoption(int $bindingId = 400): AdoptionResultDTO
     {

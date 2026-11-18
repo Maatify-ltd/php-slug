@@ -36,6 +36,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Recheck persisted compatibility when the selected database changes. Reject replay revisions and current slugs that disagree with the after state, and reject inconsistent Registry ownership, Scope, and claim roles in `searchBindings()`.
 - Reject persisted calls that could start an implicit transaction when `autocommit` is disabled and the Host has no active transaction. Reject incompatible additional required columns during schema verification.
 - Reject replay snapshots with inconsistent before and after Binding identities, conflicting History, or transition and adoption evidence that disagrees with the operation. Verify participant IDs and roles against persisted operation evidence, current adoption and transfer against the target pointer, and History against the recorded sequence range.
+- Reject mutation outcomes and History that contradict the operation, and reject adoption or transfer snapshots that unexpectedly replace a current Claim or change its Binding status.
 - Accept compatible expression defaults on additional MySQL columns while continuing to reject generated columns.
 - Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 

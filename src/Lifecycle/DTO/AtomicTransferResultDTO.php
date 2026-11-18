@@ -6,6 +6,7 @@ namespace Maatify\Slug\Lifecycle\DTO;
 
 use JsonException;
 use JsonSerializable;
+use Maatify\Slug\Exception\SlugInvalidArgumentException;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
@@ -33,49 +34,35 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         public array $historyEvents,
     ) {
         if ($operationType !== OperationTypeEnum::ATOMIC_TRANSFER) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer result requires ATOMIC_TRANSFER.');
+            throw new SlugInvalidArgumentException('Transfer result requires ATOMIC_TRANSFER.');
         }
         if ($operationKey !== null && preg_match('/\A[a-f0-9]{32}\z/', $operationKey) !== 1) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
+            throw new SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
         }
         if ($sourceRevision < 0) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('sourceRevision must be non-negative.');
+            throw new SlugInvalidArgumentException('sourceRevision must be non-negative.');
         }
         if ($targetRevision < 0) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('targetRevision must be non-negative.');
+            throw new SlugInvalidArgumentException('targetRevision must be non-negative.');
         }
         if ($sourceRevision !== $sourceResult->revision || $targetRevision !== $targetResult->revision) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer revisions must match the participant after states.');
+            throw new SlugInvalidArgumentException('Transfer revisions must match the participant after states.');
         }
         if (! $targetResult->after->identity->equals($transferredClaim->binding)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('The transferred claim must belong to the target Binding.');
+            throw new SlugInvalidArgumentException('The transferred claim must belong to the target Binding.');
         }
         self::participantHistory($historyEvents, [$sourceResult->after->id, $targetResult->after->id], 'historyEvents');
-        if ($targetResult->before === null) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer target result requires its existing before state.');
-        }
         $transfersCurrent = $transferredClaim->role === RegistryRoleEnum::CURRENT_CANONICAL;
-        if (
-            $transfersCurrent && (
-                $targetResult->before->state->status !== BindingStatusEnum::RELEASED
-                || $targetResult->after->state->status !== BindingStatusEnum::ACTIVE
-                || ! $transferredClaim->matches($targetResult->after->currentClaim)
-            )
-        ) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Current transfer must activate the released target with the transferred claim.');
-        }
+        self::assertParticipantStates($sourceResult, $targetResult, $transferredClaim, $transfersCurrent);
         if ($transfersCurrent !== ($sourceReplacementResult !== null)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Current transfers require a source replacement result.');
+            throw new SlugInvalidArgumentException('Current transfers require a source replacement result.');
         }
         self::assertCompleteTransferHistory($sourceResult, $targetResult, $historyEvents, $transferredClaim);
-        if ($sourceReplacementResult !== null && ! in_array($sourceReplacementResult->changeType->value, ['CHANGED', 'RESTORED'], true)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer replacement must be changed or restored.');
-        }
         if ($sourceReplacementResult !== null && $sourceReplacementResult->operationType !== OperationTypeEnum::ATOMIC_TRANSFER) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer replacement must use ATOMIC_TRANSFER.');
+            throw new SlugInvalidArgumentException('Transfer replacement must use ATOMIC_TRANSFER.');
         }
         if ($sourceReplacementResult !== null && ($sourceReplacementResult->operationKey !== $operationKey || $sourceReplacementResult->replayed !== $replayed)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer replacement metadata must match the outer transfer.');
+            throw new SlugInvalidArgumentException('Transfer replacement metadata must match the outer transfer.');
         }
         if ($sourceReplacementResult !== null) {
             self::assertFinalReplacement($sourceResult, $sourceReplacementResult, $transferredClaim);
@@ -89,24 +76,24 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
     private static function participantHistory(array $items, array $bindingIds, string $field): void
     {
         if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
+            throw new SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
         }
         $lastParticipant = -1;
         $lastSequence = [];
         $lastId = [];
         foreach ($items as $item) {
             if (! $item instanceof HistoryEventDTO) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
+                throw new SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
             }
             $participant = array_search($item->bindingId, $bindingIds, true);
             if ($participant === false || $participant < $lastParticipant) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s has invalid participant ordering.', $field));
+                throw new SlugInvalidArgumentException(sprintf('%s has invalid participant ordering.', $field));
             }
             if ($participant > $lastParticipant) {
                 $lastParticipant = $participant;
             }
             if (isset($lastSequence[$item->bindingId]) && ($item->sequenceNo < $lastSequence[$item->bindingId] || ($item->sequenceNo === $lastSequence[$item->bindingId] && $item->id <= $lastId[$item->bindingId]))) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be ordered within each participant.', $field));
+                throw new SlugInvalidArgumentException(sprintf('%s must be ordered within each participant.', $field));
             }
             $lastSequence[$item->bindingId] = $item->sequenceNo;
             $lastId[$item->bindingId] = $item->id;
@@ -147,6 +134,37 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         ];
     }
 
+    /** Verifies the transfer effect on both participants' current claims and statuses. */
+    private static function assertParticipantStates(
+        BindingStateResultDTO $source,
+        BindingStateResultDTO $target,
+        RegistryClaimDTO $transferred,
+        bool $transfersCurrent,
+    ): void {
+        $sourceBefore = $source->before;
+        $targetBefore = $target->before;
+        if (
+            $sourceBefore?->currentClaim === null || $targetBefore === null
+            || $source->after->state->status !== $sourceBefore->state->status
+            || $source->revision - $sourceBefore->state->revision !== 1
+            || $target->revision - $targetBefore->state->revision !== 1
+        ) {
+            throw new SlugInvalidArgumentException('Transfer requires existing participants, one revision each, and a source that retains its status.');
+        }
+
+        $valid = $transfersCurrent
+            ? $sourceBefore->currentClaim->slug->value === $transferred->slug->value
+                && $targetBefore->state->status === BindingStatusEnum::RELEASED
+                && $target->after->state->status === BindingStatusEnum::ACTIVE
+                && $transferred->matches($target->after->currentClaim)
+            : $sourceBefore->currentClaim->matches($source->after->currentClaim)
+                && $targetBefore->state->status === $target->after->state->status
+                && $targetBefore->currentClaim?->matches($target->after->currentClaim) === true;
+        if (! $valid) {
+            throw new SlugInvalidArgumentException('Transfer participant states must match the role of the transferred claim.');
+        }
+    }
+
     /** @param list<HistoryEventDTO> $historyEvents */
     private static function assertCompleteTransferHistory(
         BindingStateResultDTO $sourceResult,
@@ -157,29 +175,26 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         $sourceEvents = $sourceResult->historyEvents;
         $targetEvents = $targetResult->historyEvents;
         if (! self::sameHistory($historyEvents, array_merge($sourceEvents, $targetEvents))) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer history must contain complete source and target evidence.');
+            throw new SlugInvalidArgumentException('Transfer history must contain complete source and target evidence.');
         }
 
-        $sourceOut = array_values(array_filter(
-            $sourceEvents,
-            static fn(HistoryEventDTO $event): bool => $event->eventType->value === 'OWNERSHIP_TRANSFERRED_OUT',
-        ));
-        $targetIn = array_values(array_filter(
-            $targetEvents,
-            static fn(HistoryEventDTO $event): bool => $event->eventType->value === 'OWNERSHIP_TRANSFERRED_IN',
-        ));
-        if (count($sourceOut) !== 1 || count($targetIn) !== 1) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer must contain one source out event and one target in event.');
+        $sourceCount = $transferredClaim->role === RegistryRoleEnum::CURRENT_CANONICAL ? 2 : 1;
+        if (count($sourceEvents) !== $sourceCount || count($targetEvents) !== 1) {
+            throw new SlugInvalidArgumentException('Transfer must contain its replacement evidence where applicable, one source out event, and one target in event.');
         }
+        $sourceOut = $sourceEvents[$sourceCount - 1];
+        $targetIn = $targetEvents[0];
         if (
-            $sourceOut[0]->bindingId !== $sourceResult->after->id
-            || $targetIn[0]->bindingId !== $targetResult->after->id
-            || $sourceOut[0]->slugSnapshot?->value !== $transferredClaim->slug->value
-            || $targetIn[0]->slugSnapshot?->value !== $transferredClaim->slug->value
-            || $sourceOut[0]->claimRoleSnapshot !== $transferredClaim->role
-            || $targetIn[0]->claimRoleSnapshot !== $transferredClaim->role
+            $sourceOut->eventType->value !== 'OWNERSHIP_TRANSFERRED_OUT'
+            || $targetIn->eventType->value !== 'OWNERSHIP_TRANSFERRED_IN'
+            || $sourceOut->bindingId !== $sourceResult->after->id
+            || $targetIn->bindingId !== $targetResult->after->id
+            || $sourceOut->slugSnapshot?->value !== $transferredClaim->slug->value
+            || $targetIn->slugSnapshot?->value !== $transferredClaim->slug->value
+            || $sourceOut->claimRoleSnapshot !== $transferredClaim->role
+            || $targetIn->claimRoleSnapshot !== $transferredClaim->role
         ) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer events do not match the transferred claim.');
+            throw new SlugInvalidArgumentException('Transfer events do not match the transferred claim.');
         }
     }
 
@@ -190,27 +205,27 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         RegistryClaimDTO $transferredClaim,
     ): void {
         if ($sourceResult->after->state->status === BindingStatusEnum::RELEASED) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Current transfer source result cannot be RELEASED after replacement.');
+            throw new SlugInvalidArgumentException('Current transfer source result cannot be RELEASED after replacement.');
         }
         if ($replacement->revision !== $sourceResult->revision) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Replacement revision must equal the final source revision.');
+            throw new SlugInvalidArgumentException('Replacement revision must equal the final source revision.');
         }
         if ($replacement->after->state->currentSlug?->value === $transferredClaim->slug->value) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Final source replacement must remove the transferred claim.');
+            throw new SlugInvalidArgumentException('Final source replacement must remove the transferred claim.');
         }
         if (! self::sameJson($replacement->before, $sourceResult->before) || ! self::sameJson($replacement->after, $sourceResult->after)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Replacement before and after must be the final source evidence.');
+            throw new SlugInvalidArgumentException('Replacement before and after must be the final source evidence.');
         }
         if ($replacement->historyEvents === []) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Replacement result requires replacement history.');
+            throw new SlugInvalidArgumentException('Replacement result requires replacement history.');
         }
         foreach ($replacement->historyEvents as $event) {
             if (! in_array($event->eventType->value, ['CHANGED', 'RESTORED'], true) || $event->bindingId !== $sourceResult->after->id) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Replacement history must contain replacement events only.');
+                throw new SlugInvalidArgumentException('Replacement history must contain replacement events only.');
             }
         }
         if (! self::historyPrefix($sourceResult->historyEvents, $replacement->historyEvents)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Replacement history must precede transfer-out history.');
+            throw new SlugInvalidArgumentException('Replacement history must precede transfer-out history.');
         }
     }
 

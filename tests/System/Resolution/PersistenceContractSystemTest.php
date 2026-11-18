@@ -385,13 +385,15 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         $read->execute(['operation' => $normal->operationKey]);
         $snapshotJson = $read->fetchColumn();
         self::assertIsString($snapshotJson);
-        /** @var array{result: array{revision: int, current_slug: string, history_events: mixed, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
+        /** @var array{result: array{revision: int, current_slug: string, change_type: string, history_events: list<array{event_type: string}>, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
         $snapshot = json_decode($snapshotJson, true, flags: JSON_THROW_ON_ERROR);
         match ($field) {
             'owner' => $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner',
             'revision' => $snapshot['result']['revision'] += 10,
             'slug' => $snapshot['result']['current_slug'] = 'another-book',
             'history' => $snapshot['result']['history_events'] = [],
+            'change-type' => $snapshot['result']['change_type'] = 'RELEASED_ALL',
+            'history-type' => $snapshot['result']['history_events'][0]['event_type'] = 'ALIAS_ADDED',
             default => throw new \LogicException('Unknown replay fixture field.'),
         };
         $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
@@ -417,6 +419,8 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'revision disagrees with the after state' => ['revision'];
         yield 'current slug disagrees with the after state' => ['slug'];
         yield 'newly recorded History omitted from replay' => ['history'];
+        yield 'assignment reports release all on replay' => ['change-type'];
+        yield 'assignment reports alias history on replay' => ['history-type'];
     }
 
     public function testReplayRejectsAnOtherwiseValidSnapshotFromAnotherParticipant(): void
