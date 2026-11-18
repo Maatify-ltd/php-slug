@@ -94,6 +94,41 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'warm' => [true];
     }
 
+    #[DataProvider('cacheStates')]
+    public function testDisabledAutocommitRequiresAnActiveHostTransaction(bool $warm): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('autocommit');
+        $command = new AssignExactCommand($identity, 'hello', null, new AuditContextDTO());
+        if ($warm) {
+            $engine->ensureScope($identity->scopeProfile);
+        }
+        $this->pdo->exec('CREATE TEMPORARY TABLE contract_host_marker (id INT PRIMARY KEY) ENGINE=InnoDB');
+        $this->pdo->exec('SET SESSION autocommit = 0');
+        try {
+            self::assertFalse($this->pdo->inTransaction());
+            try {
+                $engine->assignExact($command);
+                self::fail('The mutation ran with autocommit disabled and no active Host transaction.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('autocommit', $exception->getMessage());
+                self::assertFalse($this->pdo->inTransaction());
+            }
+            self::assertTrue($this->pdo->beginTransaction());
+            $this->pdo->exec('INSERT INTO contract_host_marker VALUES (1)');
+            self::assertSame('hello', $engine->assignExact($command)->currentSlug?->value);
+            $this->assertHostWorkIsIntact();
+            $this->pdo->rollBack();
+        } finally {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $this->pdo->exec('SET SESSION autocommit = 1');
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+        self::assertNull($engine->getCurrent(new CurrentSlugCriteria($identity)));
+    }
+
     #[DataProvider('nonNaturalCaseModes')]
     public function testNonNaturalColumnCaseFailsWithAnActionableCompatibilityError(int $mode): void
     {
@@ -198,6 +233,21 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
             ['ALTER TABLE maa_slug_operations DROP COLUMN result_snapshot'],
             'result_snapshot',
         ];
+        yield 'unexpected column without an insert default' => [
+            ["ALTER TABLE maa_slug_operations ADD COLUMN required_marker INT NOT NULL COMMENT 'Required fixture value without a default'"],
+            'required_marker',
+        ];
+    }
+
+    public function testExtraColumnsWithOptionalInsertValuesRemainCompatible(): void
+    {
+        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN optional_marker INT NULL COMMENT 'Optional fixture value'");
+        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN defaulted_marker INT NOT NULL DEFAULT 7 COMMENT 'Defaulted fixture value'");
+        (new PdoSchemaVerifier($this->pdo))->assertInstalled();
+        $command = new AssignExactCommand($this->identity('compatible'), 'hello', null, new AuditContextDTO(idempotencyKey: 'extra-columns'));
+
+        self::assertSame('hello', $this->engine()->assignExact($command)->currentSlug?->value);
+        self::assertSame('7', $this->scalar('SELECT defaulted_marker FROM maa_slug_operations'));
     }
 
     public function testSearchBindingsRejectsCurrentClaimOwnedByAnotherBinding(): void
@@ -303,6 +353,38 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'foreign current claim owner' => ['owner'];
         yield 'revision disagrees with the after state' => ['revision'];
         yield 'current slug disagrees with the after state' => ['slug'];
+    }
+
+    public function testReplayRejectsAnOtherwiseValidSnapshotFromAnotherParticipant(): void
+    {
+        $engine = $this->engine();
+        $first = new AssignExactCommand($this->identity('first'), 'first-slug', null, new AuditContextDTO(idempotencyKey: 'first-operation'));
+        $second = new AssignExactCommand($this->identity('second'), 'second-slug', null, new AuditContextDTO(idempotencyKey: 'second-operation'));
+        $firstResult = $engine->assignExact($first);
+        $secondResult = $engine->assignExact($second);
+        self::assertNotNull($firstResult->operationKey);
+        self::assertNotNull($secondResult->operationKey);
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $secondResult->operationKey]);
+        $snapshot = $read->fetchColumn();
+        self::assertIsString($snapshot);
+        $read->closeCursor();
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => str_replace($secondResult->operationKey, $firstResult->operationKey, $snapshot),
+            'operation' => $firstResult->operationKey,
+        ]);
+        $this->beginHostWork();
+        try {
+            $engine->assignExact($first);
+            self::fail('Replay returned a snapshot for another participant.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('participants', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('2', $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
     }
 
     /** Starts a Host transaction with pending work unrelated to the library. */

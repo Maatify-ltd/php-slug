@@ -158,7 +158,7 @@ final readonly class ScopeTransitionService
                 $existing,
             );
             if ($reservation !== null && ! $reservation->created) {
-                return $this->decodeReplay($reservation->operation);
+                return $this->decodeReplay($reservation);
             }
 
             $this->assertRevision($sourceRecord, $command->sourceExpectedRevision);
@@ -441,9 +441,9 @@ final readonly class ScopeTransitionService
     }
 
     /** Decodes the current, locked reservation without reading the Host's snapshot. */
-    private function decodeReplay(OperationRecord $operation): ScopeTransitionResultDTO
+    private function decodeReplay(OperationReservation $reservation): ScopeTransitionResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof ScopeTransitionResultDTO) {
             throw new SlugPersistenceInvariantException('Transition operation contains a non-transition snapshot.');
         }

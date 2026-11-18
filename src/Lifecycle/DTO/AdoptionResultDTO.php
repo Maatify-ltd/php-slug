@@ -13,7 +13,7 @@ use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
 /** Immutable result of adopting a current, historical, or alias claim. */
 final readonly class AdoptionResultDTO implements JsonSerializable
 {
-    /** Validates adoption operation type and optional idempotency metadata. */
+    /** Validates adoption metadata and ownership of the adopted claim and event. */
     public function __construct(
         public OperationTypeEnum $operationType,
         public ?string $operationKey,
@@ -32,6 +32,9 @@ final readonly class AdoptionResultDTO implements JsonSerializable
         }
         if ($operationKey !== null && preg_match('/\A[a-f0-9]{32}\z/', $operationKey) !== 1) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
+        }
+        if (! $after->identity->equals($adoptedClaim->binding) || $historyEvent->bindingId !== $after->id) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('The adopted claim and its history event must belong to the result Binding.');
         }
     }
 

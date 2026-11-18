@@ -1249,7 +1249,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed mutation snapshot for replay. */
     private function replayMutation(OperationReservation $reservation): SlugMutationResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof SlugMutationResultDTO) {
             throw new SlugPersistenceInvariantException('Mutation operation contains a non-mutation snapshot.');
         }
@@ -1260,7 +1260,7 @@ final class SlugLifecycleService
     /** Decodes and type-checks a committed transfer snapshot for replay. */
     private function replayTransfer(OperationReservation $reservation): AtomicTransferResultDTO
     {
-        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles);
+        $result = ResultSnapshotStorage::decodeOperation($reservation->operation, $this->profiles, $reservation->participants);
         if (! $result instanceof AtomicTransferResultDTO) {
             throw new SlugPersistenceInvariantException('Transfer operation contains a non-transfer snapshot.');
         }

@@ -396,7 +396,7 @@ final readonly class PdoSchemaVerifier
             'maa_slug_history.operation_key',
         ];
         $statement = $this->pdo->query(
-            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, DATETIME_PRECISION, COLLATION_NAME, EXTRA, COLUMN_COMMENT "
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, DATETIME_PRECISION, COLLATION_NAME, EXTRA, COLUMN_COMMENT, COLUMN_DEFAULT "
             . "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'",
         );
         if ($statement === false) {
@@ -439,6 +439,13 @@ final readonly class PdoSchemaVerifier
                     throw new SlugPersistenceInvariantException(sprintf('Required package column %s.%s has an incompatible definition.', $table, $column));
                 }
                 $seen[$table][$column] = true;
+            } elseif (
+                isset(self::REQUIRED_COLUMNS[$table])
+                && $row['IS_NULLABLE'] === 'NO'
+                && $row['COLUMN_DEFAULT'] === null
+                && PdoRowHydrator::string($row, 'EXTRA') !== 'auto_increment'
+            ) {
+                throw new SlugPersistenceInvariantException(sprintf('Additional package column %s.%s requires an insert value.', $table, $column));
             }
         }
 

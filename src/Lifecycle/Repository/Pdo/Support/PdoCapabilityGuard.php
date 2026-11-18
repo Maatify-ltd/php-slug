@@ -130,33 +130,41 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             throw new SlugRuntimeCompatibilityException('Required PDO connection attributes are unavailable.', 0, $throwable);
         }
 
-        return $this->assertConnectionCharset();
+        return $this->assertSessionSettings();
     }
 
-    /** Checks the session charsets and reads the database identity in the same non-locking query. */
-    private function assertConnectionCharset(): ?string
+    /** Checks session charsets and transaction mode and returns the selected database. */
+    private function assertSessionSettings(): ?string
     {
-        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results, DATABASE()');
+        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results, DATABASE(), @@SESSION.autocommit');
         if ($statement === false) {
             throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session settings.');
         }
         try {
-            $charsets = $statement->fetch(PDO::FETCH_NUM);
+            $settings = $statement->fetch(PDO::FETCH_NUM);
         } finally {
             $statement->closeCursor();
         }
 
-        if (! is_array($charsets) || $charsets[0] !== 'utf8mb4') {
+        if (! is_array($settings) || $settings[0] !== 'utf8mb4') {
             throw new SlugRuntimeCompatibilityException('PDO character_set_client must be utf8mb4.');
         }
-        if ($charsets[1] !== 'utf8mb4') {
+        if ($settings[1] !== 'utf8mb4') {
             throw new SlugRuntimeCompatibilityException('PDO character_set_connection must be utf8mb4.');
         }
-        if ($charsets[2] !== 'utf8mb4' && $charsets[2] !== null) {
+        if ($settings[2] !== 'utf8mb4' && $settings[2] !== null) {
             throw new SlugRuntimeCompatibilityException('PDO character_set_results must be utf8mb4 or NULL.');
         }
 
-        $database = $charsets[3];
+        $autocommit = $settings[4];
+        if (! in_array($autocommit, [0, 1, '0', '1'], true)) {
+            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session autocommit.');
+        }
+        if (in_array($autocommit, [0, '0'], true) && ! $this->pdo->inTransaction()) {
+            throw new SlugRuntimeCompatibilityException('PDO autocommit must be enabled when the Host has no active transaction.');
+        }
+
+        $database = $settings[3];
         if ($database !== null && ! is_string($database)) {
             throw new SlugRuntimeCompatibilityException('Unable to identify the database selected by the Host PDO session.');
         }

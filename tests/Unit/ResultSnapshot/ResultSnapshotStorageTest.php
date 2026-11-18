@@ -15,6 +15,66 @@ use PHPUnit\Framework\TestCase;
 
 final class ResultSnapshotStorageTest extends TestCase
 {
+    /**
+     * @param list<int|string> $path
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('conflictingResultEvidence')]
+    public function testCanonicalStorageRejectsConflictingResultEvidence(string $family, array $path, mixed $replacement): void
+    {
+        $fixture = match ($family) {
+            'mutation' => ContractFixtures::mutation(),
+            'transition' => ContractFixtures::transition(),
+            'transfer' => ContractFixtures::transfer(),
+            'adoption' => ContractFixtures::adoption(),
+            default => throw new \LogicException('Unknown result fixture.'),
+        };
+        $key = str_repeat('a', 32);
+        $original = str_replace('"operation_key":null', '"operation_key":"' . $key . '"', ResultSnapshotEncoder::encode($fixture));
+        $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($snapshot);
+        $changed = self::replaceSnapshotValue($snapshot, ['result', ...$path], $replacement);
+        $json = json_encode($changed, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        $metadata = new ResultSnapshotMetadata($family, 1, $fixture->operationType, $key, $json);
+
+        $this->expectException(\Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException::class);
+        $this->expectExceptionMessage('Invalid result snapshot');
+        ResultSnapshotStorage::decodeCommitted($metadata, ContractFixtures::registry());
+    }
+
+    /** @return iterable<string, array{string, list<int|string>, mixed}> */
+    public static function conflictingResultEvidence(): iterable
+    {
+        yield 'transition after state' => ['transition', ['source_result', 'after', 'state', 'status'], 'ACTIVE'];
+        yield 'transition destination claim' => ['transition', ['target_claim'], 'different-slug'];
+        yield 'transition history omissions' => ['transition', ['history_events'], []];
+        yield 'mutation claim owner' => ['mutation', ['affected_claims', 0, 'binding', 'entity', 'entity_key'], 'other-owner'];
+        yield 'transfer claim owner' => ['transfer', ['transferred_claim', 'binding', 'entity', 'entity_key'], 'other-owner'];
+        yield 'adoption claim owner' => ['adoption', ['adopted_claim', 'binding', 'entity', 'entity_key'], 'other-owner'];
+        yield 'adoption history participant' => ['adoption', ['history_event', 'binding_id'], 999];
+    }
+
+    /**
+     * Replaces one existing fixture field while preserving the remainder of the canonical snapshot.
+     *
+     * @param array<array-key, mixed> $snapshot
+     * @param non-empty-list<int|string> $path
+     * @return array<array-key, mixed>
+     */
+    private static function replaceSnapshotValue(array $snapshot, array $path, mixed $value): array
+    {
+        $key = array_shift($path);
+        self::assertArrayHasKey($key, $snapshot);
+        if ($path === []) {
+            $snapshot[$key] = $value;
+        } else {
+            $child = $snapshot[$key];
+            self::assertIsArray($child);
+            $snapshot[$key] = self::replaceSnapshotValue($child, $path, $value);
+        }
+
+        return $snapshot;
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('inconsistentParticipantRevisions')]
     public function testSnapshotRejectsParticipantRevisionsDifferentFromTheBindingState(string $fixtureType, bool $nested): void
     {

@@ -45,23 +45,23 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         if ($revision !== $after->state->revision || $currentSlug?->value !== $after->state->currentSlug?->value) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
         }
-        self::sortedById($affectedClaims, 'affectedClaims');
+        self::assertAffectedClaims($affectedClaims, $after->identity);
         self::orderedHistory($historyEvents, 'historyEvents');
     }
 
     /** @param array<int, mixed> $items */
-    private static function sortedById(array $items, string $field): void
+    private static function assertAffectedClaims(array $items, BindingIdentityDTO $owner): void
     {
         if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('affectedClaims must be a list.');
         }
         $previous = null;
         foreach ($items as $item) {
-            if (! $item instanceof RegistryClaimDTO) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid Registry claim.', $field));
+            if (! $item instanceof RegistryClaimDTO || ! $owner->equals($item->binding)) {
+                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('affectedClaims must contain only Registry claims owned by the result Binding.');
             }
             if ($previous !== null && $item->id <= $previous) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be strictly ordered by id.', $field));
+                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('affectedClaims must be strictly ordered by id.');
             }
             $previous = $item->id;
         }

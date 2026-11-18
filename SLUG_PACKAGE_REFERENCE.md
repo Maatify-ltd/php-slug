@@ -123,7 +123,7 @@ The following requirements are implemented in the repository:
 
 Newer PHP 8 minors admitted by Composer require minor-specific security and compatibility evidence before they can be listed as supported.
 
-The implementation uses `ext-intl` for NFC and ICU lowercasing or transliteration and uses `ext-mbstring` only for code-point length. Built-in runtime admission verifies the required normalization and transliteration behavior and fails closed with `SlugRuntimeCompatibilityException` when a capability is unavailable or incompatible. ICU and Unicode versions are diagnostics only, not consumer support boundaries.
+The implementation uses `ext-intl` for NFC and ICU lowercasing or transliteration and uses `ext-mbstring` for code-point length and truncation. Built-in runtime admission verifies the required normalization and transliteration behavior and fails closed with `SlugRuntimeCompatibilityException` when a capability is unavailable or incompatible. ICU and Unicode versions are diagnostics only, not consumer support boundaries.
 
 ## 5. Identity and Text
 
@@ -419,7 +419,7 @@ Result Snapshot JSON v1 has only four discriminators:
 
 Only a current `atomicTransfer` result may contain nested `sourceReplacementResult`; its `operationKey` and `replayed` values equal those of the outer result. A top-level `mutation` cannot use `ATOMIC_TRANSFER`.
 
-The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. Replay rejects a snapshot with conflicting values as a `SlugPersistenceInvariantException`.
+The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. A transition's outer states and history must agree with its participant results, and its source and target claims must match the source before and target after states. Mutation claims, transferred claims, and adoption claims and history must belong to the corresponding Binding. Replay also verifies the snapshot's Binding IDs and roles against the stored operation participants. A mismatch raises `SlugPersistenceInvariantException`.
 
 ## 9. Persistence, Transactions, and Concurrency
 
@@ -430,8 +430,8 @@ The persisted path uses direct PDO inside package infrastructure only:
 - The Host keeps `character_set_client` and `character_set_connection` on `utf8mb4`. Use `utf8mb4` or `NULL` for `character_set_results` so result data is not converted to a narrower charset. The package checks these settings on the active PDO session. Timestamps come from `ClockInterface` as UTC `DATETIME(6)`. Database defaults are not a behavioral source.
 - MySQL and compatible MariaDB sessions use the same PDO adapter and schema. On MariaDB servers that expose `innodb_snapshot_isolation`, lifecycle writes require `OFF` on the injected PDO before beginning a Host write transaction. Non-locking reads work with either setting. The package leaves session settings under Host control.
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
-- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. Before the first mutation the package verifies the required column definitions, index keys and foreign-key topology, then verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
-- For mutations, the package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
+- Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. Before the first mutation the package verifies the required column definitions, index keys and foreign-key topology, then verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Additional columns in package tables must allow inserts that omit them. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
+- Keep `autocommit=ON` when calling persisted operations without an active Host transaction. A session with `autocommit=OFF` requires an active Host transaction before calling Slug. Otherwise the package raises `SlugRuntimeCompatibilityException` before accessing Slug tables. For mutations without an outer transaction, the package owns the transaction. The Host controls commit and rollback of any transaction it opened.
 - Schema and write capability checks apply to the database selected on the Host PDO session. Selecting another database invalidates both checks. The next persisted call verifies the selected database, and its first mutation verifies write capabilities before acquiring lifecycle row locks. The Host selects the database between calls.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
@@ -762,7 +762,7 @@ Persisted queries, including `resolve()` when it consults persisted state, and l
 
 Mutations throw `SlugRuntimeCompatibilityException` before taking the Scope lock if `foreign_key_checks` is disabled or if an exposed `innodb_snapshot_isolation` setting is enabled. These checks run even after successful schema verification. The settings stay under Host control, and a PDO failure while reading either setting propagates unchanged.
 
-Incompatible PDO column case or session charset settings also raise `SlugRuntimeCompatibilityException`. The first mutation reports an incompatible physical write schema through that exception, retaining the schema invariant failure as its cause. A current pointer referencing another Binding's Claim, or a replay snapshot with an inconsistent current Claim, raises `SlugPersistenceInvariantException`.
+Incompatible PDO column case, session charset, or a disabled `autocommit` setting without an active Host transaction also raises `SlugRuntimeCompatibilityException`. The first mutation reports an incompatible physical write schema through that exception, retaining the schema invariant failure as its cause. A current pointer referencing another Binding's Claim or a replay snapshot with inconsistent operation or participant evidence raises `SlugPersistenceInvariantException`.
 
 ## 13. Release State
 

@@ -56,6 +56,21 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transition revisions must match the participants and their after states.');
         }
         self::participantHistory($historyEvents, [$sourceAfter->id, $targetAfter->id], 'historyEvents');
+        if ($sourceClaim?->value !== $sourceBefore?->state->currentSlug?->value || $targetClaim?->value !== $targetAfter->state->currentSlug?->value) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transition claims must match the source before and target after states.');
+        }
+        $outer = [$sourceBefore, $sourceAfter, $targetBefore, $targetAfter, $historyEvents];
+        $participants = [
+            $sourceResult->before,
+            $sourceResult->after,
+            $targetResult->before,
+            $targetResult->after,
+            [...$sourceResult->historyEvents, ...$targetResult->historyEvents],
+        ];
+        $flags = JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR;
+        if ($outer !== $participants && json_encode($outer, $flags) !== json_encode($participants, $flags)) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transition state and history must agree with the participant results.');
+        }
     }
 
     /**

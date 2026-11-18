@@ -7,10 +7,15 @@ namespace Maatify\Slug\Lifecycle\Repository\Operation;
 /** Reservation result distinguishing a newly created operation from an existing one. */
 final readonly class OperationReservation
 {
-    /** Stores the operation row and whether this request created it. */
+    /**
+     * Stores the operation row and the participants verified by the reservation.
+     *
+     * @param list<OperationParticipant> $participants
+     */
     public function __construct(
         public OperationRecord $operation,
         public bool $created,
+        public array $participants,
     ) {}
 
     /** Reports whether a committed existing operation can be replayed. */

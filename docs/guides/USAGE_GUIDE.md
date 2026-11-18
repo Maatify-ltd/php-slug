@@ -67,7 +67,7 @@ Set `charset=utf8mb4` in the PDO DSN, keep `PDO::ATTR_CASE` at `PDO::CASE_NATURA
 
 Public queries, including `resolve()` when it reads persisted state, can use a SELECT-only account or an existing Host READ ONLY transaction. Query verification does not write or open a transaction.
 
-For mutations, keep `foreign_key_checks=ON` on the Host PDO session and grant write privileges. The package checks write capabilities separately and preserves any outer transaction.
+For mutations, keep `foreign_key_checks=ON` on the Host PDO session and grant write privileges. The package checks write capabilities separately and preserves any outer transaction. Keep `autocommit=ON` for persisted calls outside a Host transaction. With `autocommit=OFF`, the Host must begin a transaction before calling Slug.
 
 On MariaDB, if the server exposes `innodb_snapshot_isolation`, set it to `OFF` on the PDO session before opening a transaction that writes Slug state. Non-locking reads work with either setting. See the [PDO and transaction contract](../../SLUG_PACKAGE_REFERENCE.md#9-persistence-transactions-and-concurrency).
 

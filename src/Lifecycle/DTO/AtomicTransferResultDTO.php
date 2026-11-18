@@ -47,6 +47,9 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         if ($sourceRevision !== $sourceResult->revision || $targetRevision !== $targetResult->revision) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer revisions must match the participant after states.');
         }
+        if (! $targetResult->after->identity->equals($transferredClaim->binding)) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('The transferred claim must belong to the target Binding.');
+        }
         self::participantHistory($historyEvents, [$sourceResult->after->id, $targetResult->after->id], 'historyEvents');
         if ($targetResult->before === null) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transfer target result requires its existing before state.');
