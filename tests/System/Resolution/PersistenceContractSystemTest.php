@@ -11,6 +11,7 @@ use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
 use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
+use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
@@ -239,15 +240,23 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         ];
     }
 
-    public function testExtraColumnsWithOptionalInsertValuesRemainCompatible(): void
+    #[DataProvider('columnDefaults')]
+    public function testExtraColumnsWithOptionalInsertValuesRemainCompatible(string $default): void
     {
         $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN optional_marker INT NULL COMMENT 'Optional fixture value'");
-        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN defaulted_marker INT NOT NULL DEFAULT 7 COMMENT 'Defaulted fixture value'");
+        $this->pdo->exec("ALTER TABLE maa_slug_operations ADD COLUMN defaulted_marker INT NOT NULL DEFAULT $default COMMENT 'Defaulted fixture value'");
         (new PdoSchemaVerifier($this->pdo))->assertInstalled();
         $command = new AssignExactCommand($this->identity('compatible'), 'hello', null, new AuditContextDTO(idempotencyKey: 'extra-columns'));
 
         self::assertSame('hello', $this->engine()->assignExact($command)->currentSlug?->value);
         self::assertSame('7', $this->scalar('SELECT defaulted_marker FROM maa_slug_operations'));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function columnDefaults(): iterable
+    {
+        yield 'literal' => ['7'];
+        yield 'expression' => ['(6 + 1)'];
     }
 
     public function testSearchBindingsRejectsCurrentClaimOwnedByAnotherBinding(): void
@@ -385,6 +394,44 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         } finally {
             $this->pdo->rollBack();
         }
+    }
+
+    public function testReplayRejectsBeforeStateFromAnotherBindingWithoutEndingHostWork(): void
+    {
+        $engine = $this->engine();
+        $owner = $this->identity('first');
+        $engine->assignExact(new AssignExactCommand($owner, 'first-slug', null, new AuditContextDTO()));
+        $other = $engine->assignExact(new AssignExactCommand($this->identity('second'), 'second-slug', null, new AuditContextDTO()));
+        $command = new ChangeExactCommand($owner, 'changed-slug', 1, new AuditContextDTO(idempotencyKey: 'change-fixture'));
+        $change = $engine->changeExact($command);
+        self::assertSame($change->before?->id, $engine->changeExact($command)->before?->id);
+
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $change->operationKey]);
+        $original = $read->fetchColumn();
+        self::assertIsString($original);
+        $read->closeCursor();
+        /** @var array{result: array{before: mixed}} $snapshot */
+        $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
+        $snapshot['result']['before'] = $other->after;
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
+            'operation' => $change->operationKey,
+        ]);
+
+        $this->beginHostWork();
+        try {
+            $engine->changeExact($command);
+            self::fail('Replay admitted a before state from another Binding.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame('3', $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
     }
 
     /** Starts a Host transaction with pending work unrelated to the library. */

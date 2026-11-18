@@ -17,9 +17,10 @@ final class ResultSnapshotStorageTest extends TestCase
 {
     /**
      * @param list<int|string> $path
+     * @param list<int|string>|null $secondPath
      */
     #[\PHPUnit\Framework\Attributes\DataProvider('conflictingResultEvidence')]
-    public function testCanonicalStorageRejectsConflictingResultEvidence(string $family, array $path, mixed $replacement): void
+    public function testCanonicalStorageRejectsConflictingResultEvidence(string $family, array $path, mixed $replacement, ?array $secondPath = null): void
     {
         $fixture = match ($family) {
             'mutation' => ContractFixtures::mutation(),
@@ -33,6 +34,9 @@ final class ResultSnapshotStorageTest extends TestCase
         $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
         self::assertIsArray($snapshot);
         $changed = self::replaceSnapshotValue($snapshot, ['result', ...$path], $replacement);
+        if ($secondPath !== null) {
+            $changed = self::replaceSnapshotValue($changed, ['result', ...$secondPath], $replacement);
+        }
         $json = json_encode($changed, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
         $metadata = new ResultSnapshotMetadata($family, 1, $fixture->operationType, $key, $json);
 
@@ -41,7 +45,7 @@ final class ResultSnapshotStorageTest extends TestCase
         ResultSnapshotStorage::decodeCommitted($metadata, ContractFixtures::registry());
     }
 
-    /** @return iterable<string, array{string, list<int|string>, mixed}> */
+    /** @return iterable<string, array{string, list<int|string>, mixed, 3?: list<int|string>}> */
     public static function conflictingResultEvidence(): iterable
     {
         yield 'transition after state' => ['transition', ['source_result', 'after', 'state', 'status'], 'ACTIVE'];
@@ -51,6 +55,22 @@ final class ResultSnapshotStorageTest extends TestCase
         yield 'transfer claim owner' => ['transfer', ['transferred_claim', 'binding', 'entity', 'entity_key'], 'other-owner'];
         yield 'adoption claim owner' => ['adoption', ['adopted_claim', 'binding', 'entity', 'entity_key'], 'other-owner'];
         yield 'adoption history participant' => ['adoption', ['history_event', 'binding_id'], 999];
+        yield 'mutation before belongs to another Binding' => ['mutation', ['before'], ContractFixtures::binding(ContractFixtures::identity(99), 999)];
+        yield 'mutation history names another entity' => ['mutation', ['history_events', 0, 'entity_snapshot', 'entity_key'], 'other-owner'];
+        yield 'transfer target before has a different Binding ID' => ['transfer', ['target_result', 'before', 'id'], 999];
+        yield 'transfer target history names another entity' => [
+            'transfer', ['target_result', 'history_events', 0, 'entity_snapshot', 'entity_key'],
+            'other-owner', ['history_events', 2, 'entity_snapshot', 'entity_key'],
+        ];
+        yield 'transition repeats a foreign source before snapshot' => [
+            'transition', ['source_result', 'before'], ContractFixtures::binding(ContractFixtures::identity(99), 999), ['source_before'],
+        ];
+        yield 'parallel transition reports a move' => ['transition', ['mode'], 'PARALLEL'];
+        yield 'transition reports an existing target' => ['transition', ['target_created'], false];
+        yield 'adoption before belongs to another Binding' => ['adoption', ['before'], ContractFixtures::binding(ContractFixtures::identity(99), 999)];
+        yield 'adoption history names another entity' => ['adoption', ['history_event', 'entity_snapshot', 'entity_key'], 'other-owner'];
+        yield 'current adoption reports an alias event' => ['adoption', ['history_event', 'event_type'], 'ADOPTED_ALIAS'];
+        yield 'current adoption reports an alias claim role' => ['adoption', ['adopted_claim', 'role'], 'ACTIVE_ALIAS'];
     }
 
     /**

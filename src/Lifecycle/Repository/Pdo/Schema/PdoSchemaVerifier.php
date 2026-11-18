@@ -396,7 +396,7 @@ final readonly class PdoSchemaVerifier
             'maa_slug_history.operation_key',
         ];
         $statement = $this->pdo->query(
-            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, DATETIME_PRECISION, COLLATION_NAME, EXTRA, COLUMN_COMMENT, COLUMN_DEFAULT "
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, DATETIME_PRECISION, COLLATION_NAME, EXTRA, COLUMN_COMMENT, COLUMN_DEFAULT, GENERATION_EXPRESSION "
             . "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'",
         );
         if ($statement === false) {
@@ -413,7 +413,7 @@ final readonly class PdoSchemaVerifier
             if ($checkComments && (! is_string($comment) || mb_strlen(trim($comment), 'UTF-8') < 8)) {
                 throw new SlugPersistenceInvariantException(sprintf('Column %s.%s must have a meaningful schema comment.', $table, $column));
             }
-            if ($dataType === 'json' || str_contains(strtolower(PdoRowHydrator::string($row, 'EXTRA')), 'generated')) {
+            if ($dataType === 'json' || ($row['GENERATION_EXPRESSION'] ?? '') !== '') {
                 throw new SlugPersistenceInvariantException('Package schema must not depend on native JSON or generated columns.');
             }
             if (in_array($dataType, ['char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext'], true)) {

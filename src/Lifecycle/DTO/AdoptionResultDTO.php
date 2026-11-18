@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Maatify\Slug\Lifecycle\DTO;
 
 use JsonSerializable;
+use Maatify\Slug\Exception\SlugInvalidArgumentException;
+use Maatify\Slug\Lifecycle\Enum\HistoryEventTypeEnum;
+use Maatify\Slug\Lifecycle\Enum\RegistryRoleEnum;
 use Maatify\Slug\Lifecycle\Enum\OperationTypeEnum;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingDTO;
@@ -23,18 +26,24 @@ final readonly class AdoptionResultDTO implements JsonSerializable
         public RegistryClaimDTO $adoptedClaim,
         public HistoryEventDTO $historyEvent,
     ) {
-        if (! in_array($operationType, [
-            OperationTypeEnum::ADOPT_CURRENT,
-            OperationTypeEnum::ADOPT_HISTORICAL,
-            OperationTypeEnum::ADOPT_ALIAS,
-        ], true)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Adoption result requires an adoption operation.');
-        }
+        [$eventType, $role] = match ($operationType) {
+            OperationTypeEnum::ADOPT_CURRENT => [HistoryEventTypeEnum::ADOPTED_CURRENT, RegistryRoleEnum::CURRENT_CANONICAL],
+            OperationTypeEnum::ADOPT_HISTORICAL => [HistoryEventTypeEnum::ADOPTED_HISTORICAL, RegistryRoleEnum::HISTORICAL_CANONICAL],
+            OperationTypeEnum::ADOPT_ALIAS => [HistoryEventTypeEnum::ADOPTED_ALIAS, RegistryRoleEnum::ACTIVE_ALIAS],
+            default => throw new SlugInvalidArgumentException('Adoption result requires an adoption operation.'),
+        };
         if ($operationKey !== null && preg_match('/\A[a-f0-9]{32}\z/', $operationKey) !== 1) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
+            throw new SlugInvalidArgumentException('Operation key must be lowercase hexadecimal of length 32.');
         }
-        if (! $after->identity->equals($adoptedClaim->binding) || $historyEvent->bindingId !== $after->id) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('The adopted claim and its history event must belong to the result Binding.');
+        $after->assertResultEvidence($before, [$historyEvent]);
+        if (! $after->identity->equals($adoptedClaim->binding)) {
+            throw new SlugInvalidArgumentException('The adopted claim must belong to the result Binding.');
+        }
+        if (
+            $adoptedClaim->role !== $role || $historyEvent->eventType !== $eventType
+            || $historyEvent->claimRoleSnapshot !== $role || $historyEvent->slugSnapshot?->value !== $adoptedClaim->slug->value
+        ) {
+            throw new SlugInvalidArgumentException('The adopted claim and history event must match the adoption operation.');
         }
     }
 

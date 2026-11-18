@@ -46,7 +46,7 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
         }
         self::assertAffectedClaims($affectedClaims, $after->identity);
-        self::orderedHistory($historyEvents, 'historyEvents');
+        $after->assertResultEvidence($before, $historyEvents);
     }
 
     /** @param array<int, mixed> $items */
@@ -64,26 +64,6 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
                 throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('affectedClaims must be strictly ordered by id.');
             }
             $previous = $item->id;
-        }
-    }
-
-    /** @param array<int, mixed> $items */
-    private static function orderedHistory(array $items, string $field): void
-    {
-        if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
-        }
-        $previousSequence = null;
-        $previousId = null;
-        foreach ($items as $item) {
-            if (! $item instanceof HistoryEventDTO) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
-            }
-            if ($previousSequence !== null && ($item->sequenceNo < $previousSequence || ($item->sequenceNo === $previousSequence && $item->id <= $previousId))) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be ordered by sequence and id.', $field));
-            }
-            $previousSequence = $item->sequenceNo;
-            $previousId = $item->id;
         }
     }
 

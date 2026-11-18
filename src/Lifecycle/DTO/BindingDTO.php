@@ -39,6 +39,41 @@ final readonly class BindingDTO implements JsonSerializable
         }
     }
 
+    /**
+     * Validates an earlier state and ordered history against this Binding.
+     *
+     * @param array<int, mixed> $historyEvents
+     * @internal
+     */
+    public function assertResultEvidence(?self $before, array $historyEvents): void
+    {
+        if ($before !== null && ($before->id !== $this->id || ! $this->identity->equals($before->identity))) {
+            throw new SlugInvalidArgumentException('Result before and after states must refer to the same Binding.');
+        }
+        if (! array_is_list($historyEvents)) {
+            throw new SlugInvalidArgumentException('historyEvents must be a list.');
+        }
+        $scope = $this->identity->scopeProfile->scope->jsonSerialize();
+        $entity = $this->identity->entity->jsonSerialize();
+        $previous = null;
+        foreach ($historyEvents as $event) {
+            if (! $event instanceof HistoryEventDTO) {
+                throw new SlugInvalidArgumentException('historyEvents contains an invalid history event.');
+            }
+            if (
+                $event->bindingId !== $this->id
+                || $event->scopeSnapshot->jsonSerialize() !== $scope
+                || $event->entitySnapshot->jsonSerialize() !== $entity
+            ) {
+                throw new SlugInvalidArgumentException('History events must refer to the result Binding.');
+            }
+            if ($previous !== null && [$event->sequenceNo, $event->id] <= [$previous->sequenceNo, $previous->id]) {
+                throw new SlugInvalidArgumentException('historyEvents must be ordered by sequence and id.');
+            }
+            $previous = $event;
+        }
+    }
+
     /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {

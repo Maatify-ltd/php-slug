@@ -12,7 +12,7 @@
 
 ## Context
 
-Slug delegates management pagination to `maatify/php-persistence`. The pinned Package Building Standard permits an exact, temporary trial of its latest published RC while Persistence has no stable release. The [GitHub release](https://github.com/Maatify-ltd/php-persistence/releases/tag/v1.0.0-rc.2) and [Packagist version](https://packagist.org/packages/maatify/php-persistence#v1.0.0-rc.2) identify `1.0.0-rc.2` at `71dc61548e48fd053376db69149a00bc87069b70`. This release fixes PDO error handling and integer boundary checks in Ordering. Its [Package Reference](https://github.com/Maatify-ltd/php-persistence/blob/71dc61548e48fd053376db69149a00bc87069b70/PHP_PERSISTENCE_PACKAGE_REFERENCE.md#33-pagination-capability--maatifyphppersistenceagination) defines the Pagination API used by Slug.
+Slug delegates management pagination to `maatify/php-persistence`. The pinned Package Building Standard permits an exact, temporary trial of its latest published RC while Persistence has no stable release. The [GitHub release](https://github.com/Maatify-ltd/php-persistence/releases/tag/v1.0.0-rc.2) and [Packagist version](https://packagist.org/packages/maatify/php-persistence#v1.0.0-rc.2) identify `1.0.0-rc.2` at `71dc61548e48fd053376db69149a00bc87069b70`. This release fixes PDO error handling and integer boundary checks in Ordering. Its [Package Reference](https://github.com/Maatify-ltd/php-persistence/blob/71dc61548e48fd053376db69149a00bc87069b70/PHP_PERSISTENCE_PACKAGE_REFERENCE.md#33-pagination-capability--maatifyphppersistencepagination) defines the Pagination API used by Slug.
 
 ## Decision
 

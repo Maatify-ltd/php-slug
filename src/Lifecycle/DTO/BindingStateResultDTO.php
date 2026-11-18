@@ -25,27 +25,7 @@ final readonly class BindingStateResultDTO implements JsonSerializable
         if ($revision !== $after->state->revision) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Binding result revision must match the after state.');
         }
-        self::orderedHistory($historyEvents, 'historyEvents');
-    }
-
-    /** @param array<int, mixed> $items */
-    private static function orderedHistory(array $items, string $field): void
-    {
-        if (! array_is_list($items)) {
-            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be a list.', $field));
-        }
-        $previousSequence = null;
-        $previousId = null;
-        foreach ($items as $item) {
-            if (! $item instanceof HistoryEventDTO) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s contains an invalid history event.', $field));
-            }
-            if ($previousSequence !== null && ($item->sequenceNo < $previousSequence || ($item->sequenceNo === $previousSequence && $item->id <= $previousId))) {
-                throw new \Maatify\Slug\Exception\SlugInvalidArgumentException(sprintf('%s must be ordered by sequence and id.', $field));
-            }
-            $previousSequence = $item->sequenceNo;
-            $previousId = $item->id;
-        }
+        $after->assertResultEvidence($before, $historyEvents);
     }
 
     /** @return array<string, mixed> */
