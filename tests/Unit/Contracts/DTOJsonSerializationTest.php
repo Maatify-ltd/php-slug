@@ -65,6 +65,16 @@ final class DTOJsonSerializationTest extends TestCase
         json_encode($dto, JSON_THROW_ON_ERROR);
     }
 
+    public function testCurrentSlugRejectsRevisionDifferentFromBinding(): void
+    {
+        $binding = ContractFixtures::binding(ContractFixtures::identity(1), 100);
+        $claim = $binding->currentClaim;
+        self::assertNotNull($claim);
+
+        $this->expectException(\Maatify\Slug\Exception\SlugInvalidArgumentException::class);
+        new CurrentSlugDTO($binding, $claim, $binding->state->revision + 1);
+    }
+
     public function testInternalOwnershipClaimResultPreservesItsSerializedFields(): void
     {
         $binding = ContractFixtures::binding(ContractFixtures::identity(1), 100);

@@ -2,10 +2,16 @@
 
 declare(strict_types=1);
 
+/** Checks the package's fail-closed Composer policy and the environment that can override it. */
 final class ComposerPolicyVerifier
 {
-    /** @param array<string, mixed> $composer */
-    /** @param array<string, string> $environment */
+    /**
+     * Returns policy, Composer version and environment diagnostics. An empty list means that all checks passed.
+     *
+     * @param array<string, mixed> $composer Decoded root Composer manifest.
+     * @param array<string, string> $environment Effective variables for the Composer invocation.
+     * @return list<string>
+     */
     public function verify(array $composer, string $composerVersion, array $environment): array
     {
         $errors = [];
@@ -34,7 +40,12 @@ final class ComposerPolicyVerifier
         return $errors;
     }
 
-    /** @return list<string> */
+    /**
+     * Reports malformed JSON as a diagnostic, then applies verify() to a decoded manifest.
+     *
+     * @param array<string, string> $environment Effective variables for the Composer invocation.
+     * @return list<string> Diagnostics, or an empty list on success.
+     */
     public function verifyJson(string $contents, string $composerVersion, array $environment): array
     {
         try {
@@ -177,6 +188,10 @@ final class ComposerPolicyVerifier
         return $value === '' || $value === '0' ? 'safe' : 'non-empty';
     }
 
+    /**
+     * Checks the manifest under the given repository root using Composer from PATH.
+     * Prints diagnostics and returns 1 for an unavailable prerequisite or a violation, and 0 on success.
+     */
     public function run(string $root): int
     {
         $path = $root . '/composer.json';

@@ -135,7 +135,7 @@ function dropPackageSchema(PDO $pdo): void
 /** Confirms consumer cleanup removed every package-owned table. */
 function assertNoPackageTables(PDO $pdo): void
 {
-    $statement = $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%'");
+    $statement = $pdo->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'");
     if ($statement === false || (int) $statement->fetchColumn() !== 0) {
         throw new RuntimeException('Consumer Harness cleanup left package tables behind.');
     }

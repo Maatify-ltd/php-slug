@@ -28,7 +28,7 @@ final readonly class PdoSchemaVerifier
         ];
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION FROM information_schema.TABLES "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' ORDER BY TABLE_NAME",
+            . "WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' ORDER BY TABLE_NAME",
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect the package schema.');
@@ -130,7 +130,7 @@ final readonly class PdoSchemaVerifier
         ];
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, INDEX_NAME FROM information_schema.STATISTICS "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' GROUP BY TABLE_NAME, INDEX_NAME",
+            . "WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' GROUP BY TABLE_NAME, INDEX_NAME",
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect package indexes.');
@@ -165,7 +165,7 @@ final readonly class PdoSchemaVerifier
         ];
         $statement = $this->pdo->query(
             "SELECT CONSTRAINT_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS "
-            . "WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' AND CONSTRAINT_NAME LIKE 'fk_%'",
+            . "WHERE CONSTRAINT_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' AND CONSTRAINT_NAME LIKE 'fk_%'",
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect package foreign keys.');
@@ -206,7 +206,7 @@ final readonly class PdoSchemaVerifier
         ];
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION, COLLATION_NAME, EXTRA, COLUMN_COMMENT "
-            . "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%'",
+            . "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_'",
         );
         if ($statement === false) {
             throw new SlugPersistenceInvariantException('Unable to inspect package columns.');

@@ -67,6 +67,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         }
         if ($forMutation) {
             $this->assertCurrentLockingReads();
+            $this->assertForeignKeyChecksEnabled();
             if (! $this->mutationCapabilitiesVerified) {
                 $this->assertTransactionAndSavepointCapabilities();
                 $this->probeInstalledSchemaCapabilities();
@@ -198,6 +199,15 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         }
     }
 
+    /** Checks live FK enforcement even after a successful probe, leaving session settings to the Host. */
+    private function assertForeignKeyChecksEnabled(): void
+    {
+        $statement = $this->pdo->query('SELECT @@SESSION.foreign_key_checks');
+        if ($statement === false || self::fetchColumnAndClose($statement) !== '1') {
+            throw new SlugRuntimeCompatibilityException('Slug lifecycle writes require foreign_key_checks=ON on the Host PDO session.');
+        }
+    }
+
     /** Probes binary equality semantics required for case-sensitive slugs. */
     private function assertExactStringSemantics(): void
     {
@@ -248,7 +258,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         ];
         $statement = $this->pdo->query(
             "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION FROM information_schema.TABLES "
-            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'maa_slug_%' ORDER BY TABLE_NAME",
+            . "WHERE TABLE_SCHEMA = DATABASE() AND LEFT(CAST(TABLE_NAME AS BINARY), 9) = 'maa_slug_' ORDER BY TABLE_NAME",
         );
         if ($statement === false) {
             throw new SlugRuntimeCompatibilityException('Package schema metadata is unavailable.');
@@ -317,6 +327,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
 
             try {
                 $insert->execute(['namespace' => $namespace, 'created_at' => $now, 'updated_at' => $now]);
+                throw new SlugRuntimeCompatibilityException('Package unique-key evidence is unavailable.');
             } catch (PDOException $exception) {
                 if (! PdoDuplicateClassifier::matches($exception, 'uk_scope_identity')) {
                     throw new SlugRuntimeCompatibilityException('Package unique-key evidence is unavailable.', 0, $exception);
@@ -338,6 +349,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]);
+                throw new SlugRuntimeCompatibilityException('Package foreign-key enforcement is unavailable.');
             } catch (PDOException $exception) {
                 if (! self::errorNumberIs($exception, 1452) || ! self::errorMentions($exception, 'fk_binding_scope')) {
                     throw new SlugRuntimeCompatibilityException('Package foreign-key enforcement is unavailable.', 0, $exception);

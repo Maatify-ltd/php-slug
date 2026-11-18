@@ -29,6 +29,8 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Declared `ext-filter` for runtime integer validation and hardened the persisted lifecycle example against deleting pre-existing Slug tables or views.
 - Made PDO consumer reads consistent across Scope, Binding, and Registry state. Fixed transition, lifecycle mutations, and operation replay when the Host transaction has an older snapshot.
 - Closed capability-probe results before reusing unbuffered PDO connections. MariaDB writes require `innodb_snapshot_isolation=OFF` where available. Non-locking reads work with either setting, and connection failures retain their PDO exception type.
+- Return `SlugNotFoundException` for absent mutation targets regardless of whether their Scope exists. Verify PDO and Schema 003 for persisted resolution, require enforced write constraints, and treat the package table prefix literally.
+- Require `CurrentSlugDTO` revision to match its Binding snapshot.
 - Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 
 ## [1.0.0-rc.2] - 2026-09-25

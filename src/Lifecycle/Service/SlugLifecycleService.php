@@ -29,6 +29,7 @@ use Maatify\Slug\Lifecycle\DTO\BindingStateResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\HistoryEventDTO;
 use Maatify\Slug\Lifecycle\DTO\RegistryClaimDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeDTO;
 use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
 use Maatify\Slug\Lifecycle\Enum\BindingStatusEnum;
 use Maatify\Slug\Lifecycle\Enum\ChangeTypeEnum;
@@ -889,13 +890,27 @@ final class SlugLifecycleService
         return [$binding, $claims];
     }
 
+    /** Locks the Scope before its Binding and reports ordinary target absence as not found. */
+    private function lockRequiredScope(BindingIdentityDTO $identity): ScopeDTO
+    {
+        $request = $identity->scopeProfile;
+        $scope = $this->registry->findScope($request->scope, $request->expectedProfileKey, forUpdate: true);
+        if ($scope === null) {
+            throw new SlugNotFoundException('The requested Scope was not found.');
+        }
+
+        return $scope;
+    }
+
     /**
+     * Locks the Scope, Binding and requested Registry keys in that order.
+     *
      * @param non-empty-list<Slug> $candidateKeys
      * @return array{0: BindingDTO, 1: list<RegistryClaimRecord>, 2: array<int|string, int>}
      */
     private function lockCandidateBearingBinding(BindingIdentityDTO $identity, array $candidateKeys): array
     {
-        $scope = $this->registry->lockScope($identity->scopeProfile->scope, $identity->scopeProfile->expectedProfileKey);
+        $scope = $this->lockRequiredScope($identity);
         $record = $this->registry->findBindingRecord($scope, $identity->entity, true);
         if ($record === null) {
             throw new SlugNotFoundException('The requested Binding was not found.');
@@ -932,7 +947,7 @@ final class SlugLifecycleService
             if (isset($lockedScopes[$scopeKey])) {
                 continue;
             }
-            $lockedScopes[$scopeKey] = $this->registry->lockScope($identity->scopeProfile->scope, $identity->scopeProfile->expectedProfileKey);
+            $lockedScopes[$scopeKey] = $this->lockRequiredScope($identity);
         }
 
         $bindingRequests = [

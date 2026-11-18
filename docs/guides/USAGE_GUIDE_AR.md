@@ -211,8 +211,6 @@ SlugEngine::getBinding(new BindingCriteria($bindingIdentity)).
 
 **Input**
 
-**Input**
-
 يمكن إنشاء `HistorySearchCriteria` package-wide أو لـScope دقيق، مع event type ونافذة UTC نصف مفتوحة `[fromInclusive, untilExclusive)`.
 
 **Public Call**

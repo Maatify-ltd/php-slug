@@ -54,7 +54,10 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
         return new CurrentSlugDTO($binding, $binding->currentClaim, $binding->state->revision);
     }
 
-    /** Resolves lookup input to a current, alias, historical, or unmatched result. */
+    /**
+     * Resolves a valid lookup after read-only connection and schema verification.
+     * Invalid input returns an unmatched result without touching persistence.
+     */
     public function resolve(ResolutionCriteria $criteria): SlugResolutionDTO
     {
         $profile = $this->profiles->get($criteria->scopeProfile->expectedProfileKey);
@@ -74,6 +77,7 @@ final readonly class SlugQueryService implements SlugQueryServiceInterface
             );
         }
 
+        $this->capabilities->assertInstalledSchemaSupported();
         $observation = $this->resolutionReader === null
             ? $this->findResolution($criteria, $lookup->canonicalSlug)
             : $this->resolutionReader->findResolution($criteria->scopeProfile, $lookup->canonicalSlug);
