@@ -85,15 +85,12 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         if ($mode === ScopeTransitionModeEnum::MOVE) {
             if (
                 $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
-                || $sourceAfter->state->currentSlug?->value !== $sourceClaim?->value
+                || $sourceBefore->currentClaim?->matches($sourceAfter->currentClaim) !== true
                 || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim)
             ) {
-                throw new SlugInvalidArgumentException('A move must deactivate the source and record its transition out.');
+                throw new SlugInvalidArgumentException('A move must deactivate the source, retain its current claim, and record its transition out.');
             }
-        } elseif (
-            $sourceResult->mutated || $sourceResult->historyEvents !== []
-            || ($sourceBefore !== $sourceAfter && json_encode($sourceBefore, $flags) !== json_encode($sourceAfter, $flags))
-        ) {
+        } elseif ($sourceResult->mutated) {
             throw new SlugInvalidArgumentException('A parallel transition must leave the source unchanged.');
         }
     }

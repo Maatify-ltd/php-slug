@@ -37,6 +37,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 - Reject persisted calls that could start an implicit transaction when `autocommit` is disabled and the Host has no active transaction. Reject incompatible additional required columns during schema verification.
 - Reject replay snapshots with inconsistent before and after Binding identities, conflicting History, or transition and adoption evidence that disagrees with the operation. Verify participant IDs and roles against persisted operation evidence, current adoption and transfer against the target pointer, and History against the recorded sequence range.
 - Reject mutation outcomes and History that contradict the operation, and reject adoption or transfer snapshots that unexpectedly replace a current Claim or change its Binding status.
+- Validate the current Claim in mutation results and match alias History to the resulting Claim. Enforce transition and transfer participant revisions and keep the same source Claim in a MOVE.
 - Accept compatible expression defaults on additional MySQL columns while continuing to reject generated columns.
 - Kept management Registry results empty for a missing requested Binding and treated search prefixes literally with or without MySQL backslash escaping.
 

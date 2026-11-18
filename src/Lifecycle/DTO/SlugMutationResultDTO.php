@@ -49,7 +49,7 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         if ($revision !== $after->state->revision || $currentSlug?->value !== $after->state->currentSlug?->value) {
             throw new SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
         }
-        self::assertAffectedClaims($affectedClaims, $after->identity);
+        self::assertAffectedClaims($affectedClaims, $after);
         // The enclosing transfer carries the out event after its nested replacement.
         $trailingEvents = $operationType === OperationTypeEnum::ATOMIC_TRANSFER ? 1 : 0;
         $after->assertResultEvidence($before, $historyEvents, $trailingEvents);
@@ -153,22 +153,31 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         $valid = match ($this->changeType) {
             ChangeTypeEnum::ASSIGNED => $event->slugSnapshot?->value === $this->currentSlug?->value
                 && $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL && $event->previousSlugSnapshot === null,
-            ChangeTypeEnum::CHANGED, ChangeTypeEnum::RESTORED => $event->slugSnapshot?->value === $this->currentSlug?->value
+            ChangeTypeEnum::CHANGED, ChangeTypeEnum::RESTORED, ChangeTypeEnum::ALIAS_PROMOTED => $event->slugSnapshot?->value === $this->currentSlug?->value
                 && $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL
-                && $event->previousSlugSnapshot?->value === $this->previousSlug?->value
-                && $event->previousClaimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL,
-            ChangeTypeEnum::ALIAS_PROMOTED => $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL
                 && $event->previousSlugSnapshot?->value === $this->previousSlug?->value
                 && $event->previousClaimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL,
             ChangeTypeEnum::RELEASED => $event->slugSnapshot?->value === $this->previousSlug?->value
                 && $event->claimRoleSnapshot !== RegistryRoleEnum::CURRENT_CANONICAL,
-            ChangeTypeEnum::ALIAS_ADDED, ChangeTypeEnum::ALIAS_REACTIVATED => $event->claimRoleSnapshot === RegistryRoleEnum::ACTIVE_ALIAS,
-            ChangeTypeEnum::ALIAS_RETIRED => $event->claimRoleSnapshot === RegistryRoleEnum::RETIRED_ALIAS,
+            ChangeTypeEnum::ALIAS_ADDED, ChangeTypeEnum::ALIAS_REACTIVATED => $event->claimRoleSnapshot === RegistryRoleEnum::ACTIVE_ALIAS
+                && $this->containsHistoryClaim($event),
+            ChangeTypeEnum::ALIAS_RETIRED => $event->claimRoleSnapshot === RegistryRoleEnum::RETIRED_ALIAS
+                && $this->containsHistoryClaim($event),
             default => true,
         };
         if (! $valid) {
             throw new SlugInvalidArgumentException('Mutation history claim evidence must match its outcome.');
         }
+    }
+
+    /** Matches alias history to the stored slug bytes and role in the result's claim list. */
+    private function containsHistoryClaim(HistoryEventDTO $event): bool
+    {
+        return array_any(
+            $this->affectedClaims,
+            static fn(RegistryClaimDTO $claim): bool => $claim->role === $event->claimRoleSnapshot
+                && $claim->slug->value === $event->slugSnapshot?->value,
+        );
     }
 
     /** Requires the release marker followed by the released claims, including the old current claim. */
@@ -191,21 +200,35 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         }
     }
 
-    /** @param array<int, mixed> $items */
-    private static function assertAffectedClaims(array $items, BindingIdentityDTO $owner): void
+    /**
+     * Checks ownership and ordering and requires the after state's exact current claim when present.
+     *
+     * @param array<int, mixed> $items
+     */
+    private static function assertAffectedClaims(array $items, BindingDTO $after): void
     {
         if (! array_is_list($items)) {
             throw new SlugInvalidArgumentException('affectedClaims must be a list.');
         }
         $previous = null;
+        $foundCurrent = false;
         foreach ($items as $item) {
-            if (! $item instanceof RegistryClaimDTO || ! $owner->equals($item->binding)) {
+            if (! $item instanceof RegistryClaimDTO || ! $after->identity->equals($item->binding)) {
                 throw new SlugInvalidArgumentException('affectedClaims must contain only Registry claims owned by the result Binding.');
             }
             if ($previous !== null && $item->id <= $previous) {
                 throw new SlugInvalidArgumentException('affectedClaims must be strictly ordered by id.');
             }
             $previous = $item->id;
+            if ($item->role === RegistryRoleEnum::CURRENT_CANONICAL) {
+                if ($foundCurrent || ! $item->matches($after->currentClaim)) {
+                    throw new SlugInvalidArgumentException('The claim list must agree with the after state on its single current claim.');
+                }
+                $foundCurrent = true;
+            }
+        }
+        if ($after->currentClaim !== null && ! $foundCurrent) {
+            throw new SlugInvalidArgumentException('The claim list must include the current claim from the after state.');
         }
     }
 

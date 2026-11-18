@@ -8,15 +8,26 @@ use Maatify\PhpPersistence\Pagination\Criteria\PageRequest;
 use Maatify\Slug\Canonicalization\Exception\SlugRuntimeCompatibilityException;
 use Maatify\Slug\Canonicalization\Factory\SlugProfileRegistryFactory;
 use Maatify\Slug\Canonicalization\ValueObject\SlugProfileKey;
+use Closure;
 use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
+use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
+use Maatify\Slug\Lifecycle\Command\AtomicTransferCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
+use Maatify\Slug\Lifecycle\Command\PromoteAliasToCurrentCommand;
 use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
+use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
+use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
 use Maatify\Slug\Lifecycle\DTO\ScopeProfileRequestDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeTransitionClaimIntentDTO;
+use Maatify\Slug\Lifecycle\DTO\ScopeTransitionResultDTO;
+use Maatify\Slug\Lifecycle\DTO\SlugMutationResultDTO;
+use Maatify\Slug\Lifecycle\Enum\ClaimIntentModeEnum;
+use Maatify\Slug\Lifecycle\Enum\ScopeTransitionModeEnum;
 use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Management\Criteria\BindingSearchCriteria;
 use Maatify\Slug\Lifecycle\Repository\Pdo\Schema\PdoSchemaVerifier;
@@ -385,7 +396,7 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         $read->execute(['operation' => $normal->operationKey]);
         $snapshotJson = $read->fetchColumn();
         self::assertIsString($snapshotJson);
-        /** @var array{result: array{revision: int, current_slug: string, change_type: string, history_events: list<array{event_type: string}>, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
+        /** @var array{result: array{revision: int, current_slug: string, change_type: string, affected_claims: list<array{id: int, slug: string}>, history_events: list<array{event_type: string}>, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
         $snapshot = json_decode($snapshotJson, true, flags: JSON_THROW_ON_ERROR);
         match ($field) {
             'owner' => $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner',
@@ -394,6 +405,13 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
             'history' => $snapshot['result']['history_events'] = [],
             'change-type' => $snapshot['result']['change_type'] = 'RELEASED_ALL',
             'history-type' => $snapshot['result']['history_events'][0]['event_type'] = 'ALIAS_ADDED',
+            'empty-claims' => $snapshot['result']['affected_claims'] = [],
+            'different-current-claim' => $snapshot['result']['affected_claims'][0]['slug'] = 'unrelated-slug',
+            'extra-current-claim' => $snapshot['result']['affected_claims'][] = [
+                ...$snapshot['result']['affected_claims'][0],
+                'id' => $snapshot['result']['affected_claims'][0]['id'] + 1,
+                'slug' => 'another-slug',
+            ],
             default => throw new \LogicException('Unknown replay fixture field.'),
         };
         $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
@@ -421,6 +439,133 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'newly recorded History omitted from replay' => ['history'];
         yield 'assignment reports release all on replay' => ['change-type'];
         yield 'assignment reports alias history on replay' => ['history-type'];
+        yield 'assignment omits the current claim' => ['empty-claims'];
+        yield 'assignment reports a different current claim' => ['different-current-claim'];
+        yield 'assignment reports more than one current claim' => ['extra-current-claim'];
+    }
+
+    /**
+     * Exercises operation-specific evidence through persisted facade replays.
+     *
+     * @param array<string, int|bool|string> $fields Dotted paths inside the stored result.
+     */
+    #[DataProvider('inconsistentLifecycleResults')]
+    public function testReplayRejectsInconsistentLifecycleResults(string $path, array $fields): void
+    {
+        $execute = $this->prepareLifecycleReplay($path);
+        $normal = $execute();
+        self::assertFalse($normal->replayed);
+        $replay = $execute();
+        self::assertTrue($replay->replayed);
+        self::assertSame(json_encode($normal->withReplayed(true), JSON_THROW_ON_ERROR), json_encode($replay, JSON_THROW_ON_ERROR));
+
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :operation');
+        $read->execute(['operation' => $normal->operationKey]);
+        $original = $read->fetchColumn();
+        self::assertIsString($original);
+        $read->closeCursor();
+        $snapshot = json_decode($original, true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($snapshot);
+        foreach ($fields as $field => $value) {
+            $snapshot = self::replaceReplayField($snapshot, explode('.', 'result.' . $field), $value);
+        }
+        $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
+        $update->execute([
+            'snapshot' => json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
+            'operation' => $normal->operationKey,
+        ]);
+
+        $historyCount = $this->scalar('SELECT COUNT(*) FROM maa_slug_history');
+        $this->beginHostWork();
+        try {
+            $execute();
+            self::fail('Replay admitted inconsistent lifecycle evidence.');
+        } catch (SlugPersistenceInvariantException $exception) {
+            self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
+            $this->assertHostWorkIsIntact();
+            self::assertSame($historyCount, $this->scalar('SELECT COUNT(*) FROM maa_slug_history'));
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** @return iterable<string, array{string, array<string, int|bool|string>}> */
+    public static function inconsistentLifecycleResults(): iterable
+    {
+        yield 'alias addition records a slug absent from its claims' => ['add', ['history_events.0.slug_snapshot' => 'another-slug']];
+        yield 'alias promotion records a slug different from the new current claim' => ['promote', ['history_events.0.slug_snapshot' => 'another-slug']];
+        yield 'transfer reports an unchanged source' => ['transfer', ['source_result.mutated' => false]];
+        yield 'transfer reports an unchanged target' => ['transfer', ['target_result.mutated' => false]];
+        yield 'MOVE replaces the source current claim while keeping the slug' => ['move', [
+            'source_result.after.current_claim.id' => 999,
+            'source_after.current_claim.id' => 999,
+        ]];
+        yield 'MOVE creates the target at an invalid initial revision' => ['move', [
+            'target_result.after.state.revision' => 9, 'target_after.state.revision' => 9,
+            'target_result.revision' => 9, 'target_revision' => 9,
+        ]];
+        yield 'MOVE increments the source revision multiple times' => ['move', [
+            'source_result.after.state.revision' => 9, 'source_after.state.revision' => 9,
+            'source_result.revision' => 9, 'source_revision' => 9,
+        ]];
+    }
+
+    /** @return Closure(): (SlugMutationResultDTO|AtomicTransferResultDTO|ScopeTransitionResultDTO) */
+    private function prepareLifecycleReplay(string $path): Closure
+    {
+        $engine = $this->engine();
+        $source = $this->identity('source');
+        $engine->assignExact(new AssignExactCommand($source, 'source-slug', null, new AuditContextDTO()));
+        $audit = new AuditContextDTO(idempotencyKey: 'replay-contract');
+        if ($path === 'add') {
+            $command = new AddAliasCommand($source, 'alias-slug', 1, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->addAlias($command);
+        }
+        if ($path === 'move') {
+            $targetScope = new ScopeProfileRequestDTO(new SlugScope('destination', null, null), $source->scopeProfile->expectedProfileKey);
+            $move = new TransitionScopeCommand(
+                $source,
+                $targetScope,
+                ScopeTransitionModeEnum::MOVE,
+                new ScopeTransitionClaimIntentDTO(ClaimIntentModeEnum::EXACT, 'destination-slug'),
+                1,
+                $audit,
+            );
+            return static fn(): ScopeTransitionResultDTO => $engine->transitionScope($move);
+        }
+
+        $engine->addAlias(new AddAliasCommand($source, 'alias-slug', 1, new AuditContextDTO()));
+        if ($path === 'promote') {
+            $promote = new PromoteAliasToCurrentCommand($source, 'alias-slug', 2, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->promoteAliasToCurrent($promote);
+        }
+
+        $target = $this->identity('target');
+        $engine->assignExact(new AssignExactCommand($target, 'target-slug', null, new AuditContextDTO()));
+        $transfer = new AtomicTransferCommand($source, $target, 'alias-slug', null, 2, 1, $audit);
+        return static fn(): AtomicTransferResultDTO => $engine->atomicTransfer($transfer);
+    }
+
+    /**
+     * Replaces only the selected snapshot field so all surrounding stored evidence remains canonical.
+     *
+     * @param array<array-key, mixed> $snapshot
+     * @param non-empty-list<string> $path
+     * @return array<array-key, mixed>
+     */
+    private static function replaceReplayField(array $snapshot, array $path, int|bool|string $value): array
+    {
+        $key = array_shift($path);
+        self::assertArrayHasKey($key, $snapshot);
+        if ($path === []) {
+            $snapshot[$key] = $value;
+        } else {
+            $child = $snapshot[$key];
+            self::assertIsArray($child);
+            $snapshot[$key] = self::replaceReplayField($child, $path, $value);
+        }
+        return $snapshot;
     }
 
     public function testReplayRejectsAnOtherwiseValidSnapshotFromAnotherParticipant(): void

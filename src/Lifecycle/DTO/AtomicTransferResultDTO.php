@@ -145,11 +145,10 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         $targetBefore = $target->before;
         if (
             $sourceBefore?->currentClaim === null || $targetBefore === null
+            || ! $source->mutated || ! $target->mutated
             || $source->after->state->status !== $sourceBefore->state->status
-            || $source->revision - $sourceBefore->state->revision !== 1
-            || $target->revision - $targetBefore->state->revision !== 1
         ) {
-            throw new SlugInvalidArgumentException('Transfer requires existing participants, one revision each, and a source that retains its status.');
+            throw new SlugInvalidArgumentException('Transfer requires two mutated participants with existing before states and a source that retains its status.');
         }
 
         $valid = $transfersCurrent
