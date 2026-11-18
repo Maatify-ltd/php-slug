@@ -141,6 +141,16 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         RegistryClaimDTO $transferred,
         bool $transfersCurrent,
     ): void {
+        $sourceIdentity = $source->after->identity;
+        $targetIdentity = $target->after->identity;
+        if (
+            $source->after->id === $target->after->id || $sourceIdentity->sharesEntity($targetIdentity)
+            || ! $sourceIdentity->sharesScope($targetIdentity)
+            || $sourceIdentity->scopeProfile->expectedProfileKey->value !== $targetIdentity->scopeProfile->expectedProfileKey->value
+        ) {
+            throw new SlugInvalidArgumentException('Transfer requires distinct Bindings in the same Scope and profile.');
+        }
+
         $sourceBefore = $source->before;
         $targetBefore = $target->before;
         if (
@@ -158,7 +168,9 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
                 && $transferred->matches($target->after->currentClaim)
             : $sourceBefore->currentClaim->matches($source->after->currentClaim)
                 && $targetBefore->state->status === $target->after->state->status
-                && $targetBefore->currentClaim?->matches($target->after->currentClaim) === true;
+                && $targetBefore->currentClaim?->matches($target->after->currentClaim) === true
+                && ! $transferred->sharesKeyWithinScope($sourceBefore->currentClaim)
+                && ! $transferred->sharesKeyWithinScope($targetBefore->currentClaim);
         if (! $valid) {
             throw new SlugInvalidArgumentException('Transfer participant states must match the role of the transferred claim.');
         }
@@ -192,8 +204,10 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
             || $targetIn->slugSnapshot?->value !== $transferredClaim->slug->value
             || $sourceOut->claimRoleSnapshot !== $transferredClaim->role
             || $targetIn->claimRoleSnapshot !== $transferredClaim->role
+            || ! $sourceOut->identifiesCounterparty($targetResult->after->identity)
+            || ! $targetIn->identifiesCounterparty($sourceResult->after->identity)
         ) {
-            throw new SlugInvalidArgumentException('Transfer events do not match the transferred claim.');
+            throw new SlugInvalidArgumentException('Transfer events must match the transferred claim and identify the counterpart Binding.');
         }
     }
 
@@ -209,7 +223,7 @@ final readonly class AtomicTransferResultDTO implements JsonSerializable
         if ($replacement->revision !== $sourceResult->revision) {
             throw new SlugInvalidArgumentException('Replacement revision must equal the final source revision.');
         }
-        if ($replacement->after->state->currentSlug?->value === $transferredClaim->slug->value) {
+        if (array_any($replacement->affectedClaims, $transferredClaim->sharesKeyWithinScope(...))) {
             throw new SlugInvalidArgumentException('Final source replacement must remove the transferred claim.');
         }
         if (! self::sameJson($replacement->before, $sourceResult->before) || ! self::sameJson($replacement->after, $sourceResult->after)) {

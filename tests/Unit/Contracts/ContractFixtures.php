@@ -121,6 +121,7 @@ final class ContractFixtures
         ?Slug $previousSlug = null,
         ?RegistryRoleEnum $previousRole = null,
         ?DateTimeImmutable $originalOccurredAt = null,
+        ?BindingIdentityDTO $counterparty = null,
     ): HistoryEventDTO {
         return new HistoryEventDTO(
             $id,
@@ -133,8 +134,8 @@ final class ContractFixtures
             $previousSlug,
             $role,
             $previousRole,
-            null,
-            null,
+            $counterparty?->scopeProfile->scope,
+            $counterparty?->entity,
             null,
             null,
             null,
@@ -182,8 +183,8 @@ final class ContractFixtures
         if ($sourceClaim === null || $targetClaim === null) {
             throw new \LogicException('MOVE transition bindings must have current claims.');
         }
-        $sourceEvent = self::history($sourceId, 501, 2, $sourceIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL);
-        $targetEvent = self::history($targetId, 502, 1, $targetIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL);
+        $sourceEvent = self::history($sourceId, 501, 2, $sourceIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $targetIdentity);
+        $targetEvent = self::history($targetId, 502, 1, $targetIdentity, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, self::slug('hello'), RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $sourceIdentity);
         return new ScopeTransitionResultDTO(
             OperationTypeEnum::TRANSITION_SCOPE,
             null,
@@ -216,8 +217,8 @@ final class ContractFixtures
         $hello = self::slug('hello');
         $replacement = self::slug('replacement');
         $sourceReplacementEvent = self::history($sourceId, 506, 2, $sourceIdentity, HistoryEventTypeEnum::CHANGED, $replacement, RegistryRoleEnum::CURRENT_CANONICAL, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
-        $sourceTransferEvent = self::history($sourceId, 504, 3, $sourceIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
-        $targetTransferEvent = self::history($targetId, 505, 1, $targetIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $hello, RegistryRoleEnum::CURRENT_CANONICAL);
+        $sourceTransferEvent = self::history($sourceId, 504, 3, $sourceIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $hello, RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $targetIdentity);
+        $targetTransferEvent = self::history($targetId, 505, 1, $targetIdentity, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $hello, RegistryRoleEnum::CURRENT_CANONICAL, counterparty: $sourceIdentity);
         $transferredClaim = $targetAfter->currentClaim;
         $replacementClaim = $sourceAfter->currentClaim;
         if ($transferredClaim === null || $replacementClaim === null) {
@@ -260,8 +261,8 @@ final class ContractFixtures
         $targetAfter = self::binding($target, 300, 'target-current', 201, BindingStatusEnum::ACTIVE, 2);
         $moved = self::slug('moved');
         $transferred = self::claim($target, $moved, 999, $role);
-        $sourceEvent = self::history(100, 501, 2, $source, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $moved, $role);
-        $targetEvent = self::history(300, 502, 2, $target, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $moved, $role);
+        $sourceEvent = self::history(100, 501, 2, $source, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_OUT, $moved, $role, counterparty: $target);
+        $targetEvent = self::history(300, 502, 2, $target, HistoryEventTypeEnum::OWNERSHIP_TRANSFERRED_IN, $moved, $role, counterparty: $source);
 
         return new AtomicTransferResultDTO(
             OperationTypeEnum::ATOMIC_TRANSFER,

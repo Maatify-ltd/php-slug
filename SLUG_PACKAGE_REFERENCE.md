@@ -423,6 +423,10 @@ The mutation result's `revision` and `currentSlug` must agree with its `after` s
 
 A mutated transition or transfer participant records History and advances one revision. A newly created participant starts at revision 1. An unchanged participant retains its before state and records no History. A MOVE retains the source current Claim, and a PARALLEL transition leaves the source state unchanged. A transition event records the corresponding canonical claim slug and role. Each mutation outcome must match its operation, Binding state change, and History event types. The affected claim list includes the exact current Claim from the after state when present. Alias History identifies the resulting Claim and role in that list. Only change and alias addition may return a no-op, with unchanged Binding state and empty History. Current adoption activates a new or released Binding. Current transfer activates a released target and replaces the source's current Claim. Non-current adoption and transfer preserve the status and current Claim of each affected Binding.
 
+A transfer uses distinct Bindings with the same Scope and profile. A transition keeps the same Host entity across distinct Scopes. Transfer and transition History identifies the counterpart Scope and entity.
+
+Within a result, Registry claim keys are compared using the package's utf8mb4_bin PAD SPACE equality, preserving the recorded slug bytes. The final claim list excludes the released key. A non-current adoption or transfer cannot duplicate a current claim in the same Scope.
+
 History lists cover the sequence positions created by the operation. The nested transfer replacement covers its own History, and the enclosing transfer also covers its transfer-out event. Replay also verifies the snapshot's Binding IDs and roles against the stored operation participants. A mismatch raises `SlugPersistenceInvariantException`.
 
 ## 9. Persistence, Transactions, and Concurrency

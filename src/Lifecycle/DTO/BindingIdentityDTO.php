@@ -24,9 +24,29 @@ final readonly class BindingIdentityDTO implements JsonSerializable
      */
     public function equals(self $other): bool
     {
-        return $this->scopeProfile->scope->jsonSerialize() === $other->scopeProfile->scope->jsonSerialize()
+        return $this->sharesScope($other)
             && $this->scopeProfile->expectedProfileKey->value === $other->scopeProfile->expectedProfileKey->value
-            && $this->entity->jsonSerialize() === $other->entity->jsonSerialize();
+            && $this->sharesEntity($other);
+    }
+
+    /**
+     * Compares the exact Scope dimensions independently of its expected profile.
+     *
+     * @internal
+     */
+    public function sharesScope(self $other): bool
+    {
+        return $this->scopeProfile->scope->jsonSerialize() === $other->scopeProfile->scope->jsonSerialize();
+    }
+
+    /**
+     * Compares the exact Host entity dimensions independently of its Scope.
+     *
+     * @internal
+     */
+    public function sharesEntity(self $other): bool
+    {
+        return $this->entity->jsonSerialize() === $other->entity->jsonSerialize();
     }
 
     /** @return array<string, mixed> */

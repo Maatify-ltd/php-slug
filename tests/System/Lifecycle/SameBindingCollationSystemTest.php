@@ -31,6 +31,7 @@ use Maatify\Slug\Lifecycle\Enum\ClaimIntentModeEnum;
 use Maatify\Slug\Lifecycle\Exception\SlugAliasOperationNotPermittedException;
 use Maatify\Slug\Lifecycle\Exception\SlugAlreadyClaimedException;
 use Maatify\Slug\Lifecycle\Exception\SlugCurrentClaimReleaseException;
+use Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException;
 use Maatify\Slug\Lifecycle\Exception\SlugTransferReplacementConflictException;
 use Maatify\Slug\Lifecycle\ValueObject\EntityReference;
 use Maatify\Slug\Lifecycle\ValueObject\SlugScope;
@@ -174,6 +175,40 @@ final class SameBindingCollationSystemTest extends MySqlIntegrationTestCase
         $result = $engine->atomicTransfer(new AtomicTransferCommand($owner, $target, 'alpha ', new TransferReplacementIntentDTO(ClaimIntentModeEnum::GENERATED, 'alpha'), $revision, 2, new AuditContextDTO()));
         self::assertSame('alpha-2', $result->sourceResult->after->currentClaim?->slug->value);
         self::assertSame('alpha ', $result->targetResult->after->currentClaim?->slug->value);
+    }
+
+    #[DataProvider('replaySlugKeys')]
+    public function testReplayRejectsConflictingPaddedClaims(string $path, string $replacement): void
+    {
+        [$engine, $owner, $target, $revision] = $this->seed($path);
+        if ($path === 'release-claim') {
+            $engine->addAlias(new AddAliasCommand($owner, 'retained', $revision, new AuditContextDTO()));
+            $revision++;
+        }
+        $audit = new AuditContextDTO(idempotencyKey: 'replay-slug-key');
+        $result = $this->call($engine, $owner, $target, $revision, $path, 'alias ', $audit);
+        self::assertTrue($this->call($engine, $owner, $target, $revision, $path, 'alias ', $audit)->replayed);
+
+        $read = $this->pdo->prepare('SELECT result_snapshot FROM maa_slug_operations WHERE operation_key = :key');
+        $read->execute(['key' => $result->operationKey]);
+        $stored = $read->fetchColumn();
+        $read->closeCursor();
+        self::assertIsString($stored);
+        /** @var array{result: array{affected_claims: list<array{slug: string}>}} $snapshot */
+        $snapshot = json_decode($stored, true, flags: JSON_THROW_ON_ERROR);
+        $snapshot['result']['affected_claims'][1]['slug'] = $replacement;
+        $write = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :key');
+        $write->execute(['snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'key' => $result->operationKey]);
+
+        $this->expectException(SlugPersistenceInvariantException::class);
+        $this->call($engine, $owner, $target, $revision, $path, 'alias ', $audit);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function replaySlugKeys(): iterable
+    {
+        yield 'duplicate current claim with distinct stored bytes' => ['add-alias', 'alpha'];
+        yield 'released claim with distinct stored bytes' => ['release-claim', 'alias'];
     }
 
     /** @return array{SlugEngine, BindingIdentityDTO, BindingIdentityDTO, int} */

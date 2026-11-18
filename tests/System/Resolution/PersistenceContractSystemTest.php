@@ -12,13 +12,16 @@ use Closure;
 use Maatify\Slug\Facade\SlugEngine;
 use Maatify\Slug\Factory\SlugEngineFactory;
 use Maatify\Slug\Lifecycle\Command\AddAliasCommand;
+use Maatify\Slug\Lifecycle\Command\AdoptAliasCommand;
 use Maatify\Slug\Lifecycle\Command\AssignExactCommand;
 use Maatify\Slug\Lifecycle\Command\AtomicTransferCommand;
 use Maatify\Slug\Lifecycle\Command\ChangeExactCommand;
 use Maatify\Slug\Lifecycle\Command\PromoteAliasToCurrentCommand;
 use Maatify\Slug\Lifecycle\Command\ReleaseAllOwnershipCommand;
+use Maatify\Slug\Lifecycle\Command\ReleaseClaimCommand;
 use Maatify\Slug\Lifecycle\Command\TransitionScopeCommand;
 use Maatify\Slug\Lifecycle\Criteria\CurrentSlugCriteria;
+use Maatify\Slug\Lifecycle\DTO\AdoptionResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AtomicTransferResultDTO;
 use Maatify\Slug\Lifecycle\DTO\AuditContextDTO;
 use Maatify\Slug\Lifecycle\DTO\BindingIdentityDTO;
@@ -493,6 +496,48 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
     /** @return iterable<string, array{string, array<string, int|bool|string>}> */
     public static function inconsistentLifecycleResults(): iterable
     {
+        yield 'released claim remains in affected claims' => ['release', ['affected_claims.1.slug' => 'alias-slug']];
+        yield 'alias duplicates the current slug' => ['add', [
+            'affected_claims.1.slug' => 'source-slug', 'history_events.0.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'adopted alias duplicates the current slug' => ['adopt', [
+            'adopted_claim.slug' => 'source-slug', 'history_event.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'transferred alias duplicates the source current slug' => ['transfer', [
+            'transferred_claim.slug' => 'source-slug',
+            'source_result.history_events.0.slug_snapshot' => 'source-slug',
+            'target_result.history_events.0.slug_snapshot' => 'source-slug',
+            'history_events.0.slug_snapshot' => 'source-slug', 'history_events.1.slug_snapshot' => 'source-slug',
+        ]];
+        yield 'transfer reports a target in another scope' => ['transfer', [
+            'target_result.before.identity.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.after.identity.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.before.current_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'target_result.after.current_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'transferred_claim.binding.scope_profile.scope.namespace' => 'another-scope',
+            'source_result.history_events.0.related_scope.namespace' => 'another-scope',
+            'history_events.0.related_scope.namespace' => 'another-scope',
+            'target_result.history_events.0.scope_snapshot.namespace' => 'another-scope',
+            'history_events.1.scope_snapshot.namespace' => 'another-scope',
+        ]];
+        yield 'MOVE reports a different target entity' => ['move', [
+            'target_result.after.identity.entity.entity_key' => 'wrong-entity',
+            'target_after.identity.entity.entity_key' => 'wrong-entity',
+            'target_result.after.current_claim.binding.entity.entity_key' => 'wrong-entity',
+            'target_after.current_claim.binding.entity.entity_key' => 'wrong-entity',
+            'target_result.history_events.0.entity_snapshot.entity_key' => 'wrong-entity',
+            'history_events.1.entity_snapshot.entity_key' => 'wrong-entity',
+            'source_result.history_events.0.related_entity.entity_key' => 'wrong-entity',
+            'history_events.0.related_entity.entity_key' => 'wrong-entity',
+        ]];
+        yield 'transfer-out history names a different target entity' => ['transfer', [
+            'source_result.history_events.0.related_entity.entity_key' => 'wrong-recipient',
+            'history_events.0.related_entity.entity_key' => 'wrong-recipient',
+        ]];
+        yield 'MOVE history names a different destination scope' => ['move', [
+            'source_result.history_events.0.related_scope.namespace' => 'wrong-destination',
+            'history_events.0.related_scope.namespace' => 'wrong-destination',
+        ]];
         yield 'alias addition records a slug absent from its claims' => ['add', ['history_events.0.slug_snapshot' => 'another-slug']];
         yield 'alias promotion records a slug different from the new current claim' => ['promote', ['history_events.0.slug_snapshot' => 'another-slug']];
         yield 'transfer reports an unchanged source' => ['transfer', ['source_result.mutated' => false]];
@@ -511,7 +556,7 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         ]];
     }
 
-    /** @return Closure(): (SlugMutationResultDTO|AtomicTransferResultDTO|ScopeTransitionResultDTO) */
+    /** @return Closure(): (SlugMutationResultDTO|AdoptionResultDTO|AtomicTransferResultDTO|ScopeTransitionResultDTO) */
     private function prepareLifecycleReplay(string $path): Closure
     {
         $engine = $this->engine();
@@ -521,6 +566,10 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         if ($path === 'add') {
             $command = new AddAliasCommand($source, 'alias-slug', 1, $audit);
             return static fn(): SlugMutationResultDTO => $engine->addAlias($command);
+        }
+        if ($path === 'adopt') {
+            $command = new AdoptAliasCommand($source, 'adopted-slug', null, 1, $audit);
+            return static fn(): AdoptionResultDTO => $engine->adoptAlias($command);
         }
         if ($path === 'move') {
             $targetScope = new ScopeProfileRequestDTO(new SlugScope('destination', null, null), $source->scopeProfile->expectedProfileKey);
@@ -536,6 +585,11 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         }
 
         $engine->addAlias(new AddAliasCommand($source, 'alias-slug', 1, new AuditContextDTO()));
+        if ($path === 'release') {
+            $engine->addAlias(new AddAliasCommand($source, 'retained-alias', 2, new AuditContextDTO()));
+            $command = new ReleaseClaimCommand($source, 'alias-slug', 3, $audit);
+            return static fn(): SlugMutationResultDTO => $engine->releaseClaim($command);
+        }
         if ($path === 'promote') {
             $promote = new PromoteAliasToCurrentCommand($source, 'alias-slug', 2, $audit);
             return static fn(): SlugMutationResultDTO => $engine->promoteAliasToCurrent($promote);

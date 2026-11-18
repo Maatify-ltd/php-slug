@@ -42,6 +42,28 @@ final readonly class RegistryClaimDTO implements JsonSerializable
             && $this->updatedAt == $other->updatedAt;
     }
 
+    /**
+     * Compares Registry identity keys for two claims known to be in one Scope.
+     *
+     * @internal
+     */
+    public function sharesKeyWithinScope(?self $other): bool
+    {
+        return $other !== null
+            && ($this->id === $other->id || self::scopeSlugKey($this->slug) === self::scopeSlugKey($other->slug));
+    }
+
+    /**
+     * Produces a comparison key for the Registry's utf8mb4_bin PAD SPACE collation.
+     * The original slug bytes remain in the returned Claim and History.
+     *
+     * @internal
+     */
+    public static function scopeSlugKey(Slug $slug): string
+    {
+        return rtrim($slug->value, ' ');
+    }
+
     /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {

@@ -131,6 +131,17 @@ final readonly class HistoryEventDTO implements JsonSerializable
         }
     }
 
+    /**
+     * Checks the counterpart Scope and entity recorded by a transfer or transition event.
+     *
+     * @internal
+     */
+    public function identifiesCounterparty(BindingIdentityDTO $identity): bool
+    {
+        return $this->relatedScope?->jsonSerialize() === $identity->scopeProfile->scope->jsonSerialize()
+            && $this->relatedEntity?->jsonSerialize() === $identity->entity->jsonSerialize();
+    }
+
     /** @return array<string, mixed> */
     public function jsonSerialize(): array
     {

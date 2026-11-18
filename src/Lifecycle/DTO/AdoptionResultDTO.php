@@ -60,8 +60,9 @@ final readonly class AdoptionResultDTO implements JsonSerializable
         } elseif (
             $before?->state->status !== $after->state->status
             || $before->currentClaim?->matches($after->currentClaim) !== true
+            || $adoptedClaim->sharesKeyWithinScope($after->currentClaim)
         ) {
-            throw new SlugInvalidArgumentException('Non-current adoption must preserve the Binding status and current claim.');
+            throw new SlugInvalidArgumentException('Non-current adoption must preserve the Binding status and current claim and add a distinct claim.');
         }
     }
 

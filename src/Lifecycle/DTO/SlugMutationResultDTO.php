@@ -49,7 +49,7 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         if ($revision !== $after->state->revision || $currentSlug?->value !== $after->state->currentSlug?->value) {
             throw new SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
         }
-        self::assertAffectedClaims($affectedClaims, $after);
+        $this->assertAffectedClaims($affectedClaims, $after);
         // The enclosing transfer carries the out event after its nested replacement.
         $trailingEvents = $operationType === OperationTypeEnum::ATOMIC_TRANSFER ? 1 : 0;
         $after->assertResultEvidence($before, $historyEvents, $trailingEvents);
@@ -201,17 +201,21 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
     }
 
     /**
-     * Checks ownership and ordering and requires the after state's exact current claim when present.
+     * Checks ownership, ordering, and unique Registry keys, excluding a released slug from the final claims.
+     * A current claim in the after state must be present by exact value.
      *
      * @param array<int, mixed> $items
      */
-    private static function assertAffectedClaims(array $items, BindingDTO $after): void
+    private function assertAffectedClaims(array $items, BindingDTO $after): void
     {
         if (! array_is_list($items)) {
             throw new SlugInvalidArgumentException('affectedClaims must be a list.');
         }
         $previous = null;
         $foundCurrent = false;
+        $seenSlugs = [];
+        $releasedKey = $this->changeType === ChangeTypeEnum::RELEASED && $this->previousSlug !== null
+            ? RegistryClaimDTO::scopeSlugKey($this->previousSlug) : null;
         foreach ($items as $item) {
             if (! $item instanceof RegistryClaimDTO || ! $after->identity->equals($item->binding)) {
                 throw new SlugInvalidArgumentException('affectedClaims must contain only Registry claims owned by the result Binding.');
@@ -220,6 +224,11 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
                 throw new SlugInvalidArgumentException('affectedClaims must be strictly ordered by id.');
             }
             $previous = $item->id;
+            $key = RegistryClaimDTO::scopeSlugKey($item->slug);
+            if (isset($seenSlugs[$key]) || $key === $releasedKey) {
+                throw new SlugInvalidArgumentException('The claim list cannot contain duplicate Registry slugs or the released slug.');
+            }
+            $seenSlugs[$key] = true;
             if ($item->role === RegistryRoleEnum::CURRENT_CANONICAL) {
                 if ($foundCurrent || ! $item->matches($after->currentClaim)) {
                     throw new SlugInvalidArgumentException('The claim list must agree with the after state on its single current claim.');

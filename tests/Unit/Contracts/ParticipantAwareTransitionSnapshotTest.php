@@ -111,8 +111,8 @@ final class ParticipantAwareTransitionSnapshotTest extends TestCase
         $sourceBefore = $this->binding($sourceIdentity, $sourceProfile, 100, 'src-hello', 200, BindingStatusEnum::ACTIVE, 1);
         $sourceAfter = $this->binding($sourceIdentity, $sourceProfile, 100, 'src-hello', 200, BindingStatusEnum::INACTIVE, 2);
         $targetAfter = $this->binding($targetIdentity, $targetProfile, 300, 'tgt-world', 301, BindingStatusEnum::ACTIVE, 1);
-        $sourceEvent = $this->history($sourceIdentity, 100, 501, 2, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, Slug::fromProfile($sourceProfile, 'src-hello'));
-        $targetEvent = $this->history($targetIdentity, 300, 502, 1, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, Slug::fromProfile($targetProfile, 'tgt-world'));
+        $sourceEvent = $this->history($sourceIdentity, 100, 501, 2, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, Slug::fromProfile($sourceProfile, 'src-hello'), $targetIdentity);
+        $targetEvent = $this->history($targetIdentity, 300, 502, 1, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, Slug::fromProfile($targetProfile, 'tgt-world'), $sourceIdentity);
         $sourceClaim = $sourceAfter->currentClaim;
         $targetClaim = $targetAfter->currentClaim;
         if ($sourceClaim === null || $targetClaim === null) {
@@ -168,6 +168,7 @@ final class ParticipantAwareTransitionSnapshotTest extends TestCase
         int $sequence,
         HistoryEventTypeEnum $eventType,
         Slug $slug,
+        BindingIdentityDTO $counterparty,
     ): HistoryEventDTO {
         return new HistoryEventDTO(
             $id,
@@ -180,8 +181,8 @@ final class ParticipantAwareTransitionSnapshotTest extends TestCase
             null,
             RegistryRoleEnum::CURRENT_CANONICAL,
             null,
-            null,
-            null,
+            $counterparty->scopeProfile->scope,
+            $counterparty->entity,
             null,
             null,
             null,

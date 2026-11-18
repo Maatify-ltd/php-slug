@@ -62,6 +62,12 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         if ($sourceBefore === null || ! $targetCreated || $targetBefore !== null || $targetAfter->state->status !== BindingStatusEnum::ACTIVE) {
             throw new SlugInvalidArgumentException('A transition requires an existing source and a newly created active target.');
         }
+        if (
+            $sourceAfter->id === $targetAfter->id || $sourceAfter->identity->sharesScope($targetAfter->identity)
+            || ! $sourceAfter->identity->sharesEntity($targetAfter->identity)
+        ) {
+            throw new SlugInvalidArgumentException('A transition must carry the same entity to a different Scope and Binding.');
+        }
         self::participantHistory($historyEvents, [$sourceAfter->id, $targetAfter->id], 'historyEvents');
         if ($sourceClaim?->value !== $sourceBefore->state->currentSlug?->value || $targetClaim?->value !== $targetAfter->state->currentSlug?->value) {
             throw new SlugInvalidArgumentException('Transition claims must match the source before and target after states.');
@@ -79,31 +85,36 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
             throw new SlugInvalidArgumentException('Transition state and history must agree with the participant results.');
         }
 
-        if (! self::recordsTransitionClaim($targetResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, $targetClaim)) {
-            throw new SlugInvalidArgumentException('The transition target must record its activation.');
+        if (! self::recordsTransitionClaim($targetResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_IN, $targetClaim, $sourceAfter->identity)) {
+            throw new SlugInvalidArgumentException('The transition target must record its activation and identify the source.');
         }
         if ($mode === ScopeTransitionModeEnum::MOVE) {
             if (
                 $sourceAfter->state->status !== BindingStatusEnum::INACTIVE
                 || $sourceBefore->currentClaim?->matches($sourceAfter->currentClaim) !== true
-                || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim)
+                || ! self::recordsTransitionClaim($sourceResult, HistoryEventTypeEnum::SCOPE_TRANSITIONED_OUT, $sourceClaim, $targetAfter->identity)
             ) {
-                throw new SlugInvalidArgumentException('A move must deactivate the source, retain its current claim, and record its transition out.');
+                throw new SlugInvalidArgumentException('A move must retain the source claim and record the deactivation and destination.');
             }
         } elseif ($sourceResult->mutated) {
             throw new SlugInvalidArgumentException('A parallel transition must leave the source unchanged.');
         }
     }
 
-    /** Checks the one canonical claim event for a participant changed by the transition. */
-    private static function recordsTransitionClaim(BindingStateResultDTO $participant, HistoryEventTypeEnum $eventType, ?Slug $claim): bool
-    {
+    /** Checks the canonical claim event and its counterpart for a participant changed by the transition. */
+    private static function recordsTransitionClaim(
+        BindingStateResultDTO $participant,
+        HistoryEventTypeEnum $eventType,
+        ?Slug $claim,
+        BindingIdentityDTO $counterparty,
+    ): bool {
         $event = $participant->historyEvents[0] ?? null;
 
         return $participant->mutated && count($participant->historyEvents) === 1
             && $event?->eventType === $eventType
             && $event->claimRoleSnapshot === RegistryRoleEnum::CURRENT_CANONICAL
-            && $event->slugSnapshot?->value === $claim?->value;
+            && $event->slugSnapshot?->value === $claim?->value
+            && $event->identifiesCounterparty($counterparty);
     }
 
     /**
