@@ -4,7 +4,10 @@ set -euo pipefail
 
 unset CDPATH
 if [[ -n "${TMPDIR:-}" ]]; then
-    TMPDIR="$(cd "$TMPDIR" && pwd -P)"
+    if [[ "$TMPDIR" != /* ]]; then
+        TMPDIR="./$TMPDIR"
+    fi
+    TMPDIR="$(cd -- "$TMPDIR" && pwd -P)"
     export TMPDIR
 fi
 

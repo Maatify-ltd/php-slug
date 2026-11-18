@@ -21,7 +21,12 @@ version='0.29.0.gfm.13'
 source_commit='587a12bb54d95ac37241377e6ddc93ea0e45439b'
 source_sha256='9214b42f13a471fc2984e9806c37bf0f42a13027854ab19103bd6d8085eb3416'
 
-temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+temporary_root="${TMPDIR:-/tmp}"
+if [[ "$temporary_root" != /* ]]; then
+    temporary_root="./$temporary_root"
+fi
+temporary_root="$(cd -- "$temporary_root" && pwd -P)"
+export TMPDIR="$temporary_root"
 scratch="$(mktemp -d "$temporary_root/slug-release-markdown.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 

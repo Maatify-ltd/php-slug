@@ -210,9 +210,10 @@ With the release-artifact prerequisites above installed, run this from the check
 
 ```bash
 bash tools/ci/test-shell-paths.sh '1.0.0-rc.3'
+bash tools/ci/test-tmpdir-entrypoints.sh
 ```
 
-It runs the actual PHP runtime and release-artifact gate commands for empty/nonempty
+The first command runs the actual PHP runtime and release-artifact gate commands for empty/nonempty
 `CDPATH` and absolute/relative `TMPDIR`, using relative and absolute script invocation
 from the checkout and a different working directory. It also directly invokes both
 release-artifact regression suites and the archive verifier, without the gate wrapper,
@@ -221,3 +222,33 @@ and reject Composer temporary-directory diagnostics even when the command exits 
 Pass the configured RC target, or an empty argument when no target is active.
 Working-tree shell edits are applied only to that disposable fixture. The real
 source index and working tree are left untouched. CI runs the same command.
+
+The second command runs 112 focused entry-point probes: seven scripts, relative and
+absolute invocation, and eight TMPDIR forms covering `-temporary`, `-`, absolute
+paths, spaces, and relative/absolute symlinks. Each probe executes the real script
+until its first dependency call after path resolution. A controlled dependency
+stop must record the expected physical temporary directory; an earlier failure or
+an unexpected call fails the probe. These probes do not download or build tools or
+start Docker. They complement the complete commands above and do not replace the
+real archive, installer, database, or Consumer Harness gates. CI runs both commands.
+
+The active archive regression suite also exercises the published-artifact shell
+driver with `-temporary` and `-` through its existing isolated Composer probe.
+
+CI also runs the real MariaDB regression workflow and the complete shell-path
+matrix with TMPDIR set to a symlink named `-` pointing to a directory with spaces.
+After installing the prerequisites above, reproduce these runs from the checkout:
+
+```bash
+(
+    set -euo pipefail
+    checkout_root="$PWD"
+    temp_caller="$(mktemp -d)"
+    trap 'rm -rf -- "$temp_caller"' EXIT
+    mkdir "$temp_caller/physical temporary"
+    ln -s 'physical temporary' "$temp_caller/-"
+    cd "$temp_caller"
+    TMPDIR=- bash "$checkout_root/tools/ci/run-integration.sh" mariadb-snapshot
+    TMPDIR=- bash "$checkout_root/tools/ci/test-shell-paths.sh" '1.0.0-rc.3'
+)
+```
