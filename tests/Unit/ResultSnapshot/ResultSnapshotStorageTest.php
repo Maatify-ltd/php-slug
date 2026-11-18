@@ -15,6 +15,36 @@ use PHPUnit\Framework\TestCase;
 
 final class ResultSnapshotStorageTest extends TestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('inconsistentParticipantRevisions')]
+    public function testSnapshotRejectsParticipantRevisionsDifferentFromTheBindingState(string $fixtureType, bool $nested): void
+    {
+        $fixture = $fixtureType === 'transition' ? ContractFixtures::transition() : ContractFixtures::transfer();
+        /** @var array{result: array{source_revision: int, target_revision: int, source_result: array{revision: int}}} $snapshot */
+        $snapshot = json_decode(ResultSnapshotEncoder::encode($fixture), true, flags: JSON_THROW_ON_ERROR);
+        if ($nested) {
+            $snapshot['result']['source_result']['revision']++;
+        } elseif ($fixtureType === 'transition') {
+            $snapshot['result']['source_revision']++;
+        } else {
+            $snapshot['result']['target_revision']++;
+        }
+
+        $this->expectException(\Maatify\Slug\Lifecycle\Exception\SlugPersistenceInvariantException::class);
+        $this->expectExceptionMessage('Invalid result snapshot');
+        \Maatify\Slug\Lifecycle\Mapper\ResultSnapshot\ResultSnapshotDecoder::decode(
+            json_encode($snapshot, JSON_THROW_ON_ERROR),
+            ContractFixtures::registry(),
+        );
+    }
+
+    /** @return iterable<string, array{string, bool}> */
+    public static function inconsistentParticipantRevisions(): iterable
+    {
+        yield 'transition summary' => ['transition', false];
+        yield 'transfer summary' => ['transfer', false];
+        yield 'participant revision' => ['transition', true];
+    }
+
     public function testAllFourResultTypesRoundTripThroughCanonicalStorageValidation(): void
     {
         foreach ([

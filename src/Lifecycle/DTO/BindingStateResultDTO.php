@@ -22,6 +22,9 @@ final readonly class BindingStateResultDTO implements JsonSerializable
         if ($revision < 0) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('revision must be non-negative.');
         }
+        if ($revision !== $after->state->revision) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Binding result revision must match the after state.');
+        }
         self::orderedHistory($historyEvents, 'historyEvents');
     }
 

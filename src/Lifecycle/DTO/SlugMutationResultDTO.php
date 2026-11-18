@@ -42,6 +42,9 @@ final readonly class SlugMutationResultDTO implements JsonSerializable
         if ($revision < 0) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('revision must be non-negative.');
         }
+        if ($revision !== $after->state->revision || $currentSlug?->value !== $after->state->currentSlug?->value) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Mutation result revision and current slug must match the after state.');
+        }
         self::sortedById($affectedClaims, 'affectedClaims');
         self::orderedHistory($historyEvents, 'historyEvents');
     }

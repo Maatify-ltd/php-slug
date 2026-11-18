@@ -49,6 +49,12 @@ final readonly class ScopeTransitionResultDTO implements JsonSerializable
         if ($targetRevision < 0) {
             throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('targetRevision must be non-negative.');
         }
+        if (
+            $sourceRevision !== $sourceAfter->state->revision || $sourceRevision !== $sourceResult->revision
+            || $targetRevision !== $targetAfter->state->revision || $targetRevision !== $targetResult->revision
+        ) {
+            throw new \Maatify\Slug\Exception\SlugInvalidArgumentException('Transition revisions must match the participants and their after states.');
+        }
         self::participantHistory($historyEvents, [$sourceAfter->id, $targetAfter->id], 'historyEvents');
     }
 

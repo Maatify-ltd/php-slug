@@ -110,6 +110,45 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         yield 'upper' => [PDO::CASE_UPPER];
     }
 
+    #[DataProvider('databaseSwitchPaths')]
+    public function testWarmEngineChecksTheSelectedDatabaseWithoutTakingOverHostWork(bool $write): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('existing');
+        $criteria = new CurrentSlugCriteria($identity);
+        $engine->assignExact(new AssignExactCommand($identity, 'hello', null, new AuditContextDTO()));
+        $original = $this->scalar('SELECT DATABASE()');
+        $this->beginHostWork();
+        try {
+            $this->pdo->exec('USE information_schema');
+            try {
+                if ($write) {
+                    $engine->ensureScope($identity->scopeProfile);
+                } else {
+                    $engine->getCurrent($criteria);
+                }
+                self::fail('The engine reused schema verification from a different database.');
+            } catch (SlugRuntimeCompatibilityException $exception) {
+                self::assertStringContainsString('table set', $exception->getMessage());
+                self::assertSame('information_schema', $this->scalar('SELECT DATABASE()'));
+            } finally {
+                $this->pdo->exec(sprintf('USE `%s`', str_replace('`', '``', $original)));
+            }
+            $this->assertHostWorkIsIntact();
+            self::assertSame('hello', $engine->getCurrent($criteria)?->claim->slug->value);
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('0', $this->scalar('SELECT COUNT(*) FROM contract_host_marker'));
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function databaseSwitchPaths(): iterable
+    {
+        yield 'read' => [false];
+        yield 'write' => [true];
+    }
+
     /** @param list<string> $ddl */
     #[DataProvider('schemaChanges')]
     public function testSchemaVerifierAndFirstWriteRejectPhysicalDrift(array $ddl, string $message): void
@@ -183,7 +222,48 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         }
     }
 
-    public function testReplayRejectsNestedBindingWithWrongClaimOwner(): void
+    #[DataProvider('invalidBindingStates')]
+    public function testSearchBindingsRejectsInvalidRegistryState(string $change, string $message): void
+    {
+        $engine = $this->engine();
+        $identity = $this->identity('search-owner');
+        $binding = $engine->assignExact(new AssignExactCommand($identity, 'first-book', null, new AuditContextDTO()))->after;
+        $criteria = new BindingSearchCriteria($identity->scopeProfile, new PageRequest(1, 20));
+        self::assertCount(1, $engine->searchBindings($criteria)->data);
+        $this->beginHostWork();
+        try {
+            $update = $this->pdo->prepare($change);
+            $update->execute(['binding' => $binding->id]);
+            try {
+                $engine->searchBindings($criteria);
+                self::fail('Management returned a Binding with inconsistent Registry state.');
+            } catch (SlugPersistenceInvariantException $exception) {
+                self::assertStringContainsString($message, $exception->getMessage());
+                $this->assertHostWorkIsIntact();
+            }
+        } finally {
+            $this->pdo->rollBack();
+        }
+        self::assertSame('first-book', $engine->searchBindings($criteria)->data[0]->currentClaim?->slug->value);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function invalidBindingStates(): iterable
+    {
+        yield 'released with live claims' => [
+            "UPDATE maa_slug_bindings SET status = 'RELEASED', current_registry_id = NULL WHERE id = :binding",
+            'Released Binding',
+        ];
+        yield 'active with two current claims' => [
+            'INSERT INTO maa_slug_registry (scope_id, binding_id, slug, claim_role, claimed_at, updated_at) '
+            . "SELECT scope_id, binding_id, 'second-book', 'CURRENT_CANONICAL', claimed_at, updated_at "
+            . 'FROM maa_slug_registry WHERE binding_id = :binding',
+            'current pointer',
+        ];
+    }
+
+    #[DataProvider('inconsistentReplayFields')]
+    public function testReplayRejectsAnInconsistentMutationSnapshot(string $field): void
     {
         $engine = $this->engine();
         $command = new AssignExactCommand($this->identity('replay-owner'), 'replay-book', null, new AuditContextDTO(idempotencyKey: 'binding-owner'));
@@ -193,16 +273,21 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         $read->execute(['operation' => $normal->operationKey]);
         $snapshotJson = $read->fetchColumn();
         self::assertIsString($snapshotJson);
-        /** @var array{result: array{after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
+        /** @var array{result: array{revision: int, current_slug: string, after: array{current_claim: array{binding: array{entity: array{entity_key: string}}}}}} $snapshot */
         $snapshot = json_decode($snapshotJson, true, flags: JSON_THROW_ON_ERROR);
-        $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner';
+        match ($field) {
+            'owner' => $snapshot['result']['after']['current_claim']['binding']['entity']['entity_key'] = 'wrong-owner',
+            'revision' => $snapshot['result']['revision'] += 10,
+            'slug' => $snapshot['result']['current_slug'] = 'another-book',
+            default => throw new \LogicException('Unknown replay fixture field.'),
+        };
         $update = $this->pdo->prepare('UPDATE maa_slug_operations SET result_snapshot = :snapshot WHERE operation_key = :operation');
         $update->execute(['snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'operation' => $normal->operationKey]);
 
         $this->beginHostWork();
         try {
             $engine->assignExact($command);
-            self::fail('Replay admitted a Binding with a foreign current claim.');
+            self::fail('Replay admitted an inconsistent mutation snapshot.');
         } catch (SlugPersistenceInvariantException $exception) {
             self::assertStringContainsString('Invalid result snapshot', $exception->getMessage());
             $this->assertHostWorkIsIntact();
@@ -210,6 +295,14 @@ final class PersistenceContractSystemTest extends MySqlIntegrationTestCase
         } finally {
             $this->pdo->rollBack();
         }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function inconsistentReplayFields(): iterable
+    {
+        yield 'foreign current claim owner' => ['owner'];
+        yield 'revision disagrees with the after state' => ['revision'];
+        yield 'current slug disagrees with the after state' => ['slug'];
     }
 
     /** Starts a Host transaction with pending work unrelated to the library. */

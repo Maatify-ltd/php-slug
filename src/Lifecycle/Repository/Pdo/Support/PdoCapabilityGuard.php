@@ -18,7 +18,7 @@ use Throwable;
 /** Validates PDO driver, connection, and installed-schema capabilities. */
 final class PdoCapabilityGuard implements CapabilityGuardInterface
 {
-    private bool $installedSchemaVerified = false;
+    private ?string $verifiedDatabase = null;
     private bool $mutationCapabilitiesVerified = false;
     private bool $snapshotIsolationAvailable = true;
 
@@ -51,11 +51,18 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         $this->assertInstalledSchema(forMutation: true);
     }
 
-    /** Keeps read metadata validation independent from rollback-protected write probes. */
+    /** Keeps separate read and write verification for the database currently selected on the Host connection. */
     private function assertInstalledSchema(bool $forMutation): void
     {
-        $this->assertDriverAndConnectionAttributes();
-        if (! $this->installedSchemaVerified) {
+        $database = $this->assertDriverAndConnectionAttributes();
+        if ($this->verifiedDatabase !== $database) {
+            $this->verifiedDatabase = null;
+            $this->mutationCapabilitiesVerified = false;
+        }
+        if ($database === null) {
+            throw new SlugRuntimeCompatibilityException('The Host PDO session must select a database.');
+        }
+        if ($this->verifiedDatabase === null) {
             $this->assertExactStringSemantics();
             $this->assertDatetimePrecision();
             $this->assertPackageTables();
@@ -64,7 +71,7 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             } catch (Throwable $throwable) {
                 throw new SlugRuntimeCompatibilityException('The Registry lock projection is unavailable or incompatible.', 0, $throwable);
             }
-            $this->installedSchemaVerified = true;
+            $this->verifiedDatabase = $database;
         }
         if ($forMutation) {
             $this->assertCurrentLockingReads();
@@ -94,8 +101,8 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         return is_string($driver) ? $driver : null;
     }
 
-    /** Verifies the required MySQL driver, PDO attributes, and connection charset. */
-    private function assertDriverAndConnectionAttributes(): void
+    /** Verifies driver and PDO session attributes and returns the selected database, if there is one. */
+    private function assertDriverAndConnectionAttributes(): ?string
     {
         $driver = $this->driverName();
         if ($driver !== 'mysql') {
@@ -123,15 +130,15 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
             throw new SlugRuntimeCompatibilityException('Required PDO connection attributes are unavailable.', 0, $throwable);
         }
 
-        $this->assertConnectionCharset();
+        return $this->assertConnectionCharset();
     }
 
-    /** Rejects client or server transcoding that could change persisted identity or returned text. */
-    private function assertConnectionCharset(): void
+    /** Checks the session charsets and reads the database identity in the same non-locking query. */
+    private function assertConnectionCharset(): ?string
     {
-        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results');
+        $statement = $this->pdo->query('SELECT @@SESSION.character_set_client, @@SESSION.character_set_connection, @@SESSION.character_set_results, DATABASE()');
         if ($statement === false) {
-            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session character sets.');
+            throw new SlugRuntimeCompatibilityException('Unable to inspect PDO session settings.');
         }
         try {
             $charsets = $statement->fetch(PDO::FETCH_NUM);
@@ -148,6 +155,13 @@ final class PdoCapabilityGuard implements CapabilityGuardInterface
         if ($charsets[2] !== 'utf8mb4' && $charsets[2] !== null) {
             throw new SlugRuntimeCompatibilityException('PDO character_set_results must be utf8mb4 or NULL.');
         }
+
+        $database = $charsets[3];
+        if ($database !== null && ! is_string($database)) {
+            throw new SlugRuntimeCompatibilityException('Unable to identify the database selected by the Host PDO session.');
+        }
+
+        return $database;
     }
 
     /** Probes transactions and savepoints while cleaning up the probe state. */

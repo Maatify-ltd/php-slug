@@ -419,6 +419,8 @@ Result Snapshot JSON v1 has only four discriminators:
 
 Only a current `atomicTransfer` result may contain nested `sourceReplacementResult`; its `operationKey` and `replayed` values equal those of the outer result. A top-level `mutation` cannot use `ATOMIC_TRANSFER`.
 
+The mutation result's `revision` and `currentSlug` must agree with its `after` state, including for a nested transfer replacement. Transition and transfer revisions must agree with the participants' `after` states. Replay rejects a snapshot with conflicting values as a `SlugPersistenceInvariantException`.
+
 ## 9. Persistence, Transactions, and Concurrency
 
 The persisted path uses direct PDO inside package infrastructure only:
@@ -430,6 +432,7 @@ The persisted path uses direct PDO inside package infrastructure only:
 - There is no ORM, external query builder, or SQLite or PostgreSQL fallback.
 - Public query verification uses only connection/schema metadata reads; SELECT-only accounts and Host READ ONLY transactions are supported. It does not prove write privileges or execute DML/transaction probes. Valid persisted lookups, including `resolve()`, require the completed Schema 003 projection. Before the first mutation the package verifies the required column definitions, index keys and foreign-key topology, then verifies transaction/savepoint and write capabilities with rollback-protected probes, including actual rejection of prohibited inserts. Mutation calls require `foreign_key_checks=ON` on the Host PDO session. The package checks the current setting without changing it.
 - For mutations, the package owns a transaction when no outer transaction exists; it never commits or rolls back a caller-owned transaction.
+- Schema and write capability checks apply to the database selected on the Host PDO session. Selecting another database invalidates both checks. The next persisted call verifies the selected database, and its first mutation verifies write capabilities before acquiring lifecycle row locks. The Host selects the database between calls.
 - Nested participation uses a savepoint when the capability is supported; otherwise execution fails before mutation with `SlugTransactionParticipationException`.
 - Unique database constraints are the final claim authority. A duplicate is converted semantically only for MySQL `errorInfo[1] === 1062` with known constraint context; other infrastructure throwables are rethrown, retaining `previous` when wrapping.
 - First-create races on Binding and Scope are reread under lock in the defined paths. There is no savepoint for an attempted `INSERT` and no automatic deadlock retry.
@@ -451,6 +454,8 @@ Management queries separate the live Registry from History:
 listAliases, getHistory, inspectRegistry, searchScopes, searchHistory,
 searchBindings, searchRegistry
 ```
+
+`searchBindings()` raises `SlugPersistenceInvariantException` for an inconsistent Registry state. A `RELEASED` Binding must have no Claims or current pointer. An `ACTIVE` or `INACTIVE` Binding must point to its only current canonical Claim.
 
 Use `Maatify\PhpPersistence\Pagination\Criteria\PageRequest` for paging requests and `Maatify\PhpPersistence\Pagination\Enum\SortDirectionEnum` where a sort direction enum is used.
 

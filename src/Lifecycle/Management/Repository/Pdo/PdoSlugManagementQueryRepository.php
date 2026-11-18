@@ -398,14 +398,19 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
             . 'INNER JOIN maa_slug_bindings b ON b.id = r.binding_id';
     }
 
-    /** Returns the binding query projection, including its current claim. */
+    /** Returns each Binding's current claim and flags incompatible ownership in the same statement. */
     private function bindingSelectSql(): string
     {
         return 'SELECT b.id, b.scope_id, b.entity_type, b.entity_key, b.current_registry_id, b.status, '
             . 'b.revision, b.history_sequence, b.created_at, b.updated_at, s.namespace, s.locale_key, '
             . 's.context_key, s.profile_key, cr.id AS current_claim_id, cr.slug AS current_claim_slug, '
             . 'cr.claim_role AS current_claim_role, cr.claimed_at AS current_claimed_at, '
-            . 'cr.updated_at AS current_claim_updated_at FROM maa_slug_bindings b '
+            . 'cr.updated_at AS current_claim_updated_at, CASE '
+            . "WHEN b.status = 'RELEASED' THEN EXISTS (SELECT 1 FROM maa_slug_registry r "
+            . 'WHERE r.binding_id = b.id AND r.scope_id = b.scope_id) '
+            . "ELSE EXISTS (SELECT 1 FROM maa_slug_registry r WHERE r.binding_id = b.id AND r.scope_id = b.scope_id "
+            . "AND r.claim_role = 'CURRENT_CANONICAL' AND r.id <> b.current_registry_id) "
+            . 'END AS has_unexpected_claims FROM maa_slug_bindings b '
             . 'INNER JOIN maa_slug_scopes s ON s.id = b.scope_id '
             . 'LEFT JOIN maa_slug_registry cr ON cr.id = b.current_registry_id AND cr.binding_id = b.id AND cr.scope_id = b.scope_id';
     }
@@ -494,6 +499,14 @@ final readonly class PdoSlugManagementQueryRepository implements ManagementQuery
         $claim = null;
         if ($row['current_registry_id'] !== null && $row['current_claim_id'] === null) {
             throw new SlugPersistenceInvariantException('Binding current pointer does not reference a Registry claim owned by that Binding.');
+        }
+        $hasUnexpectedClaims = PdoRowHydrator::nonNegativeInt($row, 'has_unexpected_claims') !== 0;
+        if ($status === BindingStatusEnum::RELEASED) {
+            if ($row['current_registry_id'] !== null || $hasUnexpectedClaims) {
+                throw new SlugPersistenceInvariantException('Released Binding has live ownership or a current pointer.');
+            }
+        } elseif ($row['current_claim_id'] === null || $hasUnexpectedClaims) {
+            throw new SlugPersistenceInvariantException('Active or inactive Binding has an invalid current pointer.');
         }
         if ($row['current_claim_id'] !== null) {
             $role = RegistryRoleEnum::tryFrom(PdoRowHydrator::string($row, 'current_claim_role'));
