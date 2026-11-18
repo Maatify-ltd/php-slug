@@ -24,7 +24,7 @@
 بعد نشر RC.3 عبر Packagist، ثبّتها بالأمر التالي:
 
 ~~~bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ~~~
 
 أبقِ قيمة `minimum-stability` في المشروع على `stable`. راجع [قسم التثبيت في README](../../README_AR.md#التثبيت) لترقية RC.2 وتغيير أنواع الترقيم. إذا كنت تستخدم RC.2، اتّبع [دليل نسختها](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE_AR.md).

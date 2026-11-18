@@ -3,11 +3,12 @@
 | Field | Value |
 |---|---|
 | Decision ID | `DEC-002` |
-| Status | `ACTIVE` |
+| Status | `SUPERSEDED` |
 | Scope | `/` |
 | Concern | Shared management pagination dependency and public pagination types |
 | Date | `2026-11-15` |
 | Decision authority | Repository owner Mohamed Abdulalim |
+| Superseded By | [DEC-010](DEC-010_PERSISTENCE_RC2_PAGINATION_TRIAL.md) |
 
 ## Context
 

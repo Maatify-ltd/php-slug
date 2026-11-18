@@ -12,7 +12,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 ### Changed
 
 - The PHP constraint is now `>=8.4.27 <8.5.0 || >=8.5.12 <9.0.0`. CI verifies PHP 8.4 and 8.5.
-- Management pagination replaces `maatify/persistence` with `maatify/php-persistence` at `1.0.0-rc.1`. Update `PageRequest`, `SortDirectionEnum`, and `PageResultDTO` imports.
+- Management pagination replaces `maatify/persistence` with `maatify/php-persistence` at `1.0.0-rc.2`. Update `PageRequest`, `SortDirectionEnum`, and `PageResultDTO` imports.
 
 ### Fixed
 

@@ -58,7 +58,7 @@ The package has no Host foreign keys, Host table joins, or Host repository depen
 Once RC.3 is published through Packagist, install the exact versions with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ```
 
 The two explicit `@RC` allowances let the project keep `minimum-stability` set to `stable`. The examples below describe RC.3. For RC.2, see its [tagged Composer manifest](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/composer.json).
@@ -118,7 +118,7 @@ The following requirements are implemented in the repository:
 | Database adapter | PDO MySQL with MySQL-compatible semantics |
 | MySQL | Server `8.0.36` as the CI reproducibility target |
 | MariaDB | Server `12.3.2` for focused PDO and snapshot verification, with the session requirement in [§9](#9-persistence-transactions-and-concurrency) |
-| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.1` (temporary RC dependency) |
+| Runtime packages | `maatify/exceptions ^1.0`, `maatify/shared-common ^1.0`, `maatify/php-persistence 1.0.0-rc.2` (temporary RC dependency) |
 | Evidence tools | `phpstan/phpstan ^2.1`, `phpunit/phpunit ^11.5`, `friendsofphp/php-cs-fixer ^3.94` in `require-dev` |
 
 Newer PHP 8 minors admitted by Composer require minor-specific security and compatibility evidence before they can be listed as supported.

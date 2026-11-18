@@ -23,7 +23,7 @@ At qualification, `1.0.0-rc.3` is unpublished and `1.0.0-rc.2` is available thro
 Once RC.3 is published to Packagist, install it with:
 
 ```bash
-composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.1@RC
+composer require maatify/php-slug:1.0.0-rc.3@RC maatify/php-persistence:1.0.0-rc.2@RC
 ```
 
 Keep the project's `minimum-stability` set to `stable`. For the RC.2 migration and pagination changes, see [Installation in the README](../../README.md#installation). If you use RC.2, follow its [versioned usage guide](https://github.com/Maatify-ltd/php-slug/blob/v1.0.0-rc.2/docs/guides/USAGE_GUIDE.md).
