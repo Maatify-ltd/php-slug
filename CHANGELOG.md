@@ -16,6 +16,7 @@ The format follows Keep a Changelog conventions and Semantic Versioning.
 
 ### Fixed
 
+- Matched same-Binding lifecycle claims using Registry collation equality across changes, aliases, restoration, release, transfers and their replacements, preserving stored slug bytes, no-op behavior, and Host transaction ownership.
 - Restored NFC after Unicode lowercasing before grammar, length checks, and generated truncation, preserving profile keys and existing valid outputs.
 - Made advisory PDO availability observe the claim and its owner together during concurrent release, purge, reuse, and transfer.
 - Kept public PDO query verification read-only; first mutations still perform the separate rollback-protected write probes.

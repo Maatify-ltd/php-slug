@@ -212,6 +212,8 @@ run_workflow() {
         mariadb-snapshot)
             SLUG_TEST_REQUIRE_SNAPSHOT_ISOLATION=1 vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result \
                 tests/System/Lifecycle/HostSnapshotMutationSystemTest.php \
+                tests/System/Lifecycle/CandidateCollationSystemTest.php \
+                tests/System/Lifecycle/SameBindingCollationSystemTest.php \
                 tests/System/Resolution/AvailabilityObservationSystemTest.php \
                 tests/System/Resolution/ReadCapabilitySystemTest.php
             ;;
