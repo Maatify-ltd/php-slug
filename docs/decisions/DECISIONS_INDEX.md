@@ -6,7 +6,7 @@ It is a discovery registry only. It is not a Decision Record, does not duplicate
 
 ## Current State
 
-The active decisions cover profile compatibility and generated candidates, shared pagination, Registry lock boundaries, PDO session compatibility and autocommit admission, read-safe PDO observations, Unicode NFC closure, and verification of distributed releases.
+The active decisions cover profile compatibility and generated candidates, shared pagination, Registry lock boundaries, PDO session compatibility and autocommit admission, read-safe PDO observations, owned rollback confirmation, Unicode NFC closure, and verification of distributed releases.
 
 ## Registered Decisions
 
@@ -23,3 +23,4 @@ The active decisions cover profile compatibility and generated candidates, share
 | `DEC-009` | Read-safe PDO Observation | `ACTIVE` | `/` — Query verification and consistent availability | [DEC-009_READ_SAFE_PDO_OBSERVATION.md](DEC-009_READ_SAFE_PDO_OBSERVATION.md) | `SLUG_PACKAGE_REFERENCE.md` §§9–10 | — | — |
 | `DEC-010` | Persistence RC.2 Pagination Trial | `ACTIVE` | `/` — Shared management pagination dependency and public pagination types | [DEC-010_PERSISTENCE_RC2_PAGINATION_TRIAL.md](DEC-010_PERSISTENCE_RC2_PAGINATION_TRIAL.md) | `SLUG_PACKAGE_REFERENCE.md` §§3–4, 6.2, 10 | `DEC-002` | — |
 | `DEC-011` | PDO Autocommit Admission | `ACTIVE` | `/` — Persisted operation admission and Host transaction ownership | [DEC-011_PDO_AUTOCOMMIT_ADMISSION.md](DEC-011_PDO_AUTOCOMMIT_ADMISSION.md) | `SLUG_PACKAGE_REFERENCE.md` §§9, 12 | — | — |
+| `DEC-012` | Owned Rollback Confirmation | `ACTIVE` | `/` — Outcome of explicit rollback requests in package-owned transactions | [DEC-012_OWNED_ROLLBACK_CONFIRMATION.md](DEC-012_OWNED_ROLLBACK_CONFIRMATION.md) | `SLUG_PACKAGE_REFERENCE.md` §§9, 11.3, 12 | — | — |
