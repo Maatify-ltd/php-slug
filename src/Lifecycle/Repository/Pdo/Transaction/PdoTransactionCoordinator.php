@@ -16,12 +16,16 @@ final readonly class PdoTransactionCoordinator implements TransactionCoordinator
     public function __construct(private PDO $pdo) {}
 
     /**
-     * Runs the callback in a transaction or savepoint and restores the prior boundary on failure.
+     * Runs the callback in a transaction or savepoint managed by the coordinator.
+     *
+     * The callback must leave the transaction boundary under the coordinator's
+     * control. An owned rollback request returns its value after rollback succeeds.
      *
      * @template TResult
      *
      * @param callable(): TResult $callback
      * @return TResult
+     * @throws SlugTransactionParticipationException If transaction participation fails or an owned rollback cannot be confirmed.
      */
     public function run(callable $callback): mixed
     {
@@ -45,7 +49,7 @@ final readonly class PdoTransactionCoordinator implements TransactionCoordinator
             }
 
             if ($result instanceof PdoTransactionRollback) {
-                $this->rollbackOwnedOrThrow();
+                $this->rollbackOwnedOrThrow(requireActiveTransaction: true);
 
                 return $result->value;
             }
@@ -160,10 +164,14 @@ final readonly class PdoTransactionCoordinator implements TransactionCoordinator
         );
     }
 
-    /** Rolls back a transaction started by this coordinator or reports cleanup failure. */
-    private function rollbackOwnedOrThrow(): void
+    /** Rolls back an active owned transaction. Explicit rollback requests require confirmation. */
+    private function rollbackOwnedOrThrow(bool $requireActiveTransaction = false): void
     {
         if (! $this->pdo->inTransaction()) {
+            if ($requireActiveTransaction) {
+                throw new SlugTransactionParticipationException('Unable to confirm rollback of the package-owned transaction.');
+            }
+
             return;
         }
 

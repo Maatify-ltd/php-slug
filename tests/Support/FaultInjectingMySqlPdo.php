@@ -15,6 +15,9 @@ final class FaultInjectingMySqlPdo extends PDO
     /** Causes the next package SAVEPOINT statement to return false once. */
     public bool $failNextPackageSavepoint = false;
 
+    /** Causes the next transaction-state check to report inactive once. */
+    public bool $reportInactiveOnce = false;
+
     /** Opens the configured test database with native prepares and package collation settings. */
     public function __construct()
     {
@@ -44,6 +47,18 @@ final class FaultInjectingMySqlPdo extends PDO
         }
 
         return parent::beginTransaction();
+    }
+
+    /** Injects one stale state reading without ending the real transaction. */
+    public function inTransaction(): bool
+    {
+        if ($this->reportInactiveOnce) {
+            $this->reportInactiveOnce = false;
+
+            return false;
+        }
+
+        return parent::inTransaction();
     }
 
     /** Injects one package savepoint failure, leaving unrelated SQL delegated to PDO. */

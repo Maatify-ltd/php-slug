@@ -5,13 +5,156 @@ declare(strict_types=1);
 namespace Maatify\Slug\Tests\Unit\Persistence\Scope;
 
 use Maatify\Slug\Lifecycle\Repository\Pdo\Transaction\PdoTransactionCoordinator;
+use Maatify\Slug\Lifecycle\Repository\Pdo\Transaction\PdoTransactionRollback;
 use Maatify\Slug\Lifecycle\Exception\SlugTransactionParticipationException;
 use PDO;
+use PDOException;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use stdClass;
 
 final class PdoTransactionCoordinatorTest extends TestCase
 {
+    public function testOwnedRollbackRequestRequiresAnActiveTransaction(): void
+    {
+        $pdo = $this->ownedPdo(false);
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::never())->method('rollBack');
+
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(static fn() => new PdoTransactionRollback('discarded'));
+            self::fail('The coordinator returned a normal value without confirming rollback.');
+        } catch (SlugTransactionParticipationException $exception) {
+            self::assertSame('Unable to confirm rollback of the package-owned transaction.', $exception->getMessage());
+            self::assertNull($exception->getPrevious());
+        }
+    }
+
+    public function testOwnedConfirmedRollbackReturnsTheSameValue(): void
+    {
+        $pdo = $this->ownedPdo(true);
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::once())->method('rollBack')->willReturn(true);
+        $value = new stdClass();
+
+        self::assertSame($value, (new PdoTransactionCoordinator($pdo))->run(
+            static fn() => new PdoTransactionRollback($value),
+        ));
+    }
+
+    #[DataProvider('booleanCases')]
+    public function testOwnedRollbackFailureRetainsItsMapping(bool $throws): void
+    {
+        $pdo = $this->ownedPdo(true);
+        $pdo->expects(self::never())->method('commit');
+        $failure = new PDOException('Rollback fault');
+        $rollBack = $pdo->expects(self::once())->method('rollBack');
+        if ($throws) {
+            $rollBack->willThrowException($failure);
+        } else {
+            $rollBack->willReturn(false);
+        }
+
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(static fn() => new PdoTransactionRollback('discarded'));
+            self::fail('Expected rollback failure.');
+        } catch (SlugTransactionParticipationException $exception) {
+            self::assertSame('Unable to roll back the package transaction.', $exception->getMessage());
+            self::assertSame($throws ? $failure : null, $exception->getPrevious());
+        }
+    }
+
+    public function testOwnedRollbackRequestPropagatesTheStateProbeFailure(): void
+    {
+        $failure = new PDOException('State probe fault');
+        $pdo = $this->ownedPdo($failure);
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::never())->method('rollBack');
+
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(static fn() => new PdoTransactionRollback('discarded'));
+            self::fail('Expected the original PDO exception.');
+        } catch (PDOException $exception) {
+            self::assertSame($failure, $exception);
+        }
+    }
+
+    public function testOrdinaryFalseResultIsCommitted(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::once())->method('inTransaction')->willReturn(false);
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::once())->method('commit')->willReturn(true);
+        $pdo->expects(self::never())->method('rollBack');
+
+        self::assertSame(false, (new PdoTransactionCoordinator($pdo))->run(static fn(): bool => false));
+    }
+
+    #[DataProvider('booleanCases')]
+    public function testOwnedCallbackFailureRetainsItsPrecedence(bool $activeAtCleanup): void
+    {
+        $pdo = $this->ownedPdo($activeAtCleanup);
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects($activeAtCleanup ? self::once() : self::never())->method('rollBack')->willReturn(false);
+        $failure = new PDOException('Callback fault');
+
+        $this->expectException($activeAtCleanup ? SlugTransactionParticipationException::class : PDOException::class);
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(static fn() => throw $failure);
+        } catch (PDOException $exception) {
+            self::assertSame($failure, $exception);
+            throw $exception;
+        } catch (SlugTransactionParticipationException $exception) {
+            self::assertSame('Package transaction rollback failed after the original failure: Unable to roll back the package transaction.', $exception->getMessage());
+            self::assertSame($failure, $exception->getPrevious());
+            throw $exception;
+        }
+    }
+
+    #[DataProvider('booleanCases')]
+    public function testOwnedCommitFailureRetainsItsPrecedence(bool $activeAtCleanup): void
+    {
+        $pdo = $this->ownedPdo($activeAtCleanup);
+        $failure = new PDOException('Commit fault');
+        $pdo->expects(self::once())->method('commit')->willThrowException($failure);
+        $pdo->expects($activeAtCleanup ? self::once() : self::never())->method('rollBack')->willReturn(false);
+
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(static fn() => false);
+            self::fail('Expected commit failure.');
+        } catch (SlugTransactionParticipationException $exception) {
+            self::assertSame(
+                $activeAtCleanup
+                    ? 'Package transaction commit failed and rollback also failed: Unable to roll back the package transaction.'
+                    : 'Unable to commit the package transaction.',
+                $exception->getMessage(),
+            );
+            self::assertSame($failure, $exception->getPrevious());
+        }
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function booleanCases(): iterable
+    {
+        yield 'false' => [false];
+        yield 'true' => [true];
+    }
+
+    private function ownedPdo(bool|PDOException $cleanupState): PDO&MockObject
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::exactly(2))->method('inTransaction')->willReturnOnConsecutiveCalls(
+            false,
+            $cleanupState instanceof PDOException ? $this->throwException($cleanupState) : $cleanupState,
+        );
+        $pdo->expects(self::once())->method('beginTransaction')->willReturn(true);
+        $pdo->expects(self::never())->method('exec');
+
+        return $pdo;
+    }
+
     public function testGeneratedSavepointNamesUseTheClosedPackageFormat(): void
     {
         /** @var PDO $pdo */

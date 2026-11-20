@@ -448,7 +448,9 @@ The persisted path uses direct PDO inside package infrastructure only:
 
 Gap-sensitive Registry current reads for lifecycle mutations use an internal InnoDB projection with per-Scope and per-Binding lock boundaries. The package initializes new partitions when first needed and maintains the projection in the Registry write transaction on the Host PDO. Registry uniqueness remains authoritative. The lock boundaries cover these targeted reads. Requests for shared keys can still contend. First assignments in two different Scopes can also contend if neither Scope has lock anchors yet. The second assignment can wait for the Host transaction holding the first assignment to release its locks. During `purgeBinding()`, InnoDB's `fk_registry_binding_scope` check can take a gap lock on the underlying Registry index and contend with writes in another Scope, even when the Registry is empty.
 
-On failure or invariant violation, partial mutation, uncommitted History, and uncommitted operations must be removed by the operation rollback. The original throwable is rethrown unless a documented semantic conversion applies.
+On failure or invariant violation, the operation uses its transaction or savepoint to discard partial mutation, uncommitted History, and uncommitted operations. The original throwable is rethrown unless a documented exception mapping applies.
+
+When the package owns the transaction and an internal callback returns a `PdoTransactionRollback` request, the coordinator returns the carried value only after PDO reports an active transaction and `rollBack() === true`. This confirms rollback of the active transaction seen by PDO. Callbacks and Host collaborators must leave transaction control to its owner, including avoiding statements that implicitly end the transaction. Ending or replacing the transaction inside a callback is outside the supported contract. See [the exception contract](#12-exception-contract) for an unconfirmed rollback.
 
 ## 10. Management, Resolution, and Pagination
 
@@ -709,6 +711,8 @@ Concurrent exact claim race
 
 If the environment does not support the required participation capability, the path fails before mutation with `SlugTransactionParticipationException`. This does not change the Host's ownership of the outer transaction.
 
+If rollback of a package-owned transaction is unconfirmed, the Host is responsible for isolating or replacing the suspect PDO connection before further operations. See [the exception contract](#12-exception-contract).
+
 ### 11.4 Observable Result
 
 `assignExact` returns:
@@ -764,7 +768,9 @@ SlugPurgeNotPermittedException, SlugTransactionParticipationException,
 SlugUnsupportedDriverException, SlugPersistenceInvariantException
 ```
 
-The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. Transaction catches rethrow the original throwable after rollback. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
+The package uses the published hierarchy from `maatify/exceptions ^1.0`. It does not convert every SQLSTATE `23xxx` into a conflict; duplicate conversion is limited to MySQL `1062` with constraint context. When a callback throws, the coordinator rethrows the original throwable if transaction cleanup does not raise a failure. A cleanup failure is reported as `SlugTransactionParticipationException` with the original throwable as `previous`. Management pagination uses the shared paginator’s exception types under `Maatify\PhpPersistence\Pagination\Exception`. PDO and row-mapping exceptions outside the documented mappings propagate unchanged.
+
+For an [owned rollback request](#9-persistence-transactions-and-concurrency), if `PDO::inTransaction()` returns `false` before rollback, the coordinator raises `SlugTransactionParticipationException` with the message `Unable to confirm rollback of the package-owned transaction.` and `previous === null`. This reports an unconfirmed outcome. The state reading establishes neither rollback nor commit and gives the Host no assurance that the connection was cleaned up or can be reused. The package performs no automatic retry. A throwable from the state check propagates unchanged. If `rollBack()` returns `false` or throws a PDO exception, the coordinator reports `Unable to roll back the package transaction.`, retaining the PDO exception as `previous` when present.
 
 Persisted queries, including `resolve()` when it consults persisted state, and lifecycle mutations throw `SlugRuntimeCompatibilityException` during schema verification if the Schema 003 projection table or backfill marker is missing, the partition index is unusable, or the projection slug column uses a collation other than `utf8mb4_bin`. For mutations, this verification precedes the Scope lock.
 
