@@ -304,134 +304,164 @@ final class PdoOperationPersistenceTest extends MySqlIntegrationTestCase
         }
     }
 
-    public function testParticipantRaceDoesNotLeaveAnOrphanInProgressOperation(): void
+    public function testParticipantRaceDiscardsTheLosingOperationBeforeHostCommit(): void
     {
-        if (! function_exists('pcntl_fork')) {
-            self::fail('WU-03 concurrency evidence requires pcntl_fork.');
+        $host = $this->pdo;
+        $winner = $this->newTestConnection();
+        $observer = $this->newTestConnection();
+        foreach ([$host, $winner, $observer] as $connection) {
+            $connection->exec('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            $connection->exec('SET SESSION innodb_lock_wait_timeout=5');
+            $connection->exec('SET SESSION lock_wait_timeout=5');
         }
 
         $profiles = $this->profiles();
-        $scopeRepository = new PdoScopeRepository($this->pdo, $profiles, $this->clock(), new PdoCapabilityGuard($this->pdo));
-        $binding = $scopeRepository->ensureBindingPlaceholder(
-            new ScopeProfileRequestDTO(new SlugScope('catalog', null, null), new SlugProfileKey('ascii-v1')),
-            new EntityReference('product', 'race'),
+        $hostCapabilities = new PdoCapabilityGuard($host);
+        $winnerCapabilities = new PdoCapabilityGuard($winner);
+        // Complete the cold schema write probes before interleaving the two reservations.
+        $hostCapabilities->assertMutationSupported();
+        $winnerCapabilities->assertMutationSupported();
+        $scopeRepository = new PdoScopeRepository($host, $profiles, $this->clock(), $hostCapabilities);
+        $request = new ScopeProfileRequestDTO(new SlugScope('catalog', null, null), new SlugProfileKey('ascii-v1'));
+        $binding = $scopeRepository->ensureBindingPlaceholder($request, new EntityReference('product', 'race'));
+        $otherBinding = $scopeRepository->ensureBindingPlaceholder($request, new EntityReference('product', 'race-other'));
+        $participant = new OperationParticipant($binding->id, 'race-idempotency', 'SINGLE');
+        $otherParticipant = new OperationParticipant($otherBinding->id, $participant->idempotencyKey, 'SINGLE');
+        $winnerKey = str_repeat('d', 32);
+        $loserKey = str_repeat('e', 32);
+        $fingerprint = str_repeat('f', 64);
+        $operationType = OperationTypeEnum::ASSIGN_EXACT;
+        $snapshot = $this->snapshotWithOperationKey(ResultSnapshotEncoder::encode(ContractFixtures::mutation($binding->id)), $winnerKey);
+        $metadata = new ResultSnapshotMetadata('mutation', 1, $operationType, $winnerKey, $snapshot);
+        $winnerRepository = new PdoOperationRepository($winner, $this->clock(), $winnerCapabilities);
+        $observerRepository = new PdoOperationRepository($observer, $this->clock());
+        $markerTable = 'host_r1_marker_' . bin2hex(random_bytes(8));
+        $observer->exec("CREATE TABLE $markerTable (id INT PRIMARY KEY) ENGINE=InnoDB");
+        $markerCountSql = "SELECT COUNT(*) FROM $markerTable WHERE id = 1";
+        $loserId = null;
+        $winnerId = null;
+
+        $hostRepository = new PdoOperationRepository(
+            $host,
+            $this->clock(),
+            $hostCapabilities,
+            beforeParticipantInsert: function (int $operationId) use (
+                &$loserId,
+                &$winnerId,
+                $host,
+                $winner,
+                $observer,
+                $winnerRepository,
+                $operationType,
+                $winnerKey,
+                $loserKey,
+                $fingerprint,
+                $participant,
+                $metadata,
+                $profiles,
+            ): void {
+                // Interleave the two real transactions after the losing INSERT and before its participant INSERT.
+                self::assertNull($loserId, 'The participant insert barrier must run once.');
+                $loserId = $operationId;
+                self::assertTrue($host->inTransaction());
+                self::assertSame('1', $this->countRows(
+                    $host,
+                    "SELECT COUNT(*) FROM maa_slug_operations WHERE id = $operationId AND operation_key = '$loserKey' AND status = 'IN_PROGRESS'",
+                ));
+                self::assertSame('0', $this->countRows($observer, 'SELECT COUNT(*) FROM maa_slug_operations'));
+                self::assertSame('0', $this->countRows($host, 'SELECT COUNT(*) FROM maa_slug_operation_bindings'));
+
+                self::assertTrue($winner->beginTransaction());
+                $reservation = $winnerRepository->reserve($winnerKey, $operationType, $fingerprint, 'mutation', 1, [$participant]);
+                self::assertTrue($reservation->created);
+                $winnerId = $reservation->operation->id;
+                self::assertNotSame($loserId, $winnerId);
+                $winnerRepository->commitSnapshot($winnerId, $metadata, $profiles);
+                self::assertTrue($winner->commit());
+
+                self::assertTrue($host->inTransaction());
+                self::assertSame('1', $this->countRows($host, "SELECT COUNT(*) FROM maa_slug_operations WHERE id = $operationId"));
+            },
         );
-        $participantKey = 'race-idempotency';
-        $winnerOperationKey = str_repeat('d', 32);
-        $loserOperationKey = str_repeat('e', 32);
-        $snapshot = $this->snapshotWithOperationKey(ResultSnapshotEncoder::encode(ContractFixtures::mutation()), $winnerOperationKey);
-        $resultFile = tempnam(sys_get_temp_dir(), 'slug-wu03-race-');
-        $readyFile = tempnam(sys_get_temp_dir(), 'slug-wu03-ready-');
-        $releaseFile = tempnam(sys_get_temp_dir(), 'slug-wu03-release-');
-        self::assertNotFalse($resultFile);
-        self::assertNotFalse($readyFile);
-        self::assertNotFalse($releaseFile);
-        unlink($resultFile);
-        unlink($readyFile);
-        unlink($releaseFile);
 
-        $childPid = pcntl_fork();
-        self::assertNotSame(-1, $childPid);
-        if ($childPid === 0) {
-            try {
-                $childPdo = $this->newTestConnection();
-                $childPdo->exec('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
-                $childRepository = new PdoOperationRepository(
-                    $childPdo,
-                    $this->clock(),
-                    new PdoCapabilityGuard($childPdo),
-                    null,
-                    static function () use ($readyFile, $releaseFile): void {
-                        file_put_contents($readyFile, 'ready');
-                        for ($attempt = 0; $attempt < 1000 && ! is_file($releaseFile); $attempt++) {
-                            usleep(10000);
-                        }
-                    },
-                );
-                self::assertTrue($childPdo->beginTransaction());
-                $childRepository->reserve(
-                    $loserOperationKey,
-                    OperationTypeEnum::ASSIGN_EXACT,
-                    str_repeat('f', 64),
-                    'mutation',
-                    1,
-                    [new OperationParticipant($binding->id, $participantKey, 'SINGLE')],
-                );
-                file_put_contents($resultFile, json_encode(['class' => null], JSON_THROW_ON_ERROR));
-            } catch (\Throwable $throwable) {
-                if (isset($childPdo) && $childPdo->inTransaction()) {
-                    $childPdo->rollBack();
-                }
-                file_put_contents($resultFile, json_encode(['class' => $throwable::class], JSON_THROW_ON_ERROR));
-            }
-            if (isset($childPdo) && $childPdo->inTransaction()) {
-                $childPdo->rollBack();
-            }
-            exit(0);
-        }
-
-        // PDO connections must not be reused across fork boundaries.
-        $this->pdo = $this->newTestConnection();
         try {
-            for ($attempt = 0; $attempt < 500 && ! is_file($readyFile); $attempt++) {
-                usleep(10000);
+            self::assertTrue($host->beginTransaction());
+            self::assertSame(1, $host->exec("INSERT INTO $markerTable VALUES (1)"));
+
+            try {
+                $hostRepository->reserve($loserKey, $operationType, $fingerprint, 'mutation', 1, [$participant]);
+                self::fail('The losing reservation must report a conflict.');
+            } catch (SlugIdempotencyConflictException $exception) {
+                self::assertSame('Idempotency evidence does not match the requested operation.', $exception->getMessage());
+                self::assertNull($exception->getPrevious());
             }
-            self::assertFileExists($readyFile);
-            self::assertTrue($this->pdo->beginTransaction());
-            $insertOperation = $this->pdo->prepare(
-                'INSERT INTO maa_slug_operations (operation_key, operation_type, request_fingerprint, result_type, result_schema_version, result_snapshot, status, created_at, completed_at) '
-                . 'VALUES (:operation_key, :operation_type, :request_fingerprint, :result_type, 1, :result_snapshot, \'COMMITTED\', :created_at, :completed_at)',
-            );
-            self::assertNotFalse($insertOperation);
-            $insertOperation->execute([
-                'operation_key' => $winnerOperationKey,
-                'operation_type' => OperationTypeEnum::ASSIGN_EXACT->value,
-                'request_fingerprint' => str_repeat('1', 64),
-                'result_type' => 'mutation',
-                'result_snapshot' => $snapshot,
-                'created_at' => '2026-01-01 00:00:00.123456',
-                'completed_at' => '2026-01-01 00:00:00.123456',
-            ]);
-            $operationId = (int) $this->pdo->lastInsertId();
-            $insertParticipant = $this->pdo->prepare(
-                'INSERT INTO maa_slug_operation_bindings (idempotency_key, operation_id, binding_id, participant_role) VALUES (:idempotency_key, :operation_id, :binding_id, \'SINGLE\')',
-            );
-            self::assertNotFalse($insertParticipant);
-            $insertParticipant->execute(['idempotency_key' => $participantKey, 'operation_id' => $operationId, 'binding_id' => $binding->id]);
-            $this->pdo->commit();
-            file_put_contents($releaseFile, 'release');
-        } catch (\Throwable $throwable) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            posix_kill($childPid, SIGTERM);
-            pcntl_waitpid($childPid, $childStatus);
-            foreach ([$resultFile, $readyFile, $releaseFile] as $file) {
-                if (is_file($file)) {
-                    unlink($file);
+
+            self::assertIsInt($loserId);
+            self::assertIsInt($winnerId);
+            self::assertTrue($host->inTransaction(), 'The Host must still own its original transaction.');
+            self::assertSame('1', $this->countRows($host, $markerCountSql));
+            self::assertSame('0', $this->countRows($host, "SELECT COUNT(*) FROM maa_slug_operations WHERE id = $loserId"));
+            self::assertSame('0', $this->countRows($host, "SELECT COUNT(*) FROM maa_slug_operation_bindings WHERE operation_id = $loserId"));
+            $this->assertCommittedRaceWinner($host, $hostRepository, $participant, $winnerId, $winnerKey, $snapshot);
+
+            self::assertSame('0', $this->countRows($observer, $markerCountSql));
+            $this->assertCommittedRaceWinner($observer, $observerRepository, $participant, $winnerId, $winnerKey, $snapshot);
+
+            // Replay the matching evidence and reject mismatches separately on the still-open Host transaction.
+            $replay = $hostRepository->reserve($winnerKey, $operationType, $fingerprint, 'mutation', 1, [$participant]);
+            self::assertFalse($replay->created);
+            self::assertTrue($replay->isReplay());
+            self::assertSame($winnerId, $replay->operation->id);
+            self::assertTrue($hostRepository->decodeCommitted($winnerId, $profiles)->replayed);
+
+            foreach ([
+                [str_repeat('1', 64), $participant, 'Idempotency evidence does not match the requested operation.'],
+                [$fingerprint, $otherParticipant, 'Idempotency participants do not match the requested operation.'],
+            ] as [$requestFingerprint, $requestParticipant, $message]) {
+                try {
+                    $hostRepository->reserve($winnerKey, $operationType, $requestFingerprint, 'mutation', 1, [$requestParticipant]);
+                    self::fail('Mismatched evidence must report a conflict.');
+                } catch (SlugIdempotencyConflictException $exception) {
+                    self::assertSame($message, $exception->getMessage());
+                    self::assertNull($exception->getPrevious());
                 }
+                self::assertTrue($host->inTransaction());
             }
-            throw $throwable;
-        }
 
-        pcntl_waitpid($childPid, $childStatus);
-        $payload = json_decode((string) file_get_contents($resultFile), true, 512, JSON_THROW_ON_ERROR);
-        foreach ([$resultFile, $readyFile, $releaseFile] as $file) {
-            if (is_file($file)) {
-                unlink($file);
+            self::assertSame('1', $this->countRows($host, $markerCountSql));
+            $this->assertCommittedRaceWinner($host, $hostRepository, $participant, $winnerId, $winnerKey, $snapshot);
+            self::assertTrue($host->commit());
+            self::assertFalse($host->inTransaction());
+
+            self::assertSame('1', $this->countRows($observer, $markerCountSql));
+            $this->assertCommittedRaceWinner($observer, $observerRepository, $participant, $winnerId, $winnerKey, $snapshot);
+        } finally {
+            if ($winner->inTransaction()) {
+                $winner->rollBack();
             }
+            if ($host->inTransaction()) {
+                $host->rollBack();
+            }
+            $observer->exec("DROP TABLE $markerTable");
         }
-        self::assertIsArray($payload);
-        self::assertArrayHasKey('class', $payload);
-        self::assertSame(SlugIdempotencyConflictException::class, $payload['class']);
+    }
 
-        $statement = $this->pdo->prepare('SELECT COUNT(*) FROM maa_slug_operations WHERE operation_key = :operation_key');
-        self::assertNotFalse($statement);
-        $statement->execute(['operation_key' => $loserOperationKey]);
-        self::assertSame('0', (string) $statement->fetchColumn());
-        $statement = $this->pdo->query("SELECT COUNT(*) FROM maa_slug_operations WHERE status = 'IN_PROGRESS'");
-        self::assertNotFalse($statement);
-        self::assertSame('0', (string) $statement->fetchColumn());
+    private function assertCommittedRaceWinner(
+        \PDO $pdo,
+        PdoOperationRepository $repository,
+        OperationParticipant $participant,
+        int $winnerId,
+        string $winnerKey,
+        string $snapshot,
+    ): void {
+        self::assertSame('1', $this->countRows($pdo, 'SELECT COUNT(*) FROM maa_slug_operations'));
+        self::assertSame('1', $this->countRows($pdo, 'SELECT COUNT(*) FROM maa_slug_operation_bindings'));
+        $record = $repository->findByParticipant($participant->bindingId, $participant->idempotencyKey);
+        self::assertNotNull($record);
+        self::assertSame($winnerId, $record->id);
+        self::assertSame($winnerKey, $record->operationKey);
+        self::assertSame('COMMITTED', $record->status);
+        self::assertSame($snapshot, $record->resultSnapshot);
     }
 
     private function profiles(): SlugProfileRegistry

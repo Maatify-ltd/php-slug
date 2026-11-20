@@ -215,6 +215,68 @@ final class PdoTransactionCoordinatorTest extends TestCase
 
         self::assertFalse($callbackCalled);
     }
+
+    #[DataProvider('savepointCleanupFailures')]
+    public function testSavepointCleanupFailurePreservesTheHostBoundary(
+        bool $releaseFails,
+        bool $pdoThrows,
+        bool $callbackThrows,
+    ): void {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::once())->method('inTransaction')->willReturn(true);
+        $pdo->expects(self::never())->method('beginTransaction');
+        $pdo->expects(self::never())->method('commit');
+        $pdo->expects(self::never())->method('rollBack');
+
+        $cleanupFailure = $pdoThrows ? new PDOException('Savepoint cleanup fault') : null;
+        $commands = $releaseFails ? ['ROLLBACK TO ', 'RELEASE '] : ['ROLLBACK TO '];
+        $savepointSql = null;
+        $pdo->expects(self::exactly(1 + count($commands)))->method('exec')->willReturnCallback(
+            static function (string $sql) use (&$savepointSql, &$commands, $cleanupFailure): int|false {
+                if ($savepointSql === null) {
+                    self::assertStringStartsWith('SAVEPOINT maa_slug_sp_', $sql);
+                    $savepointSql = $sql;
+
+                    return 0;
+                }
+
+                self::assertSame(array_shift($commands) . $savepointSql, $sql);
+                if ($commands !== []) {
+                    return 0;
+                }
+
+                return $cleanupFailure === null ? false : throw $cleanupFailure;
+            },
+        );
+        $original = $callbackThrows ? new PDOException('Original callback fault') : null;
+        $cleanupMessage = $releaseFails
+            ? 'Unable to release the rolled-back package savepoint.'
+            : 'Unable to roll back the package savepoint.';
+
+        try {
+            (new PdoTransactionCoordinator($pdo))->run(
+                static fn() => $original === null ? new PdoTransactionRollback('discarded') : throw $original,
+            );
+            self::fail('Expected savepoint cleanup failure.');
+        } catch (SlugTransactionParticipationException $exception) {
+            self::assertSame(
+                $original === null ? $cleanupMessage : 'Package savepoint cleanup failed after the original failure: ' . $cleanupMessage,
+                $exception->getMessage(),
+            );
+            self::assertSame($original ?? $cleanupFailure, $exception->getPrevious());
+        }
+    }
+
+    /** @return iterable<string, array{bool, bool, bool}> */
+    public static function savepointCleanupFailures(): iterable
+    {
+        foreach (['rollback to savepoint' => false, 'release rolled-back savepoint' => true] as $command => $releaseFails) {
+            foreach (['returns false' => false, 'throws' => true] as $outcome => $pdoThrows) {
+                yield "$command $outcome after rollback request" => [$releaseFails, $pdoThrows, false];
+                yield "$command $outcome after callback failure" => [$releaseFails, $pdoThrows, true];
+            }
+        }
+    }
 }
 
 /** PDO double whose first transaction boundary cannot be established. */
